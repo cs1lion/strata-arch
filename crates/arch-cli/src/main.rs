@@ -1,4 +1,5 @@
 use arch_core::callgraph::{build_call_graph_with_options, CallGraphOptions};
+use arch_core::history::{build_history, HistoryError, HistoryOptions};
 use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
 use std::env;
 use std::fs;
@@ -9,10 +10,14 @@ const USAGE: &str = "用法:
   arch-cli --schema
   arch-cli index <目标仓库> [--out <产物文件>]
   arch-cli layers <目标仓库> [--out <产物文件>]
-  arch-cli callgraph <目标仓库> [--out <产物文件>] [--include-unattributed]";
+  arch-cli callgraph <目标仓库> [--out <产物文件>] [--include-unattributed]
+  arch-cli history <目标仓库> [--repo <目标仓库>] [--out <产物文件>]
+      [--max-commits <N>] [--since <日期>] [--until <日期>]";
 
 enum CliError {
     Input(String),
+    /// 历史不可用：非 git、无提交、浅克隆。
+    History(String),
     Internal(String),
 }
 
@@ -22,6 +27,10 @@ fn main() -> ExitCode {
         Err(CliError::Input(message)) => {
             eprintln!("错误: {message}");
             ExitCode::from(2)
+        }
+        Err(CliError::History(message)) => {
+            eprintln!("错误: {message}");
+            ExitCode::from(5)
         }
         Err(CliError::Internal(message)) => {
             eprintln!("内部错误: {message}");
@@ -47,6 +56,7 @@ fn run() -> Result<(), CliError> {
         "index" => run_index(args),
         "layers" => run_layers(args),
         "callgraph" => run_callgraph(args),
+        "history" => run_history(args),
         other => Err(CliError::Input(format!("未知子命令: {other}\n{USAGE}"))),
     }
 }
@@ -112,6 +122,88 @@ fn parse_callgraph_args(
     }
 
     Ok((PathBuf::from(target), out, include_unattributed))
+}
+
+fn run_history(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let (target, out, options) = parse_history_args(args)?;
+    let artifact =
+        build_history(&target, env!("CARGO_PKG_VERSION"), options).map_err(history_error)?;
+    let json = serde_json::to_string_pretty(&artifact)
+        .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
+    emit_json(&json, out)
+}
+
+fn parse_history_args(
+    mut args: impl Iterator<Item = String>,
+) -> Result<(PathBuf, Option<PathBuf>, HistoryOptions), CliError> {
+    let usage_missing = || CliError::Input(format!("history 缺少目标仓库路径\n{USAGE}"));
+
+    let mut target: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut options = HistoryOptions::default();
+
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--repo" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--repo 缺少目标仓库路径".to_string()))?;
+                target = Some(PathBuf::from(value));
+            }
+            "--out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--out 缺少文件路径".to_string()))?;
+                out = Some(PathBuf::from(value));
+            }
+            "--max-commits" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--max-commits 缺少数值".to_string()))?;
+                let parsed = value.parse::<usize>().map_err(|_| {
+                    CliError::Input(format!("--max-commits 需要正整数，实际: {value}"))
+                })?;
+                if parsed == 0 {
+                    return Err(CliError::Input("--max-commits 必须大于 0".to_string()));
+                }
+                options.max_commits = parsed;
+            }
+            "--since" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--since 缺少日期".to_string()))?;
+                options.since = Some(value);
+            }
+            "--until" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--until 缺少日期".to_string()))?;
+                options.until = Some(value);
+            }
+            other if other.starts_with("--") => {
+                return Err(CliError::Input(format!("未知参数: {other}\n{USAGE}")));
+            }
+            positional => {
+                if target.is_some() {
+                    return Err(CliError::Input(format!(
+                        "history 只接受一个目标仓库路径，多余参数: {positional}"
+                    )));
+                }
+                target = Some(PathBuf::from(positional));
+            }
+        }
+    }
+
+    let target = target.ok_or_else(usage_missing)?;
+    Ok((target, out, options))
+}
+
+fn history_error(error: HistoryError) -> CliError {
+    match error {
+        HistoryError::NotDirectory(message) => CliError::Input(message),
+        HistoryError::Io(message) => CliError::Internal(message),
+        other => CliError::History(other.to_string()),
+    }
 }
 
 fn parse_repo_and_out(
