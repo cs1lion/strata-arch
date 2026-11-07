@@ -66,4 +66,14 @@
 - 全量：`cargo test --workspace` 93 passed / 0 failed；`cargo fmt --all --check` OK。
 - 偏差（未静默放宽，已写入 ticket）：依赖图补足未实现（`import` 不等于执行、落点符号无唯一答案，待产品确认）；调用图对 `root.render(<...>)` 参数内 JSX 不产生 module-toplevel 边，导致部分入口无路径，golden 改从公开组件起步；构建映射为启发式，失败即丢弃；`path` 每次重建调用图与层，无缓存。
 
+## 05 模块下钻与画布交互
+
+- 档位：B（结构/状态断言）+ C（5k 预算）；先写 `crates/arch-view/tests/drilldown.rs` 的断言清单与 7 个测试，再实现。
+- Red（实现前实测）：`cargo test -p arch-view --test drilldown` 编译失败 `error[E0432]: unresolved import arch_view::view`。
+- 完成：`arch-view/src/view.rs`（`CanvasState` / `Viewport` / 符号布局 / 下钻 / 命中 / LOD）、`main.rs` 事件接线、测试 7 项。
+- 实现口径：`screen = world * zoom + pan`；下钻只画本模块符号与模块内调用边；高亮邻居含跨模块符号；返回恢复 pan/zoom；LOD 阈值 0.6。
+- 读数：7 passed / 0 failed；5k 合成 3 次 → 启动中位数 127.5ms / p95 130.4ms，下钻 0.1/0.2ms，返回 0.0/0.0ms；窗口 smoke `map tests/fixtures/layers --auto-close-ms 500` exit 0、墙钟 2116ms（16 CPU / AMD64 Family 25 Model 117）。
+- 全量：`cargo test --workspace` 0 failed；`cargo fmt --all --check` OK。
+- 未验证/偏差：真实窗口点击/滚轮无自动化（仅 smoke，`gpui::test` 未跑通）；截图移交 ticket 11；5k 真实仓库冷启动归 ticket 10；跨模块邻居没有可见 ghost 节点；UI 下钻额外构建一次调用图，无缓存。
+
 （后续每票在此追加）
