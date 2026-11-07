@@ -112,18 +112,17 @@
 
 **数据来源**
 
-- 只读 git 对象库：通过 `rev-list` / `diff-tree` 与读取 commit tree、blob（按 OID）完成，**不 checkout、不建工作树、不改动目标仓库**。
-- 默认只走 **first-parent 链**：主线演化清晰、成本可控；合并提交的第二父分支改动不计入模块指标（在产物中声明该口径）。
-- 默认窗口：最近 500 个 first-parent 提交，或最近 12 个月，先到者为准；可用参数覆盖 `--max-commits`、`--since`、`--until`。
-- 重命名检测使用 `diff-tree -M`（相似度阈值固定），并把重命名前后的路径归并到同一模块谱系。
+- 只读 git 对象库：一次 `git log --first-parent --numstat -M` 获取提交链与逐提交的变更行数（附带父提交与提交时间），**不 checkout、不建工作树、不改动目标仓库**。
+- 默认只走 **first-parent 链**：主线演化清晰、成本可控；合并提交的第二父分支改动不计入模块指标（在产物中声明该口径，合并提交的 diff 整段跳过）。
+- 默认窗口：最近 500 个 first-parent 提交；可用 `--max-commits` 覆盖，或用 `--since` / `--until` 指定日期（12 个月窗口通过 `--since <日期>` 表达）。默认不引入「滚动 12 个月」这类随墙钟漂移的窗口，以保证产物可复现。
+- 重命名检测使用 `git log --numstat -M`（与 `diff-tree -M` 同一套相似度判定），并把重命名前后的路径归并到同一模块谱系，谱系 ID 取窗口内最后一次出现的新路径。
 
 **成本控制**
 
-- 惰性加载：先构建「提交 → 变更路径」轻量索引，模块指标按需计算；UI 只请求视口内与时间线当前刻度需要的模块。
-- 只解析发生变更的 blob；未变更文件不重复解析；blob 按 OID 缓存，同一内容只算一次。
-- 路径过滤：默认忽略 `node_modules`、构建产物目录、二进制与超长文件；忽略规则写入产物元数据。
-- 可选采样：超过窗口上限时可按固定步长采样并显式标记 `sampled=true` 与采样率；采样结果不得伪装成全量。
-- 截断与浅克隆必须显式报告：`truncated` / `shallow` 状态进入产物与 UI，不静默降级。
+- 当前 CLI 产物一次性计算窗口内全部模块指标（默认上限 500 个提交）；GUI 按视口/刻度按需加载留待后续，不改变产物契约。
+- 只读取 `--numstat` 汇总的增删行数，不解析 blob 内容；未变更文件不重复计入，同一提交内按变更路径聚合。
+- 路径过滤：只统计工具识别的源码扩展名（`ts` / `tsx` / `js` / `jsx` / `mjs` / `cjs`），并忽略 `node_modules`、`.git`、构建产物等目录；规则与 `index` 一致。
+- 当前不做采样：超过窗口上限直接截断并标记 `truncated=true`；`sampled` 恒为 `false`、`sampleStep` 为 `null`。截断与浅克隆必须显式报告：`truncated` / `shallow` 状态进入产物与 UI，不静默降级。
 
 **指标（模块级）**
 
@@ -141,7 +140,7 @@
 
 **产物与呈现**
 
-- `history.json` 为独立版本化产物，含 `schemaVersion`、窗口参数、采样/截断状态、模块指标集合。
+- `history.json` 为独立版本化产物（`HISTORY_SCHEMA_VERSION = 1`），含 `schemaVersion`、仓库信息（`path` / `head` / `isGit`）、窗口参数（`maxCommits` / `since` / `until` / `firstParent`）、采样/截断状态（`sampled` / `sampleStep` / `truncated` / `shallow`）、统计（`commitsScanned` / `commitsAvailable` / `modules`）与模块指标集合。
 - CLI 提供 `history` 子命令；GUI 提供时间线与模块热力视图。MVP 只要求静态呈现与按刻度刷新；演化动画与探索式交互先占位（见 ticket 13），不阻塞 MVP。
 
 ### 8. 渲染与交互（GPUI）
