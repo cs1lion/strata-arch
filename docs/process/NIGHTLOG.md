@@ -86,4 +86,14 @@
 - 全量：`cargo test --workspace` 0 failed；fmt OK。
 - 偏差/未验证：复用 06 的 `tests/fixtures/path` 而非新建 animation 夹具；帧时间只是状态机更新，不是真实渲染帧；UI 路径叠加停在模块级；动画默认关闭与 16.7ms 预算仍待用户确认。
 
+## 09 演化时间线与模块热力视图
+
+- 档位：B（状态/热力断言）。**流程偏差**：`timeline.rs` 实现先于测试落盘，未取得真实编译 Red；`timeline_scrub.rs` 文件头与 ticket 09 已如实标注，不冒充红绿证据。
+- 完成：`arch-view/src/timeline.rs`（`TimelineState` / `TimelineEntry` / `Heat` / `TimelineFlags` / `heat_for_churn`）、UI `timeline` 子命令（层带 + 热力节点 + 可点击刻度 + 指标 footer + 标记）、测试 6 项。
+- 实现口径：每刻度存「截至该提交」重新采样的 `HistoryArtifact`（`until=@ts+1`）；`scrub_to` 只切读数、越界不动；默认最新；热力固定 `0/1/4/11` 阈值与 `100 + commitCount.min(10)*3 + churn.min(20)`；`sampled/truncated/shallow` 任一存在时不按全量展示。
+- 读数：`cargo test -p arch-view --test timeline_scrub` 6 passed / 0 failed（11.76s）；fixture HEAD `1de5415`、6 刻度 = 6 个 first-parent 提交；`src/app.ts` c1 `1767268800/1/3`、c2 `1767355200/2/5`；`src/helpers.ts` rename `1767441600`、c5 `1767614400/3/6`；UI `timeline: 6 ticks, 3 modules, 1 bands`。
+- 窗口 smoke：`target/debug/arch-view.exe timeline tests/fixtures/history --auto-close-ms 500` → exit 0，墙钟 4435ms。
+- 全量：`cargo test --workspace` 115 passed / 0 failed；`cargo fmt --all --check` OK。
+- 偏差/未验证：`--screenshot` 未实现（gpui 0.2.2 无离屏导出），移交 ticket 11；excalidraw 时间线未测（L2 缓存无 `.git`）；每刻度重跑前缀历史，fixture 6 刻度 4435ms，大仓 O(n²) 不可用（作为 ticket 10 性能输入）；刻度点击/节点选择仅 smoke，无事件自动化；ticket 原文「5 个提交」与实际 6 个不符，已保留原描述并标注。
+
 （后续每票在此追加）
