@@ -42,7 +42,7 @@ pub struct CallGraphStats {
     pub unattributed_calls: usize,
     /// 导入解析失败（`dynamic-import` 及其他非字面量导入）。
     pub unresolved_imports: usize,
-    /// 已知外部包绑定上的成员调用（`external-call`）。
+    /// 已知外部包绑定上的调用（成员调用、裸调用或 `new`）。
     pub external_calls: usize,
 }
 
@@ -89,6 +89,29 @@ pub struct CallUnresolved {
     pub reason: &'static str,
     pub line: usize,
     pub column: usize,
+}
+
+/// 调用图产物的 schema 版本。
+///
+/// v1：ticket 04 初版（单一 `stats.unresolved`，无 `external-call`）。
+/// v2：04b/04c（拆分统计字段、`external-call`、默认聚合 `call-unattributed`）。
+pub const CALLGRAPH_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Copy)]
+pub struct CallGraphOptions {
+    /// 是否在 `unresolved` 中保留 `call-unattributed` 明细。
+    ///
+    /// 默认 `false`：明细只出现在诊断入口（CLI `--include-unattributed`），
+    /// 产物中仅保留聚合计数，避免把噪声灌进图与路径查询。
+    pub include_unattributed: bool,
+}
+
+impl Default for CallGraphOptions {
+    fn default() -> Self {
+        Self {
+            include_unattributed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +187,15 @@ impl LineIndex {
 
 /// 构建调用图产物。只读取目标仓库，不写入。
 pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArtifact, ScanError> {
+    build_call_graph_with_options(root, tool_version, CallGraphOptions::default())
+}
+
+/// 构建调用图产物，并允许诊断入口按需保留 `call-unattributed` 明细。
+pub fn build_call_graph_with_options(
+    root: &Path,
+    tool_version: &str,
+    options: CallGraphOptions,
+) -> Result<CallGraphArtifact, ScanError> {
     let index = build_index(root, tool_version)?;
     let root = fs::canonicalize(root)
         .map_err(|error| ScanError::NotADirectory(format!("{}（{error}）", root.display())))?;
@@ -184,7 +216,8 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
         let tokens = tokenize(&source);
         let lines = LineIndex::new(&source);
         let (raw_symbols, declarations) = scan_symbols(&tokens);
-        let imports = parse_imports(&tokens, &source, &config, &root, path, &id);
+        let mut imports = parse_imports(&tokens, &source, &config, &root, path, &id);
+        imports.extend(parse_require_bindings(&tokens, &config, &root, path));
         modules.push(ModuleScan {
             id,
             path: path.clone(),
@@ -265,7 +298,7 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
             column,
         })
         .collect::<Vec<_>>();
-    let unresolved = unresolved_keys
+    let mut unresolved = unresolved_keys
         .into_iter()
         .map(
             |(module, expression, reason, line, column)| CallUnresolved {
@@ -292,8 +325,12 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
         .filter(|entry| entry.reason == "external-call")
         .count();
 
+    if !options.include_unattributed {
+        unresolved.retain(|entry| entry.reason != "call-unattributed");
+    }
+
     Ok(CallGraphArtifact {
-        schema_version: index.schema_version,
+        schema_version: CALLGRAPH_SCHEMA_VERSION,
         tool_version: index.tool_version,
         repo: index.repo,
         stats: CallGraphStats {
@@ -880,6 +917,116 @@ enum BindingForm {
     Namespace,
 }
 
+/// 识别 CommonJS 常见写法，把 `require()` 的接收者纳入导入绑定：
+/// `const ns = require("pkg")` 与 `const { named } = require("pkg")`。
+fn parse_require_bindings(
+    tokens: &[Token],
+    config: &ProjectConfig,
+    root: &Path,
+    source_path: &Path,
+) -> BTreeMap<String, ImportBinding> {
+    let mut bindings = BTreeMap::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if !punct_at(tokens, index, '=')
+            || ident_at(tokens, index + 1) != Some("require")
+            || !punct_at(tokens, index + 2, '(')
+        {
+            index += 1;
+            continue;
+        }
+        let Some(specifier) = string_at(tokens, index + 3) else {
+            index += 1;
+            continue;
+        };
+        if !punct_at(tokens, index + 4, ')') {
+            index += 1;
+            continue;
+        }
+
+        let target = classify_specifier(config, root, source_path, &specifier);
+        let left = index.wrapping_sub(1);
+        if let Some(local) = ident_at(tokens, left) {
+            match &target {
+                SpecifierTarget::Local(module) => {
+                    bindings.insert(
+                        local.to_string(),
+                        ImportBinding::Namespace {
+                            module: module.clone(),
+                        },
+                    );
+                }
+                SpecifierTarget::External => {
+                    bindings.insert(local.to_string(), ImportBinding::External);
+                }
+                SpecifierTarget::Unresolved => {}
+            }
+        } else if punct_at(tokens, left, '}') {
+            if let Some(open) = matching_open_brace(tokens, left) {
+                let mut cursor = open + 1;
+                while cursor < left {
+                    let Some(imported) = ident_at(tokens, cursor) else {
+                        cursor += 1;
+                        continue;
+                    };
+                    let mut local = imported.to_string();
+                    let mut next = cursor + 1;
+                    if punct_at(tokens, next, ':') || ident_at(tokens, next) == Some("as") {
+                        if let Some(alias) = ident_at(tokens, next + 1) {
+                            local = alias.to_string();
+                            next += 2;
+                        }
+                    }
+                    match &target {
+                        SpecifierTarget::Local(module) => {
+                            bindings.insert(
+                                local,
+                                ImportBinding::Named {
+                                    module: module.clone(),
+                                    imported: imported.to_string(),
+                                },
+                            );
+                        }
+                        SpecifierTarget::External => {
+                            bindings.insert(local, ImportBinding::External);
+                        }
+                        SpecifierTarget::Unresolved => {}
+                    }
+                    cursor = next;
+                }
+            }
+        }
+
+        index += 1;
+    }
+    bindings
+}
+
+fn string_at(tokens: &[Token], index: usize) -> Option<String> {
+    match token_kind(tokens, index) {
+        Some(TokenKind::Str(value)) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn matching_open_brace(tokens: &[Token], close: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut index = close;
+    loop {
+        match token_kind(tokens, index) {
+            Some(TokenKind::Punct('}')) => depth += 1,
+            Some(TokenKind::Punct('{')) => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index = index.checked_sub(1)?;
+    }
+}
+
 fn classify_specifier(
     config: &ProjectConfig,
     root: &Path,
@@ -978,13 +1125,12 @@ fn scan_calls(
             if let Some(target) = resolve_bare(module, word, lookup) {
                 edges.insert((source, target, "call".to_string(), line, column));
             } else {
-                unresolved.insert((
-                    module.id.clone(),
-                    word.clone(),
-                    "call-unattributed",
-                    line,
-                    column,
-                ));
+                let reason = if matches!(module.imports.get(word), Some(ImportBinding::External)) {
+                    "external-call"
+                } else {
+                    "call-unattributed"
+                };
+                unresolved.insert((module.id.clone(), word.clone(), reason, line, column));
             }
         }
 
