@@ -5,6 +5,7 @@
 
 pub mod callgraph;
 pub(crate) mod config;
+pub mod history;
 pub(crate) mod imports;
 pub mod layers;
 pub(crate) mod resolve;
