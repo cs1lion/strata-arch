@@ -1,3 +1,4 @@
+use arch_core::callgraph::{build_call_graph_with_options, CallGraphOptions};
 use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
 use std::env;
 use std::fs;
@@ -7,7 +8,8 @@ use std::process::ExitCode;
 const USAGE: &str = "用法:
   arch-cli --schema
   arch-cli index <目标仓库> [--out <产物文件>]
-  arch-cli layers <目标仓库> [--out <产物文件>]";
+  arch-cli layers <目标仓库> [--out <产物文件>]
+  arch-cli callgraph <目标仓库> [--out <产物文件>] [--include-unattributed]";
 
 enum CliError {
     Input(String),
@@ -44,6 +46,7 @@ fn run() -> Result<(), CliError> {
         }
         "index" => run_index(args),
         "layers" => run_layers(args),
+        "callgraph" => run_callgraph(args),
         other => Err(CliError::Input(format!("未知子命令: {other}\n{USAGE}"))),
     }
 }
@@ -62,6 +65,53 @@ fn run_layers(args: impl Iterator<Item = String>) -> Result<(), CliError> {
     let json = serde_json::to_string_pretty(&artifact)
         .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
     emit_json(&json, out)
+}
+
+fn run_callgraph(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let (target, out, include_unattributed) = parse_callgraph_args(args)?;
+    let artifact = build_call_graph_with_options(
+        &target,
+        env!("CARGO_PKG_VERSION"),
+        CallGraphOptions {
+            include_unattributed,
+        },
+    )
+    .map_err(scan_error)?;
+    let json = serde_json::to_string_pretty(&artifact)
+        .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
+    emit_json(&json, out)
+}
+
+fn parse_callgraph_args(
+    mut args: impl Iterator<Item = String>,
+) -> Result<(PathBuf, Option<PathBuf>, bool), CliError> {
+    let target = args
+        .next()
+        .ok_or_else(|| CliError::Input(format!("callgraph 缺少目标仓库路径\n{USAGE}")))?;
+    if target.starts_with("--") {
+        return Err(CliError::Input(format!(
+            "callgraph 缺少目标仓库路径\n{USAGE}"
+        )));
+    }
+
+    let mut out: Option<PathBuf> = None;
+    let mut include_unattributed = false;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--out 缺少文件路径".to_string()))?;
+                out = Some(PathBuf::from(value));
+            }
+            "--include-unattributed" => include_unattributed = true,
+            other => {
+                return Err(CliError::Input(format!("未知参数: {other}\n{USAGE}")));
+            }
+        }
+    }
+
+    Ok((PathBuf::from(target), out, include_unattributed))
 }
 
 fn parse_repo_and_out(

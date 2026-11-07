@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use arch_core::callgraph::build_call_graph;
+use arch_core::callgraph::{build_call_graph, build_call_graph_with_options, CallGraphOptions};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -34,7 +34,8 @@ fn golden_symbols_use_stable_ids_and_positions() {
     let artifact = graph();
     let symbols = symbol_map(&artifact);
 
-    assert_eq!(artifact.symbols.len(), 26, "fixture symbol baseline");
+    assert_eq!(artifact.schema_version, 2, "call graph schema version");
+    assert_eq!(artifact.symbols.len(), 32, "fixture symbol baseline");
     assert_eq!(artifact.edges.len(), 6, "fixture call edge baseline");
     assert_eq!(
         artifact.module_edges.len(),
@@ -43,8 +44,8 @@ fn golden_symbols_use_stable_ids_and_positions() {
     );
     assert_eq!(
         artifact.unresolved.len(),
-        4,
-        "fixture unresolved baseline (1 call, 1 import, 2 external)"
+        7,
+        "default artifact must aggregate call-unattributed entries"
     );
 
     for id in [
@@ -66,6 +67,10 @@ fn golden_symbols_use_stable_ids_and_positions() {
         "src/overload.ts#function:overloaded",
         "src/external.ts#function:useMemoValue",
         "src/external.ts#function:readIt",
+        "src/external-bare.ts#function:classNames",
+        "src/external-bare.ts#function:lint",
+        "src/commonjs.js#function:cjsMember",
+        "src/commonjs.js#function:cjsBare",
     ] {
         assert!(symbols.contains_key(id), "missing symbol {id}");
     }
@@ -160,13 +165,14 @@ fn golden_dynamic_import_edge_and_unresolved_records_coexist() {
     let unattributed = artifact
         .unresolved
         .iter()
-        .find(|entry| entry.reason == "call-unattributed")
-        .expect("unattributed member call must be recorded");
-    assert_eq!(unattributed.module, "src/b.ts");
+        .find(|entry| entry.reason == "call-unattributed");
     assert!(
-        unattributed.expression.contains("unknownMethod"),
-        "unresolved expression should carry the callee: {}",
-        unattributed.expression
+        unattributed.is_none(),
+        "call-unattributed must be aggregated into stats by default"
+    );
+    assert_eq!(
+        artifact.stats.unattributed_calls, 1,
+        "aggregate count must still include unattributed calls"
     );
 
     let dynamic_unresolved = artifact
@@ -237,6 +243,44 @@ fn golden_edges_never_dangle_and_module_edges_project_symbol_edges() {
 }
 
 #[test]
+fn golden_include_unattributed_restores_detail_without_changing_counts() {
+    let default = graph();
+    let full = build_call_graph_with_options(
+        &fixture_dir(),
+        "test",
+        CallGraphOptions {
+            include_unattributed: true,
+        },
+    )
+    .expect("call graph with unattributed detail");
+
+    assert_eq!(
+        default.unresolved.len(),
+        7,
+        "default artifact aggregates call-unattributed"
+    );
+    assert_eq!(
+        full.unresolved.len(),
+        8,
+        "diagnostic artifact keeps call-unattributed detail"
+    );
+    let detail = full
+        .unresolved
+        .iter()
+        .find(|entry| entry.reason == "call-unattributed")
+        .expect("unattributed detail is restored");
+    assert_eq!(detail.module, "src/b.ts");
+    assert!(detail.expression.contains("unknownMethod"));
+
+    assert_eq!(
+        default.stats.unattributed_calls,
+        full.stats.unattributed_calls
+    );
+    assert_eq!(default.stats.external_calls, full.stats.external_calls);
+    assert_eq!(default.stats.edges, full.stats.edges);
+}
+
+#[test]
 fn golden_output_is_deterministic() {
     let first = serde_json::to_vec(&graph()).expect("serialize first");
     let second = serde_json::to_vec(&graph()).expect("serialize second");
@@ -249,19 +293,27 @@ fn golden_noise_is_split_and_declaration_files_are_not_scanned() {
     let stats = serde_json::to_value(&artifact).expect("serialize")["stats"].clone();
 
     assert_eq!(
-        stats["files"], 9,
+        stats["files"], 11,
         "declaration file must not count as scanned"
     );
     assert_eq!(stats["unattributedCalls"], 1, "unknown call baseline");
     assert_eq!(stats["unresolvedImports"], 1, "dynamic import baseline");
-    assert_eq!(stats["externalCalls"], 2, "external member call baseline");
+    assert_eq!(stats["externalCalls"], 6, "external call baseline");
+
+    assert!(
+        !artifact
+            .unresolved
+            .iter()
+            .any(|entry| entry.reason == "call-unattributed"),
+        "default artifact must not expose call-unattributed entries"
+    );
 
     let external = artifact
         .unresolved
         .iter()
         .filter(|entry| entry.reason == "external-call")
         .collect::<Vec<_>>();
-    assert_eq!(external.len(), 2, "external member calls must be tagged");
+    assert_eq!(external.len(), 6, "external calls must be tagged");
     assert!(
         external
             .iter()
@@ -278,6 +330,43 @@ fn golden_noise_is_split_and_declaration_files_are_not_scanned() {
             .any(|entry| entry.expression.contains("fs.readFileSync")),
         "namespace external import member call must be tagged"
     );
+
+    let bare = external
+        .iter()
+        .filter(|entry| entry.module == "src/external-bare.ts")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bare.len(),
+        2,
+        "bare external calls (clsx, new CLIEngine) must be tagged: {:?}",
+        bare.iter()
+            .map(|entry| &entry.expression)
+            .collect::<Vec<_>>()
+    );
+    assert!(bare.iter().any(|entry| entry.expression.contains("clsx")));
+    assert!(bare
+        .iter()
+        .any(|entry| entry.expression.contains("CLIEngine")));
+
+    let commonjs = external
+        .iter()
+        .filter(|entry| entry.module == "src/commonjs.js")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commonjs.len(),
+        2,
+        "CommonJS require bindings must be treated like ES imports: {:?}",
+        commonjs
+            .iter()
+            .map(|entry| &entry.expression)
+            .collect::<Vec<_>>()
+    );
+    assert!(commonjs
+        .iter()
+        .any(|entry| entry.expression.contains("React.useMemo")));
+    assert!(commonjs
+        .iter()
+        .any(|entry| entry.expression.contains("readFileSync")));
 
     assert!(
         !artifact
