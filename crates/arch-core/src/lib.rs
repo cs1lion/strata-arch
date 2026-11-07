@@ -3,10 +3,11 @@
 //! 当前覆盖 ticket 01 的产物契约与文件发现，以及 ticket 02 的模块级依赖图：
 //! 相对导入、`tsconfig` 路径别名、workspace 包与外部包级节点。
 
-mod config;
-mod imports;
+pub mod callgraph;
+pub(crate) mod config;
+pub(crate) mod imports;
 pub mod layers;
-mod resolve;
+pub(crate) mod resolve;
 
 use config::{ProjectConfig, WorkspaceLookup};
 use imports::{scan_imports, ScannedImport};
@@ -405,7 +406,7 @@ fn external_package_name(specifier: &str) -> Option<String> {
     }
 }
 
-fn walk(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
+pub(crate) fn walk(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
     let entries = fs::read_dir(current)
         .map_err(|error| ScanError::Io(format!("{}（{error}）", display_path(current))))?;
     for entry in entries {
@@ -474,7 +475,7 @@ fn count_lines_bytes(bytes: &[u8]) -> usize {
     }
 }
 
-fn relative_slash_path(root: &Path, path: &Path) -> String {
+pub(crate) fn relative_slash_path(root: &Path, path: &Path) -> String {
     let relative = path.strip_prefix(root).unwrap_or(path);
     relative
         .components()

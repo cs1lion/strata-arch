@@ -36,7 +36,7 @@ pub enum ScannedImport {
 }
 
 #[derive(Debug, Clone)]
-enum TokenKind {
+pub(crate) enum TokenKind {
     Ident(String),
     Str(String),
     Template { text: String, has_expression: bool },
@@ -45,10 +45,10 @@ enum TokenKind {
 }
 
 #[derive(Debug, Clone)]
-struct Token {
-    kind: TokenKind,
-    start: usize,
-    end: usize,
+pub(crate) struct Token {
+    pub(crate) kind: TokenKind,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 /// 扫描源码中的导入。注释、字符串、模板字面量与正则字面量内的文本不会被误判。
@@ -114,7 +114,7 @@ pub fn scan_imports(source: &str) -> Vec<ScannedImport> {
     imports
 }
 
-fn token_kind(tokens: &[Token], index: usize) -> Option<&TokenKind> {
+pub(crate) fn token_kind(tokens: &[Token], index: usize) -> Option<&TokenKind> {
     tokens.get(index).map(|token| &token.kind)
 }
 
@@ -227,7 +227,7 @@ fn parse_call(
     }
 }
 
-fn tokenize(source: &str) -> Vec<Token> {
+pub(crate) fn tokenize(source: &str) -> Vec<Token> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
