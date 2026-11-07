@@ -3,11 +3,16 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::layers::build_layers;
-use arch_view::layout::{layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout};
+use arch_view::layout::{
+    layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
+};
+use arch_view::view::{CanvasState, Level, SymbolLayout, Viewport};
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, IntoElement,
-    PathBuilder, Render, Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
+    ScrollDelta, ScrollWheelEvent, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -57,6 +62,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 
     let artifact = build_layers(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("构建层产物失败: {error}"))?;
+    let callgraph = build_call_graph(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
+        .map_err(|error| format!("构建调用图失败: {error}"))?;
     let layout = layout_map(&artifact, LayoutConfig::default());
 
     let band_summary = layout
@@ -82,7 +89,15 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |_, cx| cx.new(|_| MapView { layout }),
+            move |_, cx| {
+                cx.new(|_| MapView {
+                    state: CanvasState::new(layout),
+                    callgraph,
+                    press_origin: None,
+                    drag_last: None,
+                    dragged: false,
+                })
+            },
         )
         .expect("open map window");
         cx.activate(true);
@@ -102,68 +117,264 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 }
 
 struct MapView {
-    layout: MapLayout,
+    state: CanvasState,
+    callgraph: CallGraphArtifact,
+    press_origin: Option<LayoutPoint>,
+    drag_last: Option<LayoutPoint>,
+    dragged: bool,
+}
+
+impl MapView {
+    fn screen_position(position: gpui::Point<gpui::Pixels>) -> LayoutPoint {
+        LayoutPoint {
+            x: f32::from(position.x),
+            y: f32::from(position.y),
+        }
+    }
+
+    fn finish_press(&mut self, position: LayoutPoint) {
+        if self.dragged {
+            return;
+        }
+        let hit = self.state.select_at(position);
+        if matches!(self.state.level(), Level::Modules) {
+            if let Some(module) = hit {
+                self.state.drill_down(&module, &self.callgraph);
+            }
+        }
+    }
 }
 
 impl Render for MapView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let layout = self.layout.clone();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let viewport = self.state.viewport();
+        let labels = self.state.labels_visible();
+        let selected = self.state.selected().map(ToOwned::to_owned);
+        let highlighted = self.state.highlighted();
+        let scene = match self.state.symbol_layout() {
+            Some(symbols) => Scene::Symbols(symbols.clone()),
+            None => Scene::Modules(self.state.map().clone()),
+        };
+        let can_go_back = self.state.can_go_back();
+
         let mut root = div()
+            .id("canvas")
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x0d1117));
+            .bg(rgb(0x0d1117))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
+                    let position = Self::screen_position(event.position);
+                    this.press_origin = Some(position);
+                    this.drag_last = Some(position);
+                    this.dragged = false;
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                if !event.dragging() {
+                    return;
+                }
+                let position = Self::screen_position(event.position);
+                if let Some(last) = this.drag_last {
+                    let dx = position.x - last.x;
+                    let dy = position.y - last.y;
+                    this.state.pan_by(dx, dy);
+                    if let Some(origin) = this.press_origin {
+                        if (position.x - origin.x).abs() + (position.y - origin.y).abs() > 3.0 {
+                            this.dragged = true;
+                        }
+                    }
+                    cx.notify();
+                }
+                this.drag_last = Some(position);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _window, cx| {
+                    this.finish_press(Self::screen_position(event.position));
+                    this.press_origin = None;
+                    this.drag_last = None;
+                    this.dragged = false;
+                    cx.notify();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+                let anchor = Self::screen_position(event.position);
+                let delta = match event.delta {
+                    ScrollDelta::Pixels(delta) => f32::from(delta.y),
+                    ScrollDelta::Lines(delta) => delta.y * 20.0,
+                };
+                if delta.abs() > f32::EPSILON {
+                    let factor = if delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    this.state.zoom_at(anchor, factor);
+                    cx.notify();
+                }
+            }));
 
-        for band in &layout.bands {
-            root = root.child(band_element(band));
+        if can_go_back {
+            root = root.child(
+                div()
+                    .id("back")
+                    .absolute()
+                    .left(px(12.))
+                    .top(px(12.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .text_xs()
+                    .text_color(rgb(0xe6edf3))
+                    .child("← 返回地图")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.state.go_back();
+                        this.press_origin = None;
+                        this.drag_last = None;
+                        cx.notify();
+                    })),
+            );
         }
 
-        let edges = layout.edges.clone();
-        root = root.child(
-            div()
-                .absolute()
-                .left(px(0.))
-                .top(px(0.))
-                .w(px(layout.width))
-                .h(px(layout.height))
-                .child(canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| {
-                        for edge in &edges {
-                            let color = if edge.direction_adjusted {
-                                rgb(0xd98a3d)
-                            } else {
-                                rgb(0x3d4b5c)
-                            };
-                            let mut builder = PathBuilder::stroke(px(1.));
-                            if edge.direction_adjusted {
-                                builder = builder.dash_array(&[px(4.), px(2.)]);
-                            }
-                            builder.move_to(point(
-                                bounds.origin.x + px(edge.from.x),
-                                bounds.origin.y + px(edge.from.y),
-                            ));
-                            builder.line_to(point(
-                                bounds.origin.x + px(edge.to.x),
-                                bounds.origin.y + px(edge.to.y),
-                            ));
-                            if let Ok(path) = builder.build() {
-                                window.paint_path(path, color);
-                            }
-                        }
-                    },
-                )),
-        );
+        match scene {
+            Scene::Modules(map) => {
+                for band in &map.bands {
+                    root = root.child(band_element(band, viewport));
+                }
+                let edges = map
+                    .edges
+                    .iter()
+                    .map(|edge| EdgeDraw {
+                        from: viewport.screen_point(edge.from),
+                        to: viewport.screen_point(edge.to),
+                        adjusted: edge.direction_adjusted,
+                    })
+                    .collect::<Vec<_>>();
+                root = root.child(edge_canvas(
+                    edges,
+                    map.width * viewport.zoom,
+                    map.height * viewport.zoom,
+                ));
 
-        for node in &layout.nodes {
-            root = root.child(node_element(node));
+                for node in &map.nodes {
+                    root = root.child(node_element(
+                        node,
+                        viewport,
+                        labels,
+                        selected.as_deref(),
+                        &highlighted,
+                    ));
+                }
+            }
+            Scene::Symbols(symbols) => {
+                let edges = symbols
+                    .edges
+                    .iter()
+                    .map(|edge| EdgeDraw {
+                        from: viewport.screen_point(edge.from),
+                        to: viewport.screen_point(edge.to),
+                        adjusted: false,
+                    })
+                    .collect::<Vec<_>>();
+                root = root.child(edge_canvas(
+                    edges,
+                    symbols.width * viewport.zoom,
+                    symbols.height * viewport.zoom,
+                ));
+
+                for node in &symbols.nodes {
+                    root = root.child(symbol_node_element(
+                        node,
+                        viewport,
+                        labels,
+                        selected.as_deref(),
+                        &highlighted,
+                    ));
+                }
+            }
         }
 
         root
     }
 }
 
-fn band_element(band: &BandLayout) -> impl IntoElement {
+enum Scene {
+    Modules(MapLayout),
+    Symbols(SymbolLayout),
+}
+
+struct EdgeDraw {
+    from: LayoutPoint,
+    to: LayoutPoint,
+    adjusted: bool,
+}
+
+fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElement {
+    div()
+        .absolute()
+        .left(px(0.))
+        .top(px(0.))
+        .w(px(width))
+        .h(px(height))
+        .child(canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                for edge in &edges {
+                    let color = if edge.adjusted {
+                        rgb(0xd98a3d)
+                    } else {
+                        rgb(0x3d4b5c)
+                    };
+                    let mut builder = PathBuilder::stroke(px(1.));
+                    if edge.adjusted {
+                        builder = builder.dash_array(&[px(4.), px(2.)]);
+                    }
+                    builder.move_to(point(
+                        bounds.origin.x + px(edge.from.x),
+                        bounds.origin.y + px(edge.from.y),
+                    ));
+                    builder.line_to(point(
+                        bounds.origin.x + px(edge.to.x),
+                        bounds.origin.y + px(edge.to.y),
+                    ));
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, color);
+                    }
+                }
+            },
+        ))
+}
+
+fn scaled_rect(rect: arch_view::layout::Rect, viewport: Viewport) -> arch_view::layout::Rect {
+    let origin = viewport.screen_point(LayoutPoint {
+        x: rect.x,
+        y: rect.y,
+    });
+    arch_view::layout::Rect::new(
+        origin.x,
+        origin.y,
+        rect.width * viewport.zoom,
+        rect.height * viewport.zoom,
+    )
+}
+
+fn selection_border(
+    id: &str,
+    default: gpui::Rgba,
+    selected: Option<&str>,
+    highlighted: &std::collections::BTreeSet<String>,
+) -> gpui::Rgba {
+    if selected == Some(id) {
+        rgb(0xf2f5f8)
+    } else if highlighted.contains(id) {
+        rgb(0xd98a3d)
+    } else {
+        default
+    }
+}
+
+fn band_element(band: &BandLayout, viewport: Viewport) -> impl IntoElement {
+    let rect = scaled_rect(band.rect, viewport);
     let (background, border, label) = if band.is_unclassified {
         (rgb(0x1f1a12), rgb(0x6b552f), rgb(0xd98a3d))
     } else if band.is_external {
@@ -173,10 +384,10 @@ fn band_element(band: &BandLayout) -> impl IntoElement {
     };
     div()
         .absolute()
-        .left(px(band.rect.x))
-        .top(px(band.rect.y))
-        .w(px(band.rect.width))
-        .h(px(band.rect.height))
+        .left(px(rect.x))
+        .top(px(rect.y))
+        .w(px(rect.width))
+        .h(px(rect.height))
         .bg(background)
         .border_b_1()
         .border_color(border)
@@ -190,7 +401,14 @@ fn band_element(band: &BandLayout) -> impl IntoElement {
         )
 }
 
-fn node_element(node: &NodeLayout) -> impl IntoElement {
+fn node_element(
+    node: &NodeLayout,
+    viewport: Viewport,
+    labels: bool,
+    selected: Option<&str>,
+    highlighted: &std::collections::BTreeSet<String>,
+) -> impl IntoElement {
+    let rect = scaled_rect(node.rect, viewport);
     let background = layer_color(node.layer, node.is_unclassified);
     let border = if node.is_unclassified {
         rgb(0xd98a3d)
@@ -199,13 +417,14 @@ fn node_element(node: &NodeLayout) -> impl IntoElement {
     } else {
         rgb(0x2c3a4a)
     };
+    let border = selection_border(&node.id, border, selected, highlighted);
 
     let mut element = div()
         .absolute()
-        .left(px(node.rect.x))
-        .top(px(node.rect.y))
-        .w(px(node.rect.width))
-        .h(px(node.rect.height))
+        .left(px(rect.x))
+        .top(px(rect.y))
+        .w(px(rect.width))
+        .h(px(rect.height))
         .overflow_hidden()
         .rounded(px(4.))
         .border_1()
@@ -213,13 +432,16 @@ fn node_element(node: &NodeLayout) -> impl IntoElement {
         .bg(background)
         .flex()
         .items_center()
-        .px(px(6.))
-        .child(
+        .px(px(6.));
+
+    if labels {
+        element = element.child(
             div()
                 .text_xs()
                 .text_color(rgb(0xe6edf3))
                 .child(node.id.clone()),
         );
+    }
 
     if node.is_unclassified || node.is_external {
         element = element.child(
@@ -238,6 +460,54 @@ fn node_element(node: &NodeLayout) -> impl IntoElement {
     }
 
     element
+}
+
+fn symbol_node_element(
+    node: &arch_view::view::SymbolNodeLayout,
+    viewport: Viewport,
+    labels: bool,
+    selected: Option<&str>,
+    highlighted: &std::collections::BTreeSet<String>,
+) -> impl IntoElement {
+    let rect = scaled_rect(node.rect, viewport);
+    let background = symbol_kind_color(node.kind);
+    let border = selection_border(&node.id, rgb(0x2c3a4a), selected, highlighted);
+
+    let mut element = div()
+        .absolute()
+        .left(px(rect.x))
+        .top(px(rect.y))
+        .w(px(rect.width))
+        .h(px(rect.height))
+        .overflow_hidden()
+        .rounded(px(4.))
+        .border_1()
+        .border_color(border)
+        .bg(background)
+        .flex()
+        .items_center()
+        .px(px(6.));
+
+    if labels {
+        element = element.child(
+            div()
+                .text_xs()
+                .text_color(rgb(0xe6edf3))
+                .child(node.name.clone()),
+        );
+    }
+
+    element
+}
+
+fn symbol_kind_color(kind: &str) -> gpui::Rgba {
+    match kind {
+        "function" => rgb(0x244a66),
+        "component" => rgb(0x4a3768),
+        "class" => rgb(0x5f4524),
+        "method" => rgb(0x23543d),
+        _ => rgb(0x2a3440),
+    }
 }
 
 fn layer_color(layer: &str, is_unclassified: bool) -> gpui::Rgba {
