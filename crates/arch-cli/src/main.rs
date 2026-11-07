@@ -1,4 +1,4 @@
-use arch_core::{build_index, ScanError, SCHEMA_VERSION};
+use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -6,7 +6,8 @@ use std::process::ExitCode;
 
 const USAGE: &str = "用法:
   arch-cli --schema
-  arch-cli index <目标仓库> [--out <产物文件>]";
+  arch-cli index <目标仓库> [--out <产物文件>]
+  arch-cli layers <目标仓库> [--out <产物文件>]";
 
 enum CliError {
     Input(String),
@@ -42,16 +43,38 @@ fn run() -> Result<(), CliError> {
             Ok(())
         }
         "index" => run_index(args),
+        "layers" => run_layers(args),
         other => Err(CliError::Input(format!("未知子命令: {other}\n{USAGE}"))),
     }
 }
 
-fn run_index(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
+fn run_index(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let (target, out) = parse_repo_and_out("index", args)?;
+    let artifact = build_index(&target, env!("CARGO_PKG_VERSION")).map_err(scan_error)?;
+    let json = serde_json::to_string_pretty(&artifact)
+        .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
+    emit_json(&json, out)
+}
+
+fn run_layers(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let (target, out) = parse_repo_and_out("layers", args)?;
+    let artifact = build_layers(&target, env!("CARGO_PKG_VERSION")).map_err(scan_error)?;
+    let json = serde_json::to_string_pretty(&artifact)
+        .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
+    emit_json(&json, out)
+}
+
+fn parse_repo_and_out(
+    command: &str,
+    mut args: impl Iterator<Item = String>,
+) -> Result<(PathBuf, Option<PathBuf>), CliError> {
     let target = args
         .next()
-        .ok_or_else(|| CliError::Input(format!("index 缺少目标仓库路径\n{USAGE}")))?;
+        .ok_or_else(|| CliError::Input(format!("{command} 缺少目标仓库路径\n{USAGE}")))?;
     if target.starts_with("--") {
-        return Err(CliError::Input(format!("index 缺少目标仓库路径\n{USAGE}")));
+        return Err(CliError::Input(format!(
+            "{command} 缺少目标仓库路径\n{USAGE}"
+        )));
     }
 
     let mut out: Option<PathBuf> = None;
@@ -69,18 +92,19 @@ fn run_index(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
         }
     }
 
-    let artifact = build_index(&PathBuf::from(&target), env!("CARGO_PKG_VERSION")).map_err(
-        |error| match error {
-            ScanError::TooManyFiles { .. } | ScanError::NotADirectory(_) => {
-                CliError::Input(error.to_string())
-            }
-            ScanError::Io(_) => CliError::Internal(error.to_string()),
-        },
-    )?;
+    Ok((PathBuf::from(target), out))
+}
 
-    let json = serde_json::to_string_pretty(&artifact)
-        .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?;
+fn scan_error(error: ScanError) -> CliError {
+    match error {
+        ScanError::TooManyFiles { .. } | ScanError::NotADirectory(_) => {
+            CliError::Input(error.to_string())
+        }
+        ScanError::Io(_) => CliError::Internal(error.to_string()),
+    }
+}
 
+fn emit_json(json: &str, out: Option<PathBuf>) -> Result<(), CliError> {
     if let Some(path) = out {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -95,6 +119,5 @@ fn run_index(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
     } else {
         println!("{json}");
     }
-
     Ok(())
 }

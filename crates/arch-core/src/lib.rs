@@ -5,6 +5,7 @@
 
 mod config;
 mod imports;
+pub mod layers;
 mod resolve;
 
 use config::{ProjectConfig, WorkspaceLookup};
