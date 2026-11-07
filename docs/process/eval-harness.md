@@ -3,8 +3,9 @@
 本文定义 Strata 解析质量的固定评估方式：固定脚本 + 具体案例 + 机器可读读数。
 目标是让“解析得对不对”可复现、可追溯、可门禁，而不是靠人工抽查或事后描述。
 
-> 状态（2026-11-07）：ticket 02 已接入最小可用版本（不变量 + 确定性 + 两个固定样本仓的 golden 读数）。
-> 标注集、合成极端用例、独立 eval 脚本、pin 清单与归档流程目前是**设计**，尚未实现，见第 9 节。
+> 状态（2026-11-07）：ticket 02 已接入最小可用版本（不变量 + 确定性 + 两个固定样本仓的 golden 读数）；
+> pin 清单与拉取/校验脚本已接入（第 7.1 节）。
+> 标注集、合成极端用例、独立 eval 脚本与归档流程目前是**设计**，尚未实现，见第 9 节。
 
 ## 1. 原则
 
@@ -175,8 +176,15 @@
 - 独立 `eval` 脚本与 JSON 输出；
 - L1 标注集；
 - L3 合成极端用例目录；
-- pin 清单 / SHA256 清单 / 归档目录；
 - 提交级与发布级门禁编排。
+
+### 7.1 pin 清单与拉取脚本（2026-11-07 接入）
+
+- `eval/corpus.toml` 是 L2 样本仓的唯一 pin 清单：仓库 URL、固定 commit、许可证、缓存目录约定、文件数与内容清单哈希（`manifest_sha256`），以及 index / callgraph 的实测读数。
+- `eval/fetch-corpus.ps1` 让「准备样本仓」成为一条命令：缓存缺失时按 pin 下载 zipball 并校验后落盘；缓存存在时逐文件重算清单哈希，不符直接以 `1` 退出，不会静默使用错误版本。`-VerifyOnly` 只校验，`-Force` 重新下载。
+- 缓存默认写入仓根 `tests/corpus/`（已被 `.gitignore` 排除）；可用 `STRATA_CORPUS_DIR` 覆盖。归档副本不含 `.git`，故脚本校验内容清单而不是 `git rev-parse`。
+- 清单算法与读数含义写在 `eval/corpus.toml` 头部注释：文件按相对路径 Ordinal 排序，逐行 `<sha256> <字节数> <相对路径>`，再对整段文本取 SHA256。
+
 
 ## 8. 当前基线摘要（已实际运行）
 
@@ -196,12 +204,35 @@ cargo run -p arch-cli -- index tests/corpus/excalidraw --out …/excalidraw.json
 - `excalidraw` 的 3 条 `alias-missing` 均位于 `examples/` 与 `dev-docs/`，引用构建产物 CSS；根 `tsconfig` 的 include 范围是 `packages` + `excalidraw-app`，因此不在本票判定范围内。
 - 两次运行 SHA256：`tsx` = `D4029E828F2AD6C30D20678B6A2634A04ADC1EC1F5A9C6923939ACAA221D6FD4`，`excalidraw` = `C64F00E8DC77DDD640078A71833BA6CA4FA43819FC5083608E746D206062F239`，同一样本两次一致。
 
+### 8.1 调用图读数（04c 复跑确认）
+
+命令：
+
+```text
+pwsh eval/fetch-corpus.ps1 -VerifyOnly
+cargo run -p arch-cli -- callgraph tests/corpus/tsx --out …/tsx.json
+cargo run -p arch-cli -- callgraph tests/corpus/excalidraw --out …/excalidraw.json
+```
+
+`pwsh eval/fetch-corpus.ps1 -VerifyOnly` 在本 pin 下输出两个 `OK`（`files` 与 `manifest_sha256` 均匹配）。随后复跑读数：
+
+| 样本 | files | symbols | edges | moduleEdges | unattributedCalls | unresolvedImports | externalCalls | 默认 entries | 全明细 entries | 默认字节 | 全明细字节 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `tsx` @ `4473971` | 93 | 279 | 624 | 95 | 2460 | 3 | 1283 | 1286 | 3746 | 426,265 | 841,246 |
+| `excalidraw` @ `701b901` | 705 | 3241 | 7388 | 881 | 57732 | 1 | 1575 | 1576 | 59308 | 3,254,565 | 14,050,092 |
+
+- 字节数为 `--out` 写出的文件大小（含末尾换行），比 stdout 输出多 1 字节。
+- `files` 少于第 8 节 index 读数（95 / 718），差额是 04b 起不参与调用扫描的 `.d.ts` / `.d.mts` / `.d.cts`（2 / 13 个）。
+- 复跑结果与 ticket 04 的 04c 读数一致；index 产物 SHA256 也与第 8 节记录一致，说明缓存内容未漂移。
+- 同参数两次运行产物字节一致（golden 与 CLI 测试断言）。
+
+
 ## 9. 后续落地顺序
 
 1. 抽出独立 `arch-eval` 入口与 JSON 输出，接入 `assert_invariants` 的等价检查。
 2. 建 `eval/cases/synthetic/`，先覆盖循环、barrel、`export *`、别名、动态导入、`node_modules` 深包。
 3. 建首批 L1 标注集（以 `tests/fixtures/resolution` 为起点扩充）。
-4. 把 `tests/corpus/` 迁移为 pin 清单 + `~/.cache/strata` 缓存拉取。
+4. 把 `tests/corpus/` 迁移到 `~/.cache/strata` 缓存根（`eval/corpus.toml` 与 `eval/fetch-corpus.ps1` 已就位，仅剩缓存根迁移与测试路径切换）。
 5. 接 CI 快集（≤30 秒），发布级全集手动触发并归档读数。
 6. 每次结果写入固定归档路径；主仓只更新基线摘要。
 
