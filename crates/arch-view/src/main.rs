@@ -5,13 +5,17 @@ use std::time::Duration;
 
 use std::collections::BTreeSet;
 
+use std::process::Command;
+
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::guided_path::build_path;
+use arch_core::history::{build_history, HistoryOptions};
 use arch_core::layers::build_layers;
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
 use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
+use arch_view::timeline::{TimelineEntry, TimelineState};
 use arch_view::view::{CanvasState, Level, SymbolLayout, Viewport};
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
@@ -20,12 +24,20 @@ use gpui::{
 };
 
 const USAGE: &str = "用法:
-  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]";
+  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
+  arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]";
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("map") => match run_map(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                ExitCode::from(2)
+            }
+        },
+        Some("timeline") => match run_timeline(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("{message}");
@@ -141,6 +153,276 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     });
 
     Ok(())
+}
+
+fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let target = args
+        .next()
+        .ok_or_else(|| format!("timeline 缺少目标仓库路径\n{USAGE}"))?;
+    if target.starts_with("--") {
+        return Err(format!("timeline 缺少目标仓库路径\n{USAGE}"));
+    }
+
+    let mut auto_close_ms: Option<u64> = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--auto-close-ms" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--auto-close-ms 缺少毫秒数".to_string())?;
+                auto_close_ms = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
+                );
+            }
+            other => return Err(format!("未知参数: {other}\n{USAGE}")),
+        }
+    }
+
+    let repo = PathBuf::from(&target);
+    let entries = build_timeline_entries(&repo)?;
+    let artifact = build_layers(&repo, env!("CARGO_PKG_VERSION"))
+        .map_err(|error| format!("构建层产物失败: {error}"))?;
+    let layout = layout_map(&artifact, LayoutConfig::default());
+    let timeline = TimelineState::new(entries);
+    println!(
+        "timeline: {} ticks, {} modules, {} bands",
+        timeline.ticks(),
+        layout.nodes.len(),
+        layout.bands.len()
+    );
+
+    Application::new().run(move |cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            move |_, cx| {
+                cx.new(|_| TimelineView {
+                    state: CanvasState::new(layout),
+                    timeline,
+                })
+            },
+        )
+        .expect("open timeline window");
+        cx.activate(true);
+
+        if let Some(milliseconds) = auto_close_ms {
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(milliseconds))
+                    .await;
+                let _ = cx.update(|cx| cx.quit());
+            })
+            .detach();
+        }
+    });
+
+    Ok(())
+}
+
+fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "log",
+            "--reverse",
+            "--first-parent",
+            "--format=%H%x09%ct%x09%s",
+        ])
+        .output()
+        .map_err(|error| format!("运行 git log 失败: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git log 失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.splitn(3, '\t');
+        let hash = parts.next().unwrap_or_default().to_string();
+        let time = parts
+            .next()
+            .unwrap_or_default()
+            .parse::<u64>()
+            .map_err(|_| format!("无法解析提交时间: {line}"))?;
+        let subject = parts.next().unwrap_or_default().to_string();
+        let artifact = build_history(
+            repo,
+            env!("CARGO_PKG_VERSION"),
+            HistoryOptions {
+                until: Some(format!("@{}", time + 1)),
+                ..Default::default()
+            },
+        )
+        .map_err(|error| format!("构建历史产物失败: {error}"))?;
+        entries.push(TimelineEntry {
+            hash,
+            time,
+            subject,
+            artifact,
+        });
+    }
+    if entries.is_empty() {
+        return Err("没有可用的 first-parent 提交".to_string());
+    }
+    Ok(entries)
+}
+
+struct TimelineView {
+    state: CanvasState,
+    timeline: TimelineState,
+}
+
+impl Render for TimelineView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layout = self.state.map().clone();
+        let full_scale = self.timeline.heat_is_full_scale();
+        let flags = self.timeline.flags();
+        let selected = self.timeline.selected().map(ToOwned::to_owned);
+        let current = self.timeline.current_index();
+        let ticks = self.timeline.ticks();
+        let commit = self
+            .timeline
+            .current_entry()
+            .map(|entry| {
+                format!(
+                    "{}/{} {} {}",
+                    current + 1,
+                    ticks,
+                    &entry.hash[..7.min(entry.hash.len())],
+                    entry.subject
+                )
+            })
+            .unwrap_or_else(|| "无提交".to_string());
+
+        let mut root = div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .bg(rgb(0x0d1117));
+
+        for band in &layout.bands {
+            root = root.child(band_element(band, Viewport::default()));
+        }
+
+        for (index, node) in layout.nodes.iter().enumerate() {
+            let heat = self.timeline.heat(&node.id);
+            let background = rgb(((heat.color[0] as u32) << 16)
+                | ((heat.color[1] as u32) << 8)
+                | heat.color[2] as u32);
+            let border = if selected.as_deref() == Some(node.id.as_str()) {
+                rgb(0xf2f5f8)
+            } else if heat.neutral {
+                rgb(0x8a7a5a)
+            } else {
+                rgb(0x2c3a4a)
+            };
+            let node_id = node.id.clone();
+            root = root.child(
+                div()
+                    .id(("timeline-node", index))
+                    .absolute()
+                    .left(px(node.rect.x))
+                    .top(px(node.rect.y))
+                    .w(px(node.rect.width))
+                    .h(px(node.rect.height))
+                    .overflow_hidden()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(background)
+                    .opacity(if full_scale { 1.0 } else { 0.55 })
+                    .flex()
+                    .items_center()
+                    .px(px(6.))
+                    .text_xs()
+                    .text_color(rgb(0xe6edf3))
+                    .child(node.id.clone())
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                        this.timeline.select(&node_id);
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let mut ticks_row = div().flex().items_center().gap(px(2.));
+        for index in 0..ticks {
+            let active = index == current;
+            ticks_row = ticks_row.child(
+                div()
+                    .id(("timeline-tick", index))
+                    .w(px(10.))
+                    .h(px(if active { 12. } else { 8. }))
+                    .rounded(px(2.))
+                    .bg(if active { rgb(0xf2f5f8) } else { rgb(0x3d4b5c) })
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                        this.timeline.scrub_to(index);
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let mut footer = div()
+            .absolute()
+            .left(px(12.))
+            .right(px(12.))
+            .bottom(px(12.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(6.))
+            .bg(rgb(0x161b22))
+            .text_xs()
+            .text_color(rgb(0xe6edf3))
+            .child(commit)
+            .child(ticks_row)
+            .child("灰=无历史 · 蓝→橙=churn 0→11+");
+
+        let mut markers = Vec::new();
+        if flags.sampled {
+            markers.push("sampled");
+        }
+        if flags.truncated {
+            markers.push("truncated");
+        }
+        if flags.shallow {
+            markers.push("shallow");
+        }
+        if !markers.is_empty() {
+            footer = footer.child(
+                div()
+                    .text_color(rgb(0xd98a3d))
+                    .child(format!("状态: {}", markers.join(" / "))),
+            );
+        }
+
+        if let Some(selected) = &selected {
+            let text = match self.timeline.module_metric(selected) {
+                Some(module) => format!(
+                    "{} · lastModified {} · count {} · churn {} · span {}s",
+                    module.id,
+                    module.last_modified,
+                    module.commit_count,
+                    module.churn.total,
+                    module.active_span
+                ),
+                None => format!("{selected} · 无历史"),
+            };
+            footer = footer.child(div().text_color(rgb(0x8b9bb0)).child(text));
+        }
+
+        root = root.child(footer);
+        root
+    }
 }
 
 struct MapView {
