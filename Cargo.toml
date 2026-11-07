@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/arch-core",
     "crates/arch-cli",
+    "crates/arch-view",
 ]
 
 [workspace.package]
