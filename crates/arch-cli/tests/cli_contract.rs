@@ -51,10 +51,8 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "arch-cli-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("arch-cli-{tag}-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path).expect("create temp dir");
         Self(path)
     }
@@ -148,7 +146,9 @@ fn success_writes_contract_and_clean_stdout() {
     assert_eq!(json["repo"]["isGit"], false);
     assert_eq!(json["stats"]["files"], 3);
     assert_eq!(json["stats"]["modules"], 3);
-    assert_eq!(json["stats"]["edges"], 0);
+    // ticket 02 起 tiny fixture 产生两条静态导入边：
+    // `src/main.ts -> src/util.ts` 与 `src/util.ts -> src/types.ts`。
+    assert_eq!(json["stats"]["edges"], 2);
     assert_eq!(json["stats"]["unresolved"], 0);
 
     let modules = json["modules"].as_array().expect("modules array");
@@ -186,7 +186,11 @@ fn input_errors_exit_with_code_two() {
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty(), "errors must not write stdout");
 
-    let unknown = run_cli(&["index", fixture_dir().to_str().expect("fixture path"), "--bogus"]);
+    let unknown = run_cli(&[
+        "index",
+        fixture_dir().to_str().expect("fixture path"),
+        "--bogus",
+    ]);
     assert_eq!(unknown.status.code(), Some(2));
 
     let no_target = run_cli(&["index"]);
@@ -221,7 +225,10 @@ fn repeated_runs_are_byte_identical() {
 
     let first_bytes = fs::read(&first).expect("read first artifact");
     let second_bytes = fs::read(&second).expect("read second artifact");
-    assert_eq!(first_bytes, second_bytes, "artifacts must be byte-identical");
+    assert_eq!(
+        first_bytes, second_bytes,
+        "artifacts must be byte-identical"
+    );
 }
 
 #[test]
@@ -252,6 +259,12 @@ fn oversize_repository_is_rejected_with_counts() {
     assert!(output.stdout.is_empty());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("5001"), "stderr must report actual file count: {stderr}");
-    assert!(stderr.contains("5000"), "stderr must report the limit: {stderr}");
+    assert!(
+        stderr.contains("5001"),
+        "stderr must report actual file count: {stderr}"
+    );
+    assert!(
+        stderr.contains("5000"),
+        "stderr must report the limit: {stderr}"
+    );
 }
