@@ -70,7 +70,8 @@
 - 双层节点：符号级为真相（函数、组件、类、方法、模块顶层），模块级为聚合视图；两级共用稳定的 ID 规范。
 - 两类边：依赖边（模块/符号引用）与调用边（调用表达式、JSX 组件使用）；边上带 `kind` 与解析状态。
 - 未解析项进入 `unresolved` 集合，带原因类别（外部包、动态导入、非 TS/JS 扩展、路径别名未命中、语法错误），且在 UI 中可见。
-- 产物为版本化 JSON：顶层含 `schemaVersion`、工具版本、目标仓库标识（路径与 HEAD commit，若可用）、统计窗口与截断标记；集合字段排序固定。
+- 无法归因的调用（`call-unattributed`）默认只保留聚合计数 `stats.unattributedCalls`，不进入 `unresolved` 明细、不进入边列表/图、不参与路径查询；`arch-cli callgraph --include-unattributed` 输出完整明细供诊断。其余原因类别（`dynamic-import`、`external-call`、`unresolved` 导入）始终保留明细。
+- 产物为版本化 JSON：顶层含 `schemaVersion`、工具版本、目标仓库标识（路径与 HEAD commit，若可用）、统计窗口与截断标记；集合字段排序固定。调用图为独立产物，使用独立的 `CALLGRAPH_SCHEMA_VERSION`（04c 起为 2：拆分统计 + `external-call` + 默认聚合）；`index` / `layers` 仍使用 `SCHEMA_VERSION = 1`，两者不共用版本号。
 - 默认不写墙钟时间戳；如需时间戳，仅通过显式参数开启并排除在 golden 比较之外。
 
 ### 3. 模块解析
@@ -84,6 +85,8 @@
 
 - 符号提取覆盖函数声明、箭头函数赋值、类与方法、导出组件；匿名函数以「所属符号 + 位置」生成稳定 ID。
 - 调用边来自调用表达式与 JSX 使用；成员调用按可解析的接收者类型/导入绑定尽力归因，无法归因入 `unresolved`。
+- 外部导入绑定（ES `import` 与 CommonJS `require()` 的解构/命名空间绑定同等对待）上的**成员调用与裸调用**均记为 `external-call`，不再落入 `call-unattributed`。
+- 边界：不做类型推断；不猜测局部变量、函数参数、`any` 值上的成员调用归属；对象字面量方法定义不属于调用（当前可能误判，列入 backlog）。
 - 模块级聚合边由符号级边收敛得到，聚合规则固定且可解释（同模块对去重、保留边种类集合）。
 - 符号 ID 规范需在实现首票冻结：重载、默认导出、匿名函数、同名不同文件必须给出可复现规则。
 
@@ -159,10 +162,10 @@
 
 ### 10. CLI 契约与错误码
 
-- 子命令：`index`（结构产物）、`history`（演化产物）、`path`（引导式路径）、`layers`（层推断结果，便于脚本断言）。
+- 子命令：`index`（结构产物）、`callgraph`（符号与调用图，含 `--include-unattributed`）、`history`（演化产物）、`path`（引导式路径）、`layers`（层推断结果，便于脚本断言）。
 - 成功 `0`；输入/参数错误 `2`；内部错误 `3`；路径不可达 `4`；历史不可用（非 git、无提交、浅克隆不满足）`5`。
 - 所有成功输出为合法 JSON 到 stdout（或指定文件），诊断信息走 stderr；不得把日志混入 stdout。
-- `--out` 指定产物路径；`--schema` 打印当前 schema 版本；未知参数报错退出 `2`。
+- `--out` 指定产物路径；`--schema` 打印 `index` / `layers` 使用的 `SCHEMA_VERSION`；调用图版本只通过产物内的 `schemaVersion` 字段暴露；未知参数报错退出 `2`。
 
 ### 11. 配置与确定性
 
