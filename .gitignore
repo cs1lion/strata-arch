@@ -7,6 +7,9 @@
 /.scratch/
 *.pdb
 
+# 外部样本仓（ticket 02 离线语料，不入库）
+/tests/corpus/
+
 # 本地工具与 Agent 环境
 /.trae/
 /.screenshots/

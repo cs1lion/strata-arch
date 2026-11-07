@@ -134,6 +134,11 @@ fn schema_flag_matches_artifact_schema_version() {
 fn success_writes_contract_and_clean_stdout() {
     let output = run_cli(&["index", fixture_dir().to_str().expect("fixture path")]);
     assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "successful index must not write to stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout must be pure JSON");
@@ -148,14 +153,30 @@ fn success_writes_contract_and_clean_stdout() {
 
     let modules = json["modules"].as_array().expect("modules array");
     assert_eq!(modules.len(), 3);
-    let mut ids = modules
+    let ids = modules
         .iter()
         .map(|module| module["id"].as_str().expect("module id").to_string())
         .collect::<Vec<_>>();
-    ids.sort();
     assert_eq!(
         ids,
-        vec!["src/main.ts", "src/types.ts", "src/util.ts"]
+        vec!["src/main.ts", "src/types.ts", "src/util.ts"],
+        "module ids must already be sorted in the artifact"
+    );
+
+    let edges = json["edges"].as_array().expect("edges array");
+    let keys = edges
+        .iter()
+        .map(|edge| {
+            (
+                edge["source"].as_str().expect("edge source"),
+                edge["target"].as_str().expect("edge target"),
+                edge["kind"].as_str().expect("edge kind"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        keys.windows(2).all(|pair| pair[0] <= pair[1]),
+        "edges must already be sorted by (source, target, kind)"
     );
 }
 

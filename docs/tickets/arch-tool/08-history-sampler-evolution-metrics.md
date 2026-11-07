@@ -16,6 +16,7 @@
 - [ ] 合并提交：第二父分支独有的改动不计入模块指标；fixture 中该模块计数与 first-parent-only 期望一致。
 - [ ] 不修改目标：运行前后 `git status --porcelain` 为空、`git worktree list` 条数不变、`git rev-parse HEAD` 不变。
 - [ ] 非 git 仓库、无提交仓库、浅克隆（`--depth=1`）分别退出码 `5`，stderr 说明原因；浅克隆不得输出冒充全量的指标。
+- [ ] 目标为 git 仓库子目录时，必须能识别仓库根与 HEAD：`git -C <subdir> rev-parse --show-toplevel` 与 `git -C <subdir> rev-parse HEAD` 和产物中的仓库信息一致；误报为非 git、或 `head` 为空判红。此判据用于修正 ticket 01 中 `repo.isGit` 只看目标根目录 `.git` 的已知限制。
 - [ ] 窗口截断时 `truncated=true` 且写明实际扫描提交数；采样模式 `sampled=true` 并写明步长；两者在 JSON 中可见。
 - [ ] 确定性：同参数两次运行 `history.json` 字节一致（不含墙钟字段）。
 - [ ] 性能：excalidraw 默认窗口 3 次运行中位数 ≤10s（推荐值，**待用户确认**；硬件基线待定），读数归档。
