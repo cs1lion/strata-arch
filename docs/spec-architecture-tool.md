@@ -48,7 +48,7 @@
 25. 作为一个在 CI 或脚本里使用工具的开发者，我想让 JSON 产物带 schema 版本号，以便升级工具后能检测兼容性问题。
 26. 作为一个在 CI 或脚本里使用工具的开发者，我想让同一输入重复运行产出字节一致的 JSON，以便做 golden 断言和 diff。
 27. 作为一个维护者，我想让解析、图算法、历史统计都能通过 core 的公共接口单独测试，以便定位缺陷而不依赖 GUI。
-28. 作为一个维护者，我想让 UI 的静态布局和交互状态可被离屏截图与模拟事件验证，以便在 CI 里挡住回归。
+28. 作为一个维护者，我想让 UI 的静态布局和交互状态可被结构断言与模拟事件验证，以便在 CI 里挡住回归；离屏截图为待定能力，由 ticket 11 重新定义。
 29. 作为一个维护者，我想让历史指标能用系统 `git` 命令作为独立 oracle 交叉验证，以便不信任单一实现。
 30. 作为一个维护者，我想在 GPUI 升级时通过固定版本 + `--locked` 构建并跑冒烟，以便把 pre-1.0 的破坏性变更挡在合并前。
 31. 作为一个维护者，我想看到索引耗时、历史耗时与峰值内存的归档读数，以便判断性能预算是否仍然成立。
@@ -90,6 +90,11 @@
 ### 5. 层推断
 
 - 层来源为目录语义（如 `cli`、`commands`、`components`、`utils`、`server`、`tests` 等命名启发）加依赖方向校正（违反方向的边用于降低置信度，不静默改写）。
+- 固定层集合（ticket 03 冻结，03b 增补 `external`）：`cli`、`commands`、`components`、`server`、`utils`、`tests`、`external`、`unclassified`；视图层带按此顺序自上而下排列。
+- 规则优先级：外部包（`kind == external-package`）→ `external`；文件名后缀（`*.test.*` / `*.spec.*` → `tests`，`*.stories.*` → `components`）；目录段大小写不敏感、最深匹配优先；拓扑位置只在文件名规则冲突时断平。命名规则始终优先于拓扑。
+- 目录匹配规则：`command/commands/action/actions`、`component/components/ui/hooks/renderer`、`util/utils/lib/common/shared`、`test/tests/__tests__/spec/specs` 互为同义；`app/apps` 与 `*-app` 视为应用外壳。`src/<第一段>`、`packages/*/src` 使用同一套目录规则，workspace 子包按包内目录判断。
+- 外部包进入独立 `external` 层，携带原因码 `external`，不出现在 `unclassified` 列表；无匹配与命名冲突分别携带 `no-rule-match` / `ambiguous`。每个未归类模块必须可逐条解释，规则标识记录在 `rule` 字段。
+- 方向规则：按外向程度排序 `cli > commands > components > server > utils`，`tests` 视为最外层；边从内向外的（源层外向程度低于目标层）标记 `directionAdjusted = true`，原边保留。
 - 无法识别的模块进入 `unclassified`，必须在 CLI 产物与 UI 中同时可见；不允许默认归入某一层。
 - 层推断只做一次全量计算，结果随结构产物输出，供视图与路径解释共用。
 
@@ -142,7 +147,8 @@
 - 交互：平移、缩放、点击命中、悬停高亮、模块下钻、返回上一层；命中测试使用自维护的空间索引（网格或四叉树二选一，按实测决定）。
 - 标签避让与边路由在 MVP 只做最低可用版本：标签按层分布 + 简单碰撞剔除，边用直线/简单曲线；不承诺正交路由。
 - LOD：缩放到阈值以下隐藏标签与次要边，只保留层与模块骨架。
-- 静态渲染必须可离屏截图：`Window::render_to_image` 产出图像用于结构断言；像素差门禁默认关闭（待用户确认）。
+- 静态渲染的结构验收以布局模型断言为主（节点矩形、边端点、标签包围盒、z-order、命中框），不依赖窗口帧导出。
+- **截图能力更正（2026-11-07）**：原文写「`Window::render_to_image` 产出图像用于结构断言」，实测 gpui 0.2.2 不存在公开离屏导出入口。截图相关验收已从 ticket 03 移除，移交 ticket 11 重新定义；当前未验证，不得记为通过。详见 `docs/acceptance-gaps.md` 第 2.2 节。
 
 ### 9. 动画策略
 
@@ -175,7 +181,7 @@
 ### 13. 跨平台
 
 - Windows 为主验收平台；macOS 与 Linux 做编译 + 启动冒烟（待用户确认平台矩阵）。
-- GPUI 固定版本（推荐 `=0.2.2`）+ 提交 `Cargo.lock` + CI `--locked`；不启用自动依赖更新；升级单独 PR 并跑截图/冒烟回归（待用户确认节奏）。
+- GPUI 固定版本（推荐 `=0.2.2`）+ 提交 `Cargo.lock` + CI `--locked`；不启用自动依赖更新；升级单独 PR 并跑结构断言/冒烟回归（截图回归能力见 ticket 11，当前不可用；升级节奏待用户确认）。
 
 ## Testing Decisions
 
@@ -183,7 +189,7 @@
 - 测试 seam（按 `to-spec` 提出，实施前需与用户确认；本轮不阻塞拆票）：
   1. **最高 seam：CLI 子命令的 JSON 产物**。绝大多数解析、图结构、层、路径、历史指标都从这里断言；用 `assert_cmd` + JSON schema/结构比对。
   2. **次高 seam：`arch-core` 公共 API**。仅用于难以通过 CLI 构造的场景（图算法边界、路径排序、重命名谱系）。
-  3. **视图 seam：离屏渲染 + 模拟事件**。`render_to_image` 做结构与像素断言，`gpui::test` 的 `run_test`/`TestAppContext` 做点击、缩放、播放状态断言。
+  3. **视图 seam：布局模型断言 + 模拟事件**。布局模型提供节点矩形、边端点、标签包围盒、z-order、命中框，供确定性结构断言；`gpui::test` 的 `run_test`/`TestAppContext` 做点击、缩放、播放状态断言。离屏出图能力当前未建立（gpui 0.2.2 无公开离屏导出入口），截图路径由 ticket 11 选型。
 - 模块覆盖：模块解析、符号/调用图、层推断、路径查询、历史统计各自有 core 测试；CLI 契约、视图布局、路径播放、时间线各有端到端测试。
 - 样本与 oracle：
   - 结构测试固定样本：`privatenumber/tsx` @ `4473971f4b3261de253209b148d8fdc43269fcc4`；`excalidraw/excalidraw` @ `701b901a0f1ba3d0b390d9cdf63d112e25abac4b`（**R2-8 依据讨论稿倾向，未逐项确认**）。
@@ -212,6 +218,6 @@
 
 - 6 个参数在 ticket 中显式标「待用户确认」，spec 内的数值只是推荐默认值：内存 512MB、截图像素门禁默认关、帧预算 p95 ≤16.7ms + 动画默认关、可用性 5 人每任务 ≥4/5、平台矩阵 Windows 主验收 + macOS/Linux 冒烟、GPUI 按需升级 + 单独 PR + `--locked`。
 - R2-7 动画与 R2-8 样本仓为「依据讨论稿倾向定稿，未逐项确认」；若用户否决，只需替换 ticket 中对应参数，不影响纵向切片结构。
-- GPUI 为 pre-1.0，API 可能破坏性变更；`0.2.2` 下 `render_to_image`、`canvas`、`request_animation_frame` 的能力来自源码/文档核实，尚未在本机编译验证，相关验收项标注「方法存在、未验证」。
+- GPUI 为 pre-1.0，API 可能破坏性变更。**更正（2026-11-07）**：原文称 `0.2.2` 下 `render_to_image` 的能力来自源码核实且「方法存在、未验证」，该结论已被推翻——对 `gpui-0.2.2` 全 crate 检索 `render_to_image` 为 0 命中，**不存在公开离屏导出入口**；`canvas` 与 `request_animation_frame` 仍按源码核实。GPUI 已在本机 Windows 编译并起最小窗口；截图能力移交 ticket 11 重新定义。详见 `docs/acceptance-gaps.md` 第 2.2 节。
 - 当前工作区未初始化 git，未写产品代码；本 spec 不含具体文件路径与代码片段，按 `to-spec` 要求只记录设计与契约。
 - ticket 拆分与依赖顺序见 `docs/tickets/arch-tool/`；建议从 `01` 开始按 frontier 推进（无 blocker 的票可立即开工）。

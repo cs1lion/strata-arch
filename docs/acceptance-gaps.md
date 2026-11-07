@@ -4,13 +4,15 @@
 适用范围：Round 2 验收标准制度中标注为「无法/暂无法自动验证」的 6 项。
 状态：未写代码；本文所有命令除特别标注外均为计划形态，尚未在本项目执行。
 
+> **更正记录（2026-11-07，后续实测定稿）**：本文原断言 `Window::render_to_image` 存在，经对 `gpui-0.2.2` 源码全量检索与本机编译运行验证推翻；gpui 0.2.2 **不存在公开的离屏导出入口**。详见第 2.2 节「更正记录」。ticket 03 的截图验收已移除并移交 ticket 11 重新定义。
+
 ## 0. 证据等级
 
 | 等级 | 含义 | 本文中的例子 |
 | --- | --- | --- |
-| 已验证事实 | 本轮实际读取过源码/接口/元数据 | `gpui 0.2.2`、Apache-2.0、pre-1.0；`Window::render_to_image` 存在；`gpui::test` 的 `run_test` 存在 |
+| 已验证事实 | 本轮实际读取过源码/接口/元数据 | `gpui 0.2.2`、Apache-2.0、pre-1.0；`gpui::test` 的 `run_test` 存在；**gpui 0.2.2 无公开离屏导出入口**（原写 `render_to_image` 存在，已更正，见 2.2） |
 | 推断 | 由已验证事实或平台常识推导，未运行验证 | 无头 CI 下 GPU 出图可能不稳定；字体度量差异会导致标签裁切；采样法可能漏掉内存尖峰 |
-| 未验证 | 本轮没有环境或代码可跑 | 本项目尚未编译 GPUI；以下命令均未执行 |
+| 未验证 | 本轮没有环境或代码可跑 | 以下命令均未执行（注：GPUI 已在 2026-11-07 编译并起最小窗口，见 2.2） |
 
 ---
 
@@ -78,12 +80,18 @@ while (-not $p.HasExited) {
 
 ### 2.2 可落地的替代口径
 
-已验证事实：`Window::render_to_image() -> anyhow::Result<image::RgbaImage>` 存在于 `crates/gpui/src/window.rs`。未验证：它在本机 Windows、无头 CI、不同 GPU 下能否稳定出图；本轮没有编译 GPUI。
+> **更正记录（2026-11-07）**
+>
+> - 原文断言：「`Window::render_to_image() -> anyhow::Result<image::RgbaImage>` 存在于 `crates/gpui/src/window.rs`」。
+> - 实测更正：**gpui 0.2.2 不存在公开的离屏导出入口**。对 `gpui-0.2.2` 整个 crate 源码检索 `render_to_image` 为 0 命中；`Scene` 为 `pub(crate)`；`TestWindow::draw(&Scene)` 直接丢弃场景，没有公开出图路径；crates.io 上最新版本仍为 0.2.2。
+> - 本机验证（Windows）：`gpui = "=0.2.2"` 编译通过；最小窗口 `open_window` 成功，运行 2 秒后由 `cx.quit()` 干净退出。Windows 后端可用，截图能力不可用。
+> - 影响：ticket 03 的截图验收已移除并移交 ticket 11；ticket 11 的截图路径为开放决策项（OS 捕获 / gpui git 版本 / 场景 IR + CPU 光栅器 / 仅 IR 快照）。
+> - 本条更正用于防止旧断言被再次引用；后续引用截图能力时以本节为准。
 
 | 口径 | 做法与命令 | 置信度 | 盲区 |
 | --- | --- | --- | --- |
 | **结构断言（推荐主判据）** | 对布局模型断言：节点矩形、边端点、标签包围盒、z-order、命中框、按角色的颜色。计划命令：`cargo test -p arch-view --test layout_assertions`（测试尚未编写） | 高：GPU 无关、确定性高、能抓布局/路由/标签错误 | 抓不到光栅化、抗锯齿、GPU 驱动差异、颜色管理 |
-| **本机截图基线** | 固定窗口尺寸、固定布局、固定动画 t，`render_to_image` 输出 PNG，与基线做像素差；计划命令：`cargo test -p arch-view --test render_golden -- --nocapture`（尚未编写） | 中高：能抓真实渲染回归 | 只在生成基线的机器/GPU 上可信；基线会随 GPUI 升级漂移 |
+| **本机截图基线（当前不可用）** | 需要窗口帧导出；`render_to_image` 在 gpui 0.2.2 不存在，路径待 ticket 11 选型；计划命令：`cargo test -p arch-view --test render_golden -- --nocapture`（尚未编写） | 中高：能抓真实渲染回归 | 当前无公开 API；只在生成基线的机器/GPU 上可信；基线会随 GPUI 升级漂移 |
 | **无头/CI 冒烟** | 只验证「能创建窗口/能出图/不崩溃」，不比对像素；计划 CI job `arch-view-render-smoke` | 中：证明可运行 | 不证明画面正确；无头 GPU/软件渲染可能直接失败 |
 | **一次性平台探针** | 每个目标 OS 跑一次，归档 PNG、GPU 型号、驱动版本、窗口/DPI 设置到 `docs/evidence/` | 中：跨平台旁证 | 非连续，不能防回归 |
 | **人工视觉协议** | 10 条固定检查项（标签不裁切、边不穿节点、层不重叠、选中态可见、缩放后不糊、动画结束态正确等），改前/改后截图对照归档 | 低到中：能抓明显问题 | 依赖人、不可批量 |
@@ -287,7 +295,7 @@ cargo test --locked
 
 ## 8. 本轮未验证清单
 
-1. 未编译 GPUI，未运行 `render_to_image`；其无头/Windows 可用性未验证。
+1. GPUI 已在 2026-11-07 编译并起最小窗口；`render_to_image` 在 0.2.2 中不存在，离屏出图能力尚未建立（见 2.2 更正记录）。
 2. 未实现 CLI/索引器，所有内存与耗时命令仅为计划形态。
 3. 未加入 `dhat` feature，dhat 路径当前不可执行。
 4. Windows Job Object 内存上限 harness 未编写。

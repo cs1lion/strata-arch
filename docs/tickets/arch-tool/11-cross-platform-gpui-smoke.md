@@ -1,16 +1,48 @@
 # 11: 跨平台构建与 GPUI 启动冒烟
 
-**What to build:** 三个平台都能以固定 GPUI 版本、`--locked` 构建；Windows 上应用能启动窗口、渲染一帧并离屏截图非空；macOS/Linux 至少编译通过。把 GPUI 的 pre-1.0 破坏性变更挡在合并前。
+**What to build:** 三个平台都能以固定 GPUI 版本、`--locked` 构建；Windows 上应用能启动窗口、渲染一帧并干净退出；macOS/Linux 至少编译通过。把 GPUI 的 pre-1.0 破坏性变更挡在合并前。截图能力为开放决策项，见「截图能力重新定义」。
 
 **Blocked by:** 03（分层地图，提供可渲染的最静态视图）
 
 **Status:** ready-for-agent
 
-**固定样本：** `tests/fixtures/tiny`；截图命令使用 `--smoke` 模式。
+**固定样本：** `tests/fixtures/tiny`；启动冒烟使用 `--smoke` 模式。
+
+> **事实更正（2026-11-07）**：本票原文写「Windows 上应用能启动窗口、渲染一帧并离屏截图非空」，并把 `Window::render_to_image` 当作已存在原语。实测推翻该结论：对 `gpui-0.2.2` 整个 crate 源码检索 `render_to_image` 为 0 命中；`Scene` 为 `pub(crate)`；`TestWindow::draw(&Scene)` 直接丢弃场景；crates.io 最新版本仍为 0.2.2。**gpui 0.2.2 不存在公开离屏导出入口。** 该结论来自后续源码检索与本机验证，详见 `docs/acceptance-gaps.md` 第 2.2 节。
+>
+> 本机已验证（Windows）：`gpui = "=0.2.2"` 编译通过；最小窗口 `open_window` 成功，运行 2 秒后由 `cx.quit()` 干净退出。**Windows 后端可用，截图能力不可用。**
+
+## 验收项
 
 - [ ] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。
-- [ ] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny --screenshot out/smoke.png` 在 3 秒内退出码 `0`；进程无 panic；输出图像宽高 >0 且不同颜色数 >10。
+- [ ] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。
 - [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵待用户确认**：推荐 Windows 主验收，mac/Linux 编译 + 启动冒烟）。
 - [ ] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。
-- [ ] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、截图空/纯色、锁文件被隐式改写。
-- [ ] 自动化状态：构建与 Windows 冒烟自动化；mac/Linux 运行依赖可用 runner（**待用户确认**）；GPUI 升级后的视觉回归无基线，仅以编译 + 冒烟兜底（见 `docs/acceptance-gaps.md`）。
+- [ ] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
+- [ ] 截图能力：**当前未验证，不得记为通过**；路径选定后另加验收项（见下节）。
+- [ ] 自动化状态：构建与 Windows 启动冒烟自动化；mac/Linux 运行依赖可用 runner（**待用户确认**）；截图与视觉回归能力当前不可用（见 `docs/acceptance-gaps.md`）。
+
+## 截图能力重新定义（2026-11-07，开放项）
+
+目标：在不引入「第二套与 GPUI 分叉的渲染路径」的前提下，获得可自动断言、可复现的视觉产物。以下路径均**未选定**，需要用户决策；未选定前本票不以截图作为通过条件。
+
+| 路径 | 做法 | 判据 | CI 可用性 | 与「不允许双渲染路径漂移」的冲突 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| **(a) OS 窗口捕获** | Windows 用 `PrintWindow`/DWM 抓取真实窗口像素；macOS/Linux 用各平台窗口捕获 | 固定窗口尺寸与布局下，PNG 非空、不同颜色数 >10；与基线做像素差 | 低：需要可见窗口与桌面会话；无头 CI 不可靠，多 GPU/DPI 不稳定 | 低：抓的就是 GPUI 真实输出，没有第二条渲染路径；但「离屏」语义不成立 | 开放，待选 |
+| **(b) 切换 gpui git 版本验证离屏 API** | 改用 Zed 仓库的 gpui git revision，检索并验证是否存在公开离屏导出入口 | 能产出 `RgbaImage`/PNG，结构断言与像素基线可复用 | 中：取决于上游 API 与 CI GPU 条件；需锁定 revision | 低：仍为 GPUI 单一渲染路径；但破坏 `=0.2.2` + `--locked` 固定策略，需改 spec 与升级策略 | 开放，待选 |
+| **(c) 场景 IR + 确定性 CPU 光栅器** | GPUI 继续负责交互窗口；另建与布局模型同源的场景 IR，用 CPU 光栅器（如 tiny-skia）生成 PNG | 场景 IR 的节点/边/层带与布局模型逐项一致；PNG 结构断言通过；像素测试确定性可复现 | 高：纯 CPU，无头可用，跨平台一致 | **高**：形成两条渲染路径，存在漂移风险；必须用「同一场景 IR 驱动两条路径」或定期像素对照来约束 | 开放，待选 |
+| **(d) 仅 IR 级快照，不落像素** | 导出确定性场景 IR（JSON/二进制）作为快照产物，断言节点矩形、边端点、标签包围盒、z-order、命中框 | IR 快照字节级稳定；字段与布局模型一致 | 高：纯数据，无头可用 | 低：不新增渲染路径；但无法发现光栅化、抗锯齿、字体度量、GPU 驱动差异 | 开放，待选 |
+
+**与「不允许双渲染路径漂移」的约束说明：**
+
+- (a) 与 (b) 复用 GPUI 的真实输出，不产生第二条渲染路径；主要风险是 CI 稳定性与版本固定。
+- (c) 明确会产生第二条渲染路径。若选 (c)，必须同时满足：两条路径共享同一场景 IR；IR 变更必须同时更新两侧；提交级跑 IR 结构断言，发布级跑 GPUI 与 CPU 光栅器产物的像素对照；否则不接受。
+- (d) 不产生第二条渲染路径，但只覆盖布局/结构，不覆盖真实像素。
+
+**待用户决定的开放项：**
+
+1. 选 (a)/(b)/(c)/(d) 中的哪条，或组合（例如 (d) 作为提交级门禁 + (a) 作为发布级人工/本机探针）。
+2. 若选 (c)，是否接受「共享场景 IR」作为强约束，以及像素对照的发布级频率。
+3. 若选 (b)，是否放宽 `gpui = "=0.2.2"` 固定策略、允许锁定 git revision，并同步修改 spec 与升级 runbook。
+4. 截图产物存放位置（仓内基线 / CI artifact / 本机归档）与像素差阈值。
+5. 无头 CI 是否作为硬门禁，还是仅 Windows 本机 + 发布前人工验证。

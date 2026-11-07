@@ -25,8 +25,10 @@ Round 2 开始前已裁决：
 | 逐帧驱动：`Window::request_animation_frame` | `crates/gpui/src/window.rs` |
 | 动画 API：`with_animation(ElementId, Animation, impl Fn(Self, f32) -> Self)` | GPUI Book 的 `with_animation` 一节 |
 | SVG 资产：`svg` 元素支持 path/data/transformation | `crates/gpui/src/elements/svg.rs` |
-| 离屏取图：`Window::render_to_image() -> anyhow::Result<image::RgbaImage>` | `crates/gpui/src/window.rs` |
+| 离屏取图（**原断言已被推翻**） | 对 `gpui-0.2.2` 全量源码检索 `render_to_image` 为 0 命中；无公开离屏导出入口（见本节更正记录与 ticket 11） |
 | 交互测试：`gpui::test` 的 `run_test` / `TestAppContext` / `observe` | `crates/gpui/src/test.rs` |
+
+> **更正记录（2026-11-07）**：上表原写「离屏取图：`Window::render_to_image() -> anyhow::Result<image::RgbaImage>`，出处 `crates/gpui/src/window.rs`」，该断言不成立。实测：对 `gpui-0.2.2` 整个 crate 源码检索 `render_to_image` 为 0 命中；`Scene` 为 `pub(crate)`；`TestWindow::draw(&Scene)` 丢弃场景；crates.io 最新版本仍为 0.2.2。Windows 后端本身已验证可用（编译 + 最小窗口），但 gpui 0.2.2 **不存在公开离屏导出入口**。截图路径改由 ticket 11 重新定义；后续不得再引用「方法存在」的旧结论。
 
 ### 1.2 推断（明确标注，不是事实）
 
@@ -43,7 +45,7 @@ Round 2 开始前已裁决：
 | 跨平台 | 三平台后端都存在，但 Windows 后端成熟度未在本机验证；开发机是 Windows，MVP 应以 Windows 为主验收，macOS/Linux 先做编译与启动冒烟 |
 | 与 CLI 的关系 | CLI 必须是独立二进制，不能链接 GPUI 桌面依赖；解析、索引、图算法放共享 core crate，GUI 只读索引产物 |
 | Web 输出 | 没有 Web UI，也没有可交互 HTML；最多输出 JSON/图片等静态产物，供其它工具消费 |
-| 测试 | `render_to_image` 让离屏截图成为可能，但尚未在本机/CI 验证；UI 视觉基线不能照搬浏览器截图方案 |
+| 测试 | 结构断言（布局模型）可自动化；离屏出图在 gpui 0.2.2 不存在公开入口，路径待 ticket 11 选型；UI 视觉基线不能照搬浏览器截图方案 |
 
 ---
 
@@ -130,7 +132,7 @@ Round 2 开始前已裁决：
 
 为什么必须你回答：GPUI 三平台后端都有，但成熟度不同；B 的 QA/CI 成本高，C 会限制分发。
 
-➡️ 推荐 **A**。风险要写明：GPUI 的 Windows 后端尚未在本机验证；第一个技术 ticket 应先跑通最小窗口与 `render_to_image`，失败则回到本问题重选。
+➡️ 推荐 **A**。风险要写明：GPUI 的 Windows 后端尚未在本机验证；第一个技术 ticket 应先跑通最小窗口与 `render_to_image`，失败则回到本问题重选。（**更正 2026-11-07**：最小窗口已在 Windows 跑通；`render_to_image` 在 0.2.2 不存在，截图路径移交 ticket 11。）
 
 ---
 
@@ -177,7 +179,7 @@ Round 2 开始前已裁决：
 | 层推断 | 已知层的样本模块 | `cargo test -p arch-core --test layers_golden` | 层归属正确、`unclassified` 列表等于基线 | 误分层或漏列 | 可自动化 |
 | 索引性能 | 冷启动墙钟 + 峰值内存 | `cargo run --release -p arch-cli -- index <fixture>`；内存用平台工具采集 | 墙钟 ≤10s；峰值 RSS 上限按 fixture 定 | 超时或超内存 | 墙钟可自动化；峰值内存跨平台采集未搭好 |
 | CLI 契约 | 退出码 + stdout JSON schema | `assert_cmd` + `serde_json` schema 校验 | 成功=0，输入错误=2，内部错误=3；stdout 为合法 JSON | 退出码不符或 schema 不符 | 可自动化 |
-| UI 渲染 | 离屏截图 + 布局结构 | `Window::render_to_image` + golden PNG/布局边界断言 | 节点/边数量与包围盒符合基线；像素差在阈值内 | 结构不符或像素差超阈值 | 方法存在，未在本机/CI 验证 |
+| UI 渲染 | 布局结构断言（**截图能力当前不可用**） | 布局边界/节点与边数量断言；离屏出图路径待 ticket 11 选型 | 节点/边数量与包围盒符合基线 | 结构不符 | 结构断言可自动化；出图能力在 gpui 0.2.2 不存在公开入口 |
 | UI 交互 | 模拟点击/滚轮后的状态 | `gpui::test` 的 `run_test`/`TestAppContext` | 选中节点、缩放级别、路径高亮集合符合预期 | 状态不符 | 可自动化（待验证） |
 | 动画 | 帧时间 + 关闭开关 | 在 render 路径埋点 `Instant`，测试内统计 | p95 ≤16.7ms；关闭开关后画面不再变化 | 超帧预算或开关无效 | 部分可自动化（依赖硬件） |
 | 端到端上手 | 脚本化会话的路径产物 | CLI 输出路径 JSON，按入口/目标断言 | 路径包含指定符号与层，顺序正确 | 缺节点/顺序错 | 可自动化（GUI 部分除外） |
@@ -186,7 +188,7 @@ Round 2 开始前已裁决：
 当前**无法自动验证**的项及原因：
 
 1. **峰值内存跨平台采集**：Windows 没有 Unix `time -v`；需要 Job Object/ETW 或专用探针，尚未搭建。
-2. **GPU 截图的 CI 稳定性**：`render_to_image` API 存在，但未在本机/CI 跑过；无头环境与 GPU 差异可能导致像素不稳定。
+2. **GPU 截图的 CI 稳定性**：**更正（2026-11-07）**：`render_to_image` 在 gpui 0.2.2 不存在，原「API 存在但未验证」的表述不成立；截图路径与 CI 可用性整体待 ticket 11 重新定义。
 3. **动画流畅度**：依赖本机硬件与驱动，只能记录本机 p95，不能作为 CI 硬判据。
 4. **「用户能理解」**：onboarding 的主观目标需要人工可用性测试，不能自动判定。
 5. **跨平台视觉一致性**：需要各平台基线与硬件，当前没有。
