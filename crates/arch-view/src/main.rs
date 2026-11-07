@@ -3,20 +3,24 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use std::collections::BTreeSet;
+
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
+use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
+use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
 use arch_view::view::{CanvasState, Level, SymbolLayout, Viewport};
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
     IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
-    ScrollDelta, ScrollWheelEvent, Window, WindowBounds, WindowOptions,
+    ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
-  arch-view map <目标仓库> [--auto-close-ms <毫秒>]";
+  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]";
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -44,6 +48,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let mut auto_close_ms: Option<u64> = None;
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--auto-close-ms" => {
@@ -56,9 +62,28 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                         .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
                 );
             }
+            "--from" => {
+                from = Some(
+                    args.next()
+                        .ok_or_else(|| "--from 缺少入口 ID".to_string())?,
+                );
+            }
+            "--to" => {
+                to = Some(args.next().ok_or_else(|| "--to 缺少符号 ID".to_string())?);
+            }
             other => return Err(format!("未知参数: {other}\n{USAGE}")),
         }
     }
+
+    let playback = match (from.as_deref(), to.as_deref()) {
+        (Some(from), Some(to)) => {
+            let path = build_path(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"), from, to)
+                .map_err(|error| format!("构建路径失败: {error}"))?;
+            Some(PlaybackState::new(&path))
+        }
+        (None, None) => None,
+        _ => return Err(format!("--from 与 --to 必须同时提供\n{USAGE}")),
+    };
 
     let artifact = build_layers(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("构建层产物失败: {error}"))?;
@@ -93,6 +118,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                 cx.new(|_| MapView {
                     state: CanvasState::new(layout),
                     callgraph,
+                    playback,
+                    ticker_running: false,
                     press_origin: None,
                     drag_last: None,
                     dragged: false,
@@ -119,6 +146,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 struct MapView {
     state: CanvasState,
     callgraph: CallGraphArtifact,
+    playback: Option<PlaybackState>,
+    ticker_running: bool,
     press_origin: Option<LayoutPoint>,
     drag_last: Option<LayoutPoint>,
     dragged: bool,
@@ -156,6 +185,7 @@ impl Render for MapView {
             None => Scene::Modules(self.state.map().clone()),
         };
         let can_go_back = self.state.can_go_back();
+        let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
 
         let mut root = div()
             .id("canvas")
@@ -248,6 +278,7 @@ impl Render for MapView {
                         from: viewport.screen_point(edge.from),
                         to: viewport.screen_point(edge.to),
                         adjusted: edge.direction_adjusted,
+                        strong: false,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -256,13 +287,57 @@ impl Render for MapView {
                     map.height * viewport.zoom,
                 ));
 
+                if let Some(overlay) = &overlay {
+                    let centers = map
+                        .nodes
+                        .iter()
+                        .map(|node| (node.id.clone(), node.rect.center()))
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    let mut path_edges = Vec::new();
+                    for (index, pair) in overlay.steps.windows(2).enumerate() {
+                        let Some(from) = centers.get(&pair[0]) else {
+                            continue;
+                        };
+                        let Some(to) = centers.get(&pair[1]) else {
+                            continue;
+                        };
+                        let strong = overlay.current == index + 2;
+                        path_edges.push(EdgeDraw {
+                            from: viewport.screen_point(*from),
+                            to: viewport.screen_point(*to),
+                            adjusted: true,
+                            strong,
+                        });
+                    }
+                    root = root.child(edge_canvas(
+                        path_edges,
+                        map.width * viewport.zoom,
+                        map.height * viewport.zoom,
+                    ));
+                }
+
                 for node in &map.nodes {
+                    let opacity = overlay
+                        .as_ref()
+                        .map(|overlay| {
+                            if overlay.path_modules.contains(&node.id) {
+                                1.0
+                            } else {
+                                NON_PATH_OPACITY
+                            }
+                        })
+                        .unwrap_or(1.0);
+                    let focus = overlay
+                        .as_ref()
+                        .and_then(|overlay| overlay.current_module.as_deref());
                     root = root.child(node_element(
                         node,
                         viewport,
                         labels,
                         selected.as_deref(),
                         &highlighted,
+                        opacity,
+                        focus,
                     ));
                 }
             }
@@ -274,6 +349,7 @@ impl Render for MapView {
                         from: viewport.screen_point(edge.from),
                         to: viewport.screen_point(edge.to),
                         adjusted: false,
+                        strong: false,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -283,8 +359,18 @@ impl Render for MapView {
                 ));
 
                 for node in &symbols.nodes {
+                    let opacity = self
+                        .playback
+                        .as_ref()
+                        .map(|playback| playback.node_opacity(&node.id))
+                        .unwrap_or(1.0);
+                    let focus = overlay
+                        .as_ref()
+                        .and_then(|overlay| overlay.current_symbol.as_deref());
                     root = root.child(symbol_node_element(
                         node,
+                        opacity,
+                        focus,
                         viewport,
                         labels,
                         selected.as_deref(),
@@ -292,6 +378,162 @@ impl Render for MapView {
                     ));
                 }
             }
+        }
+
+        if let Some(overlay) = &overlay {
+            let status = format!(
+                "路径 {}/{} · {}",
+                overlay.current,
+                overlay.len,
+                overlay
+                    .current_symbol
+                    .clone()
+                    .unwrap_or_else(|| "未开始".to_string())
+            );
+            let mut panel = div()
+                .id("playback")
+                .absolute()
+                .left(px(12.))
+                .bottom(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(10.))
+                .py(px(6.))
+                .rounded(px(6.))
+                .bg(rgb(0x161b22))
+                .text_xs()
+                .text_color(rgb(0xe6edf3))
+                .child(status);
+
+            panel = panel.child(
+                div()
+                    .id("pb-back")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("◀")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if let Some(playback) = this.playback.as_mut() {
+                            playback.back();
+                        }
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
+                    .id("pb-play")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child(if overlay.playing { "暂停" } else { "播放" })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if let Some(playback) = this.playback.as_mut() {
+                            if playback.is_playing() {
+                                playback.pause();
+                            } else {
+                                playback.play();
+                                if !this.ticker_running {
+                                    this.ticker_running = true;
+                                    cx.spawn(async move |this, cx| loop {
+                                        Timer::after(Duration::from_millis(180)).await;
+                                        let keep = this
+                                            .update(cx, |view, cx| {
+                                                let Some(playback) = view.playback.as_mut() else {
+                                                    view.ticker_running = false;
+                                                    return false;
+                                                };
+                                                if !playback.is_playing() {
+                                                    view.ticker_running = false;
+                                                    return false;
+                                                }
+                                                let advanced = playback.advance();
+                                                let still_playing =
+                                                    advanced && playback.is_playing();
+                                                if !still_playing {
+                                                    view.ticker_running = false;
+                                                }
+                                                cx.notify();
+                                                still_playing
+                                            })
+                                            .unwrap_or(false);
+                                        if !keep {
+                                            break;
+                                        }
+                                    })
+                                    .detach();
+                                }
+                            }
+                        }
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
+                    .id("pb-next")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("▶")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if let Some(playback) = this.playback.as_mut() {
+                            playback.advance();
+                        }
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
+                    .id("pb-animation")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child(if overlay.animation {
+                        "动画: 开"
+                    } else {
+                        "动画: 关"
+                    })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if let Some(playback) = this.playback.as_mut() {
+                            let enabled = playback.animation_enabled();
+                            playback.set_animation_enabled(!enabled);
+                        }
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
+                    .id("pb-fly-to")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child(if overlay.fly_to {
+                        "fly-to: 开"
+                    } else {
+                        "fly-to: 关"
+                    })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if let Some(playback) = this.playback.as_mut() {
+                            let enabled = playback.fly_to_enabled();
+                            playback.set_fly_to(!enabled);
+                        }
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
+                    .id("pb-exit")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x5f2b2b))
+                    .child("退出路径")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.playback = None;
+                        this.ticker_running = false;
+                        cx.notify();
+                    })),
+            );
+            root = root.child(panel);
         }
 
         root
@@ -303,10 +545,53 @@ enum Scene {
     Symbols(SymbolLayout),
 }
 
+struct PlaybackOverlay {
+    steps: Vec<String>,
+    path_modules: BTreeSet<String>,
+    current_module: Option<String>,
+    current_symbol: Option<String>,
+    len: usize,
+    current: usize,
+    playing: bool,
+    animation: bool,
+    fly_to: bool,
+}
+
+impl PlaybackOverlay {
+    fn from_state(playback: &PlaybackState) -> Self {
+        let steps = playback.steps();
+        let modules = steps
+            .iter()
+            .map(|step| step.module.clone())
+            .collect::<Vec<_>>();
+        let current = playback.current();
+        Self {
+            path_modules: modules.iter().cloned().collect(),
+            current_module: if current > 0 {
+                Some(modules[current - 1].clone())
+            } else {
+                None
+            },
+            current_symbol: if current > 0 {
+                Some(steps[current - 1].symbol.clone())
+            } else {
+                None
+            },
+            steps: modules,
+            len: steps.len(),
+            current,
+            playing: playback.is_playing(),
+            animation: playback.animation_enabled(),
+            fly_to: playback.fly_to_enabled(),
+        }
+    }
+}
+
 struct EdgeDraw {
     from: LayoutPoint,
     to: LayoutPoint,
     adjusted: bool,
+    strong: bool,
 }
 
 fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElement {
@@ -320,12 +605,15 @@ fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElemen
             |_, _, _| (),
             move |bounds, _, window, _| {
                 for edge in &edges {
-                    let color = if edge.adjusted {
+                    let color = if edge.strong {
+                        rgb(0xf2f5f8)
+                    } else if edge.adjusted {
                         rgb(0xd98a3d)
                     } else {
                         rgb(0x3d4b5c)
                     };
-                    let mut builder = PathBuilder::stroke(px(1.));
+                    let mut builder =
+                        PathBuilder::stroke(if edge.strong { px(2.) } else { px(1.) });
                     if edge.adjusted {
                         builder = builder.dash_array(&[px(4.), px(2.)]);
                     }
@@ -363,8 +651,9 @@ fn selection_border(
     default: gpui::Rgba,
     selected: Option<&str>,
     highlighted: &std::collections::BTreeSet<String>,
+    focus: Option<&str>,
 ) -> gpui::Rgba {
-    if selected == Some(id) {
+    if focus == Some(id) || selected == Some(id) {
         rgb(0xf2f5f8)
     } else if highlighted.contains(id) {
         rgb(0xd98a3d)
@@ -407,6 +696,8 @@ fn node_element(
     labels: bool,
     selected: Option<&str>,
     highlighted: &std::collections::BTreeSet<String>,
+    opacity: f32,
+    focus: Option<&str>,
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
     let background = layer_color(node.layer, node.is_unclassified);
@@ -417,7 +708,7 @@ fn node_element(
     } else {
         rgb(0x2c3a4a)
     };
-    let border = selection_border(&node.id, border, selected, highlighted);
+    let border = selection_border(&node.id, border, selected, highlighted, focus);
 
     let mut element = div()
         .absolute()
@@ -430,6 +721,7 @@ fn node_element(
         .border_1()
         .border_color(border)
         .bg(background)
+        .opacity(opacity)
         .flex()
         .items_center()
         .px(px(6.));
@@ -464,6 +756,8 @@ fn node_element(
 
 fn symbol_node_element(
     node: &arch_view::view::SymbolNodeLayout,
+    opacity: f32,
+    focus: Option<&str>,
     viewport: Viewport,
     labels: bool,
     selected: Option<&str>,
@@ -471,7 +765,7 @@ fn symbol_node_element(
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
     let background = symbol_kind_color(node.kind);
-    let border = selection_border(&node.id, rgb(0x2c3a4a), selected, highlighted);
+    let border = selection_border(&node.id, rgb(0x2c3a4a), selected, highlighted, focus);
 
     let mut element = div()
         .absolute()
@@ -484,6 +778,7 @@ fn symbol_node_element(
         .border_1()
         .border_color(border)
         .bg(background)
+        .opacity(opacity)
         .flex()
         .items_center()
         .px(px(6.));
