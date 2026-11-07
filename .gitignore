@@ -1,0 +1,24 @@
+# Rust 构建产物
+/target/
+**/*.rs.bk
+
+# 本地运行产物与临时输出
+/out/
+/.scratch/
+*.pdb
+
+# 本地工具与 Agent 环境
+/.trae/
+/.screenshots/
+
+# 编辑器与操作系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 本地环境文件
+.env
+.env.*
+*.local

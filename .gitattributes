@@ -1,0 +1,2 @@
+# 统一换行，保证 fixture SHA256 与测试基线在 Windows/macOS/Linux 一致
+* text=auto eol=lf

@@ -1,0 +1,8 @@
+{
+  "name": "tiny-fixture",
+  "private": true,
+  "main": "src/main.ts",
+  "bin": {
+    "tiny": "src/main.ts"
+  }
+}
