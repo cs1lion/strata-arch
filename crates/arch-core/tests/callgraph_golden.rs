@@ -34,14 +34,18 @@ fn golden_symbols_use_stable_ids_and_positions() {
     let artifact = graph();
     let symbols = symbol_map(&artifact);
 
-    assert_eq!(artifact.symbols.len(), 23, "fixture symbol baseline");
+    assert_eq!(artifact.symbols.len(), 26, "fixture symbol baseline");
     assert_eq!(artifact.edges.len(), 6, "fixture call edge baseline");
     assert_eq!(
         artifact.module_edges.len(),
         3,
         "fixture module edge baseline"
     );
-    assert_eq!(artifact.unresolved.len(), 2, "fixture unresolved baseline");
+    assert_eq!(
+        artifact.unresolved.len(),
+        4,
+        "fixture unresolved baseline (1 call, 1 import, 2 external)"
+    );
 
     for id in [
         "src/util.ts#function:helper",
@@ -60,6 +64,8 @@ fn golden_symbols_use_stable_ids_and_positions() {
         "src/other.ts#function:duplicateSameName",
         "src/anonymous.ts#function:default",
         "src/overload.ts#function:overloaded",
+        "src/external.ts#function:useMemoValue",
+        "src/external.ts#function:readIt",
     ] {
         assert!(symbols.contains_key(id), "missing symbol {id}");
     }
@@ -235,4 +241,56 @@ fn golden_output_is_deterministic() {
     let first = serde_json::to_vec(&graph()).expect("serialize first");
     let second = serde_json::to_vec(&graph()).expect("serialize second");
     assert_eq!(first, second, "call graph must be byte deterministic");
+}
+
+#[test]
+fn golden_noise_is_split_and_declaration_files_are_not_scanned() {
+    let artifact = graph();
+    let stats = serde_json::to_value(&artifact).expect("serialize")["stats"].clone();
+
+    assert_eq!(
+        stats["files"], 9,
+        "declaration file must not count as scanned"
+    );
+    assert_eq!(stats["unattributedCalls"], 1, "unknown call baseline");
+    assert_eq!(stats["unresolvedImports"], 1, "dynamic import baseline");
+    assert_eq!(stats["externalCalls"], 2, "external member call baseline");
+
+    let external = artifact
+        .unresolved
+        .iter()
+        .filter(|entry| entry.reason == "external-call")
+        .collect::<Vec<_>>();
+    assert_eq!(external.len(), 2, "external member calls must be tagged");
+    assert!(
+        external
+            .iter()
+            .any(|entry| entry.expression.contains("React.useMemo")),
+        "default external import member call must be tagged: {:?}",
+        external
+            .iter()
+            .map(|entry| &entry.expression)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        external
+            .iter()
+            .any(|entry| entry.expression.contains("fs.readFileSync")),
+        "namespace external import member call must be tagged"
+    );
+
+    assert!(
+        !artifact
+            .symbols
+            .iter()
+            .any(|symbol| symbol.module.ends_with(".d.ts")),
+        "declaration files must not produce symbols"
+    );
+    assert!(
+        !artifact
+            .unresolved
+            .iter()
+            .any(|entry| entry.module.ends_with(".d.ts")),
+        "declaration files must not produce unresolved calls"
+    );
 }
