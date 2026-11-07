@@ -64,9 +64,7 @@ fn run_index(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
                 out = Some(PathBuf::from(value));
             }
             other => {
-                return Err(CliError::Input(format!(
-                    "未知参数: {other}\n{USAGE}"
-                )));
+                return Err(CliError::Input(format!("未知参数: {other}\n{USAGE}")));
             }
         }
     }
@@ -91,8 +89,9 @@ fn run_index(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
                 })?;
             }
         }
-        fs::write(&path, format!("{json}\n"))
-            .map_err(|error| CliError::Internal(format!("写入产物失败 {}: {error}", path.display())))?;
+        fs::write(&path, format!("{json}\n")).map_err(|error| {
+            CliError::Internal(format!("写入产物失败 {}: {error}", path.display()))
+        })?;
     } else {
         println!("{json}");
     }
