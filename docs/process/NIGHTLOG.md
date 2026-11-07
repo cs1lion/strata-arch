@@ -52,4 +52,18 @@
   - 被否的 B 方案与理由保留在 10.6。
 - 状态：文档按 `docs:` 单独提交并推送。
 
+## 06 入口候选与最短路径查询
+
+- 开始：读 ticket 06，A 档 TDD，先写 CLI 与 core 测试。
+- Red（实现前实测）：`cargo test -p arch-cli --test path` → 0 passed / 9 failed，全部因退出码 2 与 stderr「未知子命令: path」；`cargo test -p arch-core --test path` 编译期失败（`arch_core::guided_path` 不存在）。
+- 完成：`arch-core/src/guided_path.rs`（`list_entries` / `build_path`，`PATH_SCHEMA_VERSION = 1`）、CLI `path` 子命令、core 测试 7 项、CLI 测试 10 项、`tests/fixtures/path`。
+- 实现口径：入口来自 `package.json` bin/main/module/exports（保留声明顺序）、根与 workspace 包目录 `index.*`/`src/index.*`、入口模块公开导出；`dist|build|out|lib → src` 启发式映射；BFS 只走调用边，邻接按 `(target, kind, line, column)` 排序；不可达退出 4 且 stdout 为空，零候选退出 5，未知符号退出 2。
+- 读数（实测，`target/debug/arch-cli.exe`）：
+  - tsx（`4473971`）：entries 8（bin 1 / exports 7），0.19s；golden `src/cli.ts#module-toplevel → src/utils/ipc/get-pipe-path.ts#function:getPipePath` 3 步（`server.ts` 中转），0.16s。
+  - excalidraw（`701b901`）：entries 17（index 3 / src-index 6 / public-export 8），2.38s；golden `#component:ExcalidrawBase → i18n.ts#function:setLanguage` 3 步（`InitializeApp` 中转），2.31s。
+  - fixture：entries 含 bin/main/public-export 三类；`src/cli.ts` → `helper` 走 `alt.ts` 3 步，`via` = null/call/call。
+- 反向用例：不可达 exit 4 + stdout 空；未知符号 exit 2；零候选 exit 5；两次运行字节一致；core 重算调用图逐对断言相邻边存在。
+- 全量：`cargo test --workspace` 93 passed / 0 failed；`cargo fmt --all --check` OK。
+- 偏差（未静默放宽，已写入 ticket）：依赖图补足未实现（`import` 不等于执行、落点符号无唯一答案，待产品确认）；调用图对 `root.render(<...>)` 参数内 JSX 不产生 module-toplevel 边，导致部分入口无路径，golden 改从公开组件起步；构建映射为启发式，失败即丢弃；`path` 每次重建调用图与层，无缓存。
+
 （后续每票在此追加）
