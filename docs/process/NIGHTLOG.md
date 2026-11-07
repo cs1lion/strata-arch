@@ -76,4 +76,14 @@
 - 全量：`cargo test --workspace` 0 failed；`cargo fmt --all --check` OK。
 - 未验证/偏差：真实窗口点击/滚轮无自动化（仅 smoke，`gpui::test` 未跑通）；截图移交 ticket 11；5k 真实仓库冷启动归 ticket 10；跨模块邻居没有可见 ghost 节点；UI 下钻额外构建一次调用图，无缓存。
 
+## 07 路径播放与逐步追光
+
+- 档位：B（状态断言）+ C（帧预算）；先写 `crates/arch-view/tests/path_playback.rs`（8 条清单 + 8 测试）。
+- Red（实现前实测）：编译失败 `error[E0432]: unresolved import arch_view::playback`。
+- 完成：`arch-view/src/playback.rs`（`PlaybackState`）、UI 路径面板与模块级路径叠加、测试 8 项。
+- 实现口径：`current` 为已高亮步数；动画默认关且 `request_frame()` 恒 false；非路径透明度 0.25；fly-to 默认关；结束不循环，重播从第 1 步。
+- 读数：8 passed / 0 failed；`out/frame-timing.json` 模型单帧 p95：3 步 0.3µs、20 步 0.2µs（16 CPU / AMD64 Family 25 Model 117，debug）；UI smoke path fixture exit 0。
+- 全量：`cargo test --workspace` 0 failed；fmt OK。
+- 偏差/未验证：复用 06 的 `tests/fixtures/path` 而非新建 animation 夹具；帧时间只是状态机更新，不是真实渲染帧；UI 路径叠加停在模块级；动画默认关闭与 16.7ms 预算仍待用户确认。
+
 （后续每票在此追加）
