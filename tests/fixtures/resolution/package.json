@@ -1,0 +1,7 @@
+{
+  "name": "resolution-fixture",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}
