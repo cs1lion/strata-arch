@@ -6,7 +6,8 @@ Rust workspace：`arch-core`（索引 / 解析 / 层推断 / 调用图）、`arc
 ## 必读
 
 动手前先读 [docs/process/ENGINEERING-DISCIPLINE.md](docs/process/ENGINEERING-DISCIPLINE.md)。
-它是工程纪律的唯一入口：TDD 档位、验收标准、评估体系、流程链、报告与提交纪律、反作弊红线。
+它是工程纪律的唯一入口：TDD 档位、验收标准、评估体系、流程链、报告与提交纪律、反作弊红线、Skill 与流程条文改造（第 10 节）。
+规则新增口径：优先落成检查或工具，文档只留指针；确实无法自动化的写条文并登记为人工项（见第 10.6 节）。
 
 ## 不可协商的红线
 
