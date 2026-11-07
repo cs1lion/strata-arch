@@ -19,5 +19,6 @@
 - [ ] 确定性：样本仓连续两次索引，`edges` 与 `unresolved` 排序后完全一致。
 - [ ] 失败判据：任一内部相对导入落入 `unresolved`、别名未解析、外部包被展开成文件级节点、或 golden 漂移未说明原因。
 - [ ] 自动化状态：全部自动化（golden + 结构断言；基线需一次人工抽检）。
+- [ ] 评估接入（最小可用版本）：`cargo test -p arch-core --test resolution_golden` 覆盖产物不变量（ID 唯一、模块/边/未解析有序、边两端存在、外部包不展开）与确定性（连续两次序列化字节一致），并锁定第 8 节样本读数；完整标注集、合成极端用例、独立 eval 脚本与门禁分层见 [eval-harness.md](../../process/eval-harness.md)。
 
 **备注：** 首次生成 golden 后需记录两仓的 `edges`、`modules`、`unresolved` 计数作为期望读数；在此之前 CI 只跑不变量断言（相对导入零未解析、别名零未命中）。
