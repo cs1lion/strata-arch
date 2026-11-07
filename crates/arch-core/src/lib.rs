@@ -395,7 +395,7 @@ fn record_file_lookup(
     }
 }
 
-fn external_package_name(specifier: &str) -> Option<String> {
+pub(crate) fn external_package_name(specifier: &str) -> Option<String> {
     let mut segments = specifier.split('/');
     let first = segments.next().filter(|value| !value.is_empty())?;
     if first.starts_with('@') {

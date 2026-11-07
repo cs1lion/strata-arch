@@ -38,7 +38,12 @@ pub struct CallGraphStats {
     pub symbols: usize,
     pub edges: usize,
     pub module_edges: usize,
-    pub unresolved: usize,
+    /// 无法归因到仓内符号的调用（`call-unattributed`）。
+    pub unattributed_calls: usize,
+    /// 导入解析失败（`dynamic-import` 及其他非字面量导入）。
+    pub unresolved_imports: usize,
+    /// 已知外部包绑定上的成员调用（`external-call`）。
+    pub external_calls: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -80,7 +85,7 @@ pub struct ModuleCallEdge {
 pub struct CallUnresolved {
     pub module: String,
     pub expression: String,
-    /// `call-unattributed` 或 `dynamic-import`。
+    /// `call-unattributed`、`dynamic-import` 或 `external-call`。
     pub reason: &'static str,
     pub line: usize,
     pub column: usize,
@@ -108,6 +113,14 @@ enum ImportBinding {
     Named { module: String, imported: String },
     Default { module: String },
     Namespace { module: String },
+    External,
+}
+
+/// 导入说明符的解析结果：仓内模块、已知外部包、或无法解析。
+enum SpecifierTarget {
+    Local(String),
+    External,
+    Unresolved,
 }
 
 struct ModuleScan {
@@ -159,6 +172,8 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
     let mut files = Vec::new();
     walk(&root, &root, &mut files)?;
     files.sort();
+    // 声明文件没有运行时符号，也不应把接口签名计入调用噪声。
+    files.retain(|path| !is_declaration_file(path));
 
     let mut modules = Vec::with_capacity(files.len());
     for path in &files {
@@ -264,6 +279,18 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
         .collect::<Vec<_>>();
 
     let module_edges = aggregate_module_edges(&edges);
+    let unattributed_calls = unresolved
+        .iter()
+        .filter(|entry| entry.reason == "call-unattributed")
+        .count();
+    let unresolved_imports = unresolved
+        .iter()
+        .filter(|entry| entry.reason == "dynamic-import")
+        .count();
+    let external_calls = unresolved
+        .iter()
+        .filter(|entry| entry.reason == "external-call")
+        .count();
 
     Ok(CallGraphArtifact {
         schema_version: index.schema_version,
@@ -274,13 +301,23 @@ pub fn build_call_graph(root: &Path, tool_version: &str) -> Result<CallGraphArti
             symbols: symbols.len(),
             edges: edges.len(),
             module_edges: module_edges.len(),
-            unresolved: unresolved.len(),
+            unattributed_calls,
+            unresolved_imports,
+            external_calls,
         },
         symbols,
         edges,
         module_edges,
         unresolved,
     })
+}
+
+fn is_declaration_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
 }
 
 fn assign_symbols(mut raw: Vec<RawSymbol>, module: &ModuleScan) -> Vec<LocalSymbol> {
@@ -690,7 +727,7 @@ fn body_has_jsx(tokens: &[Token], start: usize, end: usize) -> bool {
 
 fn parse_imports(
     tokens: &[Token],
-    source: &str,
+    _source: &str,
     config: &ProjectConfig,
     root: &Path,
     source_path: &Path,
@@ -805,22 +842,30 @@ fn parse_imports(
         }
 
         if let Some(specifier) = specifier {
-            if let Some(module) = resolve_specifier(config, root, source_path, &specifier, source) {
-                for (local, form) in pending {
-                    let binding = match form {
-                        BindingForm::Named(imported) => ImportBinding::Named {
-                            module: module.clone(),
-                            imported,
-                        },
-                        BindingForm::Default => ImportBinding::Default {
-                            module: module.clone(),
-                        },
-                        BindingForm::Namespace => ImportBinding::Namespace {
-                            module: module.clone(),
-                        },
-                    };
-                    bindings.insert(local, binding);
+            match classify_specifier(config, root, source_path, &specifier) {
+                SpecifierTarget::Local(module) => {
+                    for (local, form) in pending {
+                        let binding = match form {
+                            BindingForm::Named(imported) => ImportBinding::Named {
+                                module: module.clone(),
+                                imported,
+                            },
+                            BindingForm::Default => ImportBinding::Default {
+                                module: module.clone(),
+                            },
+                            BindingForm::Namespace => ImportBinding::Namespace {
+                                module: module.clone(),
+                            },
+                        };
+                        bindings.insert(local, binding);
+                    }
                 }
+                SpecifierTarget::External => {
+                    for (local, _) in pending {
+                        bindings.insert(local, ImportBinding::External);
+                    }
+                }
+                SpecifierTarget::Unresolved => {}
             }
         }
         index = scan + 1;
@@ -835,42 +880,56 @@ enum BindingForm {
     Namespace,
 }
 
-fn resolve_specifier(
+fn classify_specifier(
     config: &ProjectConfig,
     root: &Path,
     source_path: &Path,
     specifier: &str,
-    _source: &str,
-) -> Option<String> {
+) -> SpecifierTarget {
     if specifier.is_empty() {
-        return None;
+        return SpecifierTarget::Unresolved;
     }
     if specifier.starts_with('.') {
         let base = source_path.parent().unwrap_or(root);
         return match resolve_file_path(base, specifier) {
-            FileLookup::Found(file) => relative_module_id(root, &file),
-            _ => None,
+            FileLookup::Found(file) => relative_module_id(root, &file)
+                .map(SpecifierTarget::Local)
+                .unwrap_or(SpecifierTarget::Unresolved),
+            _ => SpecifierTarget::Unresolved,
         };
     }
     if specifier.starts_with('/') {
         return match resolve_file_path(root, specifier.trim_start_matches('/')) {
-            FileLookup::Found(file) => relative_module_id(root, &file),
-            _ => None,
+            FileLookup::Found(file) => relative_module_id(root, &file)
+                .map(SpecifierTarget::Local)
+                .unwrap_or(SpecifierTarget::Unresolved),
+            _ => SpecifierTarget::Unresolved,
         };
     }
     if let Some(targets) = config.alias_targets(specifier) {
         for target in targets {
             if let FileLookup::Found(file) = resolve_file_path(&config.base_url, &target) {
                 if let Some(id) = relative_module_id(root, &file) {
-                    return Some(id);
+                    return SpecifierTarget::Local(id);
                 }
             }
         }
-        return None;
+        return SpecifierTarget::Unresolved;
     }
     match config.workspace_lookup(specifier) {
-        WorkspaceLookup::Resolved(file) => relative_module_id(root, &file),
-        _ => None,
+        WorkspaceLookup::Resolved(file) => relative_module_id(root, &file)
+            .map(SpecifierTarget::Local)
+            .unwrap_or(SpecifierTarget::Unresolved),
+        WorkspaceLookup::Missing | WorkspaceLookup::UnsupportedExtension => {
+            SpecifierTarget::Unresolved
+        }
+        WorkspaceLookup::Unknown => {
+            if crate::external_package_name(specifier).is_some() {
+                SpecifierTarget::External
+            } else {
+                SpecifierTarget::Unresolved
+            }
+        }
     }
 }
 
@@ -976,6 +1035,7 @@ fn resolve_member(
     unresolved: &mut BTreeSet<(String, String, &'static str, usize, usize)>,
 ) {
     let method = ident_at(&module.tokens, index).unwrap_or_default();
+    let mut external_receiver = false;
     if let Some(receiver_name) = ident_at(&module.tokens, receiver) {
         if receiver_name == "this" {
             let current = enclosing_symbol(module, index);
@@ -1006,6 +1066,10 @@ fn resolve_member(
                 return;
             }
         }
+        external_receiver = matches!(
+            module.imports.get(receiver_name),
+            Some(ImportBinding::External)
+        );
     }
 
     let start = module
@@ -1016,13 +1080,12 @@ fn resolve_member(
     let expression = module.source[start..module.tokens[index].end]
         .trim()
         .to_string();
-    unresolved.insert((
-        module.id.clone(),
-        expression,
-        "call-unattributed",
-        line,
-        column,
-    ));
+    let reason = if external_receiver {
+        "external-call"
+    } else {
+        "call-unattributed"
+    };
+    unresolved.insert((module.id.clone(), expression, reason, line, column));
 }
 
 fn resolve_bare(module: &ModuleScan, name: &str, lookup: &Lookup) -> Option<String> {
@@ -1048,7 +1111,7 @@ fn resolve_binding(module: &ModuleScan, name: &str, lookup: &Lookup) -> Option<S
         Some(ImportBinding::Default {
             module: target_module,
         }) => lookup.default_by_module.get(target_module).cloned(),
-        Some(ImportBinding::Namespace { .. }) | None => None,
+        Some(ImportBinding::Namespace { .. }) | Some(ImportBinding::External) | None => None,
     }
 }
 
@@ -1082,8 +1145,8 @@ fn scan_dynamic(
     };
 
     if let Some(specifier) = literal {
-        if let Some(module_id) =
-            resolve_specifier(config, root, &module.path, &specifier, &module.source)
+        if let SpecifierTarget::Local(module_id) =
+            classify_specifier(config, root, &module.path, &specifier)
         {
             edges.insert((
                 source,
