@@ -1,0 +1,11 @@
+{
+  "name": "path-fixture",
+  "version": "1.0.0",
+  "bin": "./dist/cli.mjs",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./helper": "./dist/utils/helper.mjs"
+  }
+}

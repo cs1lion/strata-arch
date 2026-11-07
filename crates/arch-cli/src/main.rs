@@ -1,4 +1,5 @@
 use arch_core::callgraph::{build_call_graph_with_options, CallGraphOptions};
+use arch_core::guided_path::{build_path, list_entries, PathError};
 use arch_core::history::{build_history, HistoryError, HistoryOptions};
 use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
 use std::env;
@@ -12,12 +13,17 @@ const USAGE: &str = "用法:
   arch-cli layers <目标仓库> [--out <产物文件>]
   arch-cli callgraph <目标仓库> [--out <产物文件>] [--include-unattributed]
   arch-cli history <目标仓库> [--repo <目标仓库>] [--out <产物文件>]
-      [--max-commits <N>] [--since <日期>] [--until <日期>]";
+      [--max-commits <N>] [--since <日期>] [--until <日期>]
+  arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>] --entries
+  arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>]
+      --from <入口ID> --to <符号ID>";
 
 enum CliError {
     Input(String),
     /// 历史不可用：非 git、无提交、浅克隆。
     History(String),
+    /// 调用图中不存在从入口到目标的路径。
+    Unreachable(String),
     Internal(String),
 }
 
@@ -31,6 +37,10 @@ fn main() -> ExitCode {
         Err(CliError::History(message)) => {
             eprintln!("错误: {message}");
             ExitCode::from(5)
+        }
+        Err(CliError::Unreachable(message)) => {
+            eprintln!("错误: {message}");
+            ExitCode::from(4)
         }
         Err(CliError::Internal(message)) => {
             eprintln!("内部错误: {message}");
@@ -57,6 +67,7 @@ fn run() -> Result<(), CliError> {
         "layers" => run_layers(args),
         "callgraph" => run_callgraph(args),
         "history" => run_history(args),
+        "path" => run_path(args),
         other => Err(CliError::Input(format!("未知子命令: {other}\n{USAGE}"))),
     }
 }
@@ -203,6 +214,121 @@ fn history_error(error: HistoryError) -> CliError {
         HistoryError::NotDirectory(message) => CliError::Input(message),
         HistoryError::Io(message) => CliError::Internal(message),
         other => CliError::History(other.to_string()),
+    }
+}
+
+struct PathCliOptions {
+    target: PathBuf,
+    out: Option<PathBuf>,
+    entries: bool,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+fn run_path(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let options = parse_path_args(args)?;
+    let version = env!("CARGO_PKG_VERSION");
+
+    let json = if options.entries {
+        let artifact = list_entries(&options.target, version).map_err(path_error)?;
+        serde_json::to_string_pretty(&artifact)
+            .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?
+    } else {
+        let from = options.from.as_deref().unwrap_or_default();
+        let to = options.to.as_deref().unwrap_or_default();
+        let artifact = build_path(&options.target, version, from, to).map_err(path_error)?;
+        serde_json::to_string_pretty(&artifact)
+            .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?
+    };
+
+    emit_json(&json, options.out)
+}
+
+fn parse_path_args(mut args: impl Iterator<Item = String>) -> Result<PathCliOptions, CliError> {
+    let usage_missing = || CliError::Input(format!("path 缺少目标仓库路径\n{USAGE}"));
+
+    let mut target: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut entries = false;
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
+
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--repo" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--repo 缺少目标仓库路径".to_string()))?;
+                if target.is_some() {
+                    return Err(CliError::Input("path 只接受一个目标仓库路径".to_string()));
+                }
+                target = Some(PathBuf::from(value));
+            }
+            "--out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--out 缺少文件路径".to_string()))?;
+                out = Some(PathBuf::from(value));
+            }
+            "--entries" => entries = true,
+            "--from" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--from 缺少入口 ID".to_string()))?;
+                from = Some(value);
+            }
+            "--to" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--to 缺少符号 ID".to_string()))?;
+                to = Some(value);
+            }
+            other if other.starts_with("--") => {
+                return Err(CliError::Input(format!("未知参数: {other}\n{USAGE}")));
+            }
+            positional => {
+                if target.is_some() {
+                    return Err(CliError::Input(format!(
+                        "path 只接受一个目标仓库路径，多余参数: {positional}"
+                    )));
+                }
+                target = Some(PathBuf::from(positional));
+            }
+        }
+    }
+
+    let target = target.ok_or_else(usage_missing)?;
+    if entries && (from.is_some() || to.is_some()) {
+        return Err(CliError::Input(
+            "--entries 不能与 --from/--to 同时使用".to_string(),
+        ));
+    }
+    if !entries && (from.is_none() || to.is_none()) {
+        return Err(CliError::Input(format!(
+            "path 需要 --entries，或同时给出 --from 与 --to\n{USAGE}"
+        )));
+    }
+
+    Ok(PathCliOptions {
+        target,
+        out,
+        entries,
+        from,
+        to,
+    })
+}
+
+fn path_error(error: PathError) -> CliError {
+    match error {
+        PathError::Scan(scan) => scan_error(scan),
+        PathError::NoEntries(message) => {
+            CliError::History(format!("目标仓库没有可识别的入口候选: {message}"))
+        }
+        PathError::UnknownSymbol(message) => CliError::Input(format!("未知符号: {message}")),
+        PathError::Unreachable { from, to } => {
+            CliError::Unreachable(format!("路径不可达: {from} -> {to}"))
+        }
+        PathError::Io(message) => CliError::Internal(message),
     }
 }
 
