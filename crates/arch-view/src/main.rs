@@ -95,6 +95,63 @@ fn frame_trace_enabled() -> bool {
     std::env::var_os("STRATA_FRAME_TRACE").is_some()
 }
 
+/// 渲染调优开关（A/D）。`STRATA_AB_CYCLE` 存在时按帧段交替覆盖，用于同进程 A/B。
+#[derive(Clone, Copy)]
+struct RenderTuning {
+    batch_edges: bool,
+    skip_opacity: bool,
+    clip_nodes: bool,
+}
+
+fn env_flag(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(value) => value.trim() != "0",
+        Err(_) => default,
+    }
+}
+
+impl RenderTuning {
+    fn from_env() -> Self {
+        Self {
+            // 实测 A（边批处理）超视觉等价容差（票 10），默认关闭；需显式
+            // `STRATA_EDGE_BATCH=1` 才启用。D1 逐像素一致，默认开启。
+            batch_edges: env_flag("STRATA_EDGE_BATCH", false),
+            skip_opacity: env_flag("STRATA_NODE_OPACITY_SKIP", true),
+            clip_nodes: env_flag("STRATA_NODE_CLIP", true),
+        }
+    }
+
+    fn for_segment(name: &str) -> Self {
+        match name {
+            "base" => Self {
+                batch_edges: false,
+                skip_opacity: false,
+                clip_nodes: true,
+            },
+            "A" => Self {
+                batch_edges: true,
+                skip_opacity: false,
+                clip_nodes: true,
+            },
+            "D1" => Self {
+                batch_edges: false,
+                skip_opacity: true,
+                clip_nodes: true,
+            },
+            "ADclip" => Self {
+                batch_edges: true,
+                skip_opacity: true,
+                clip_nodes: false,
+            },
+            _ => Self {
+                batch_edges: true,
+                skip_opacity: true,
+                clip_nodes: true,
+            },
+        }
+    }
+}
+
 /// 「先开窗、后加载」的通用外壳：窗口先呈现阶段文案，数据就绪后挂上真实子视图。
 ///
 /// 长操作期间窗口必须可见且显示当前阶段；用户可关闭窗口或点「取消」立即退出。
@@ -485,6 +542,20 @@ fn spawn_map_loading(
                 frame_count: 0,
                 autopan_remaining: autopan_frames(),
                 autopan_scheduled: false,
+                ab_segments: std::env::var("STRATA_AB_CYCLE")
+                    .map(|value| {
+                        value
+                            .split(',')
+                            .map(|part| part.trim().to_string())
+                            .filter(|part| !part.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                ab_segment_frames: std::env::var("STRATA_AB_SEGMENT_FRAMES")
+                    .ok()
+                    .and_then(|value| value.trim().parse().ok())
+                    .unwrap_or(60)
+                    .max(1),
             })
         });
         let map = match built_view {
@@ -1707,6 +1778,9 @@ struct MapView {
     /// 诊断：剩余自动平移帧数（`STRATA_AUTOPAN_FRAMES`）。
     autopan_remaining: Option<u32>,
     autopan_scheduled: bool,
+    /// 同进程 A/B：按帧段交替的配置名与每段帧数（`STRATA_AB_CYCLE` / `STRATA_AB_SEGMENT_FRAMES`）。
+    ab_segments: Vec<String>,
+    ab_segment_frames: u32,
 }
 
 impl MapView {
@@ -1808,6 +1882,16 @@ impl MapView {
         }
     }
 
+    /// 当前帧生效的渲染调优：无 A/B 周期时读环境变量，有周期时按帧段轮换。
+    fn current_tuning(&self) -> RenderTuning {
+        if self.ab_segments.is_empty() {
+            return RenderTuning::from_env();
+        }
+        let ordinal = self.frame_count.saturating_sub(1);
+        let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
+        RenderTuning::for_segment(&self.ab_segments[segment])
+    }
+
     /// 诊断：逐帧平移，用于在外部测持续重绘的帧间隔；播完即停。
     fn schedule_autopan_step(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
         if view.autopan_scheduled {
@@ -1823,7 +1907,11 @@ impl MapView {
         view.autopan_scheduled = true;
         cx.on_next_frame(window, |view, window, cx| {
             view.autopan_scheduled = false;
-            view.state.pan_by(8.0, 0.0);
+            // 往返平移：位置在 0 / 8px 间交替，避免单向平移把内容移出屏幕后
+            // 让后段帧成本因可见内容变少而虚假下降（A/B 交替对照要求空间条件一致）。
+            let remaining = view.autopan_remaining.unwrap_or(0);
+            let step = if remaining % 2 == 0 { 8.0 } else { -8.0 };
+            view.state.pan_by(step, 0.0);
             phase_marker("pan:frame");
             let left = view.autopan_remaining.unwrap_or(1).saturating_sub(1);
             if left == 0 {
@@ -1876,6 +1964,14 @@ impl Render for MapView {
             phase_marker("frame");
         }
         self.frame_count = self.frame_count.saturating_add(1);
+        let tuning = self.current_tuning();
+        if trace && !self.ab_segments.is_empty() {
+            let ordinal = self.frame_count - 1;
+            if ordinal % self.ab_segment_frames == 0 {
+                let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
+                phase_marker(&format!("ab:segment={}", self.ab_segments[segment]));
+            }
+        }
         if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
             phase_marker("content:render");
             window.on_next_frame(|_, _cx| phase_marker("content:presented"));
@@ -2054,6 +2150,7 @@ impl Render for MapView {
                         edges,
                         map.width * viewport.zoom,
                         map.height * viewport.zoom,
+                        tuning.batch_edges,
                     ));
                 }
 
@@ -2095,6 +2192,7 @@ impl Render for MapView {
                             path_edges,
                             map.width * viewport.zoom,
                             map.height * viewport.zoom,
+                            tuning.batch_edges,
                         ));
                     }
                 }
@@ -2148,6 +2246,8 @@ impl Render for MapView {
                         opacity,
                         focus,
                         offset_y,
+                        tuning.skip_opacity,
+                        tuning.clip_nodes && viewport.zoom < 0.3,
                     ));
                 }
             }
@@ -2175,6 +2275,7 @@ impl Render for MapView {
                     edges,
                     symbols.width * viewport.zoom,
                     symbols.height * viewport.zoom,
+                    tuning.batch_edges,
                 ));
 
                 let focus = overlay
@@ -2461,7 +2562,22 @@ fn edge_color_at(base: u32, opacity: f32) -> gpui::Rgba {
     }
 }
 
-fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElement {
+fn edge_base_color(strong: bool, adjusted: bool) -> u32 {
+    if strong {
+        0xf2f5f8
+    } else if adjusted {
+        0xd98a3d
+    } else {
+        0x3d4b5c
+    }
+}
+
+fn edge_canvas(
+    edges: Vec<EdgeDraw>,
+    width: f32,
+    height: f32,
+    batch_edges: bool,
+) -> impl IntoElement {
     div()
         .absolute()
         .left(px(0.))
@@ -2471,32 +2587,54 @@ fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElemen
         .child(canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
-                for edge in &edges {
-                    let base = if edge.strong {
-                        0xf2f5f8
-                    } else if edge.adjusted {
-                        0xd98a3d
-                    } else {
-                        0x3d4b5c
-                    };
-                    let color = edge_color_at(base, edge.opacity);
-                    let mut builder =
-                        PathBuilder::stroke(if edge.strong { px(2.) } else { px(1.) });
-                    if edge.adjusted {
-                        builder = builder.dash_array(&[px(4.), px(2.)]);
+                // A：按原始顺序合并「连续且同风格」的边为一个 path；风格/透明度变化即 flush。
+                // 虚线边逐条绘制：同一 path 内多个子路径的 dash 相位与单独绘制不一致（实测会改像素）。
+                let mut current: Option<(PathBuilder, bool, bool, f32)> = None;
+                let flush = |current: &mut Option<(PathBuilder, bool, bool, f32)>,
+                             window: &mut Window| {
+                    if let Some((builder, strong, adjusted, opacity)) = current.take() {
+                        if let Ok(path) = builder.build() {
+                            window.paint_path(
+                                path,
+                                edge_color_at(edge_base_color(strong, adjusted), opacity),
+                            );
+                        }
                     }
-                    builder.move_to(point(
-                        bounds.origin.x + px(edge.from.x),
-                        bounds.origin.y + px(edge.from.y),
-                    ));
-                    builder.line_to(point(
-                        bounds.origin.x + px(edge.to.x),
-                        bounds.origin.y + px(edge.to.y),
-                    ));
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(path, color);
+                };
+                for edge in &edges {
+                    let matching = current
+                        .as_ref()
+                        .map(|(_, strong, adjusted, opacity)| {
+                            *strong == edge.strong
+                                && *adjusted == edge.adjusted
+                                && (*opacity - edge.opacity).abs() <= f32::EPSILON
+                        })
+                        .unwrap_or(false);
+                    let mergeable = batch_edges && !edge.adjusted;
+                    if !matching || !mergeable {
+                        flush(&mut current, window);
+                        let mut builder =
+                            PathBuilder::stroke(if edge.strong { px(2.) } else { px(1.) });
+                        if edge.adjusted {
+                            builder = builder.dash_array(&[px(4.), px(2.)]);
+                        }
+                        current = Some((builder, edge.strong, edge.adjusted, edge.opacity));
+                    }
+                    if let Some((builder, _, _, _)) = current.as_mut() {
+                        builder.move_to(point(
+                            bounds.origin.x + px(edge.from.x),
+                            bounds.origin.y + px(edge.from.y),
+                        ));
+                        builder.line_to(point(
+                            bounds.origin.x + px(edge.to.x),
+                            bounds.origin.y + px(edge.to.y),
+                        ));
+                    }
+                    if !mergeable {
+                        flush(&mut current, window);
                     }
                 }
+                flush(&mut current, window);
             },
         ))
 }
@@ -2577,6 +2715,8 @@ fn node_element(
     opacity: f32,
     focus: Option<&str>,
     offset_y: f32,
+    skip_opacity: bool,
+    clip: bool,
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
     let background = layer_color(node.layer, node.is_unclassified);
@@ -2595,15 +2735,22 @@ fn node_element(
         .top(px(rect.y + offset_y))
         .w(px(rect.width))
         .h(px(rect.height))
-        .overflow_hidden()
         .rounded(px(4.))
         .border_1()
         .border_color(border)
         .bg(background)
-        .opacity(opacity)
         .flex()
         .items_center()
         .px(px(6.));
+
+    // D1：opacity=1 时不挂透明度层（视觉等价，省去逐节点合成）。
+    if !(skip_opacity && opacity >= 1.0) {
+        element = element.opacity(opacity);
+    }
+    // D2：低缩放省略裁剪属真实视觉改动，由调用方按开关控制。
+    if clip {
+        element = element.overflow_hidden();
+    }
 
     if labels {
         element = element.child(
