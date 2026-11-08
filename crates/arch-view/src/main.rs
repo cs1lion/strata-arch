@@ -25,6 +25,7 @@ use arch_view::loading::{
 };
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
+use arch_view::search::{interpret_key, KeyModifiers, SearchAction, SearchState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
@@ -34,9 +35,9 @@ use arch_view::view::{
 };
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
-    AnyView, App, Application, Bounds, ClickEvent, Context, Entity, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render, ScrollDelta,
-    ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
+    AnyView, App, Application, Bounds, ClickEvent, Context, Entity, FocusHandle, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
+    ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -45,7 +46,8 @@ const USAGE: &str = "用法:
   arch-view diff <目标仓库> --from <commit> --to <commit> [--no-fade] [--auto-close-ms <毫秒>]
   arch-view scene <目标仓库> [--out <场景文件>]
   arch-view smoke <目标仓库>
-  首屏分层揭示默认开启；--no-reveal 关闭。两者同时出现时以 --no-reveal 为准（与顺序无关）。";
+  首屏分层揭示默认开启；--no-reveal 关闭。两者同时出现时以 --no-reveal 为准（与顺序无关）。
+  模块搜索：/ 或 Ctrl/Cmd+F 打开，↑/↓ 选择，Enter 聚焦，Esc 清除；有 --from/--to 时禁用搜索。";
 
 /// 阶段标记：仅在 `STRATA_PHASE_MARKERS=1` 时输出，供外部计时脚本记录到达时间。
 /// 不在视图源码里取墙钟（`arch-view/src` 禁用时间源判据不变），时间戳由外部进程提供。
@@ -550,45 +552,52 @@ fn spawn_map_loading(
 
         let built_view = cx.update(|cx| {
             let evidence_camera = evidence_viewport();
-            cx.new(move |_| MapView {
-                state: {
-                    let mut state = CanvasState::new(layout);
-                    if let Some(viewport) = evidence_camera {
-                        state.set_viewport(viewport);
-                    }
-                    state
-                },
-                callgraph,
-                playback,
-                ticker_running: false,
-                fly_to_anchor: None,
-                press_origin: None,
-                drag_last: None,
-                dragged: false,
-                transition_generation: 0,
-                transition_delta: Rc::new(Cell::new(0.0)),
-                reveal,
-                reveal_progress: Rc::new(Cell::new(0.0)),
-                reveal_scheduled: false,
-                reveal_start_marked: false,
-                reveal_mid_marked: false,
-                frame_count: 0,
-                autopan_remaining: autopan_frames(),
-                autopan_scheduled: false,
-                ab_segments: std::env::var("STRATA_AB_CYCLE")
-                    .map(|value| {
-                        value
-                            .split(',')
-                            .map(|part| part.trim().to_string())
-                            .filter(|part| !part.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                ab_segment_frames: std::env::var("STRATA_AB_SEGMENT_FRAMES")
-                    .ok()
-                    .and_then(|value| value.trim().parse().ok())
-                    .unwrap_or(60)
-                    .max(1),
+            cx.new(move |cx| {
+                let search = SearchState::new(&layout);
+                let focus_handle = cx.focus_handle();
+                MapView {
+                    state: {
+                        let mut state = CanvasState::new(layout);
+                        if let Some(viewport) = evidence_camera {
+                            state.set_viewport(viewport);
+                        }
+                        state
+                    },
+                    callgraph,
+                    playback,
+                    ticker_running: false,
+                    fly_to_anchor: None,
+                    press_origin: None,
+                    drag_last: None,
+                    dragged: false,
+                    transition_generation: 0,
+                    transition_delta: Rc::new(Cell::new(0.0)),
+                    reveal,
+                    reveal_progress: Rc::new(Cell::new(0.0)),
+                    reveal_scheduled: false,
+                    reveal_start_marked: false,
+                    reveal_mid_marked: false,
+                    frame_count: 0,
+                    autopan_remaining: autopan_frames(),
+                    autopan_scheduled: false,
+                    ab_segments: std::env::var("STRATA_AB_CYCLE")
+                        .map(|value| {
+                            value
+                                .split(',')
+                                .map(|part| part.trim().to_string())
+                                .filter(|part| !part.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    ab_segment_frames: std::env::var("STRATA_AB_SEGMENT_FRAMES")
+                        .ok()
+                        .and_then(|value| value.trim().parse().ok())
+                        .unwrap_or(60)
+                        .max(1),
+                    search,
+                    focus_handle,
+                    keyboard_focus_pending: true,
+                }
             })
         });
         let map = match built_view {
@@ -1816,6 +1825,11 @@ struct MapView {
     /// 同进程 A/B：按帧段交替的配置名与每段帧数（`STRATA_AB_CYCLE` / `STRATA_AB_SEGMENT_FRAMES`）。
     ab_segments: Vec<String>,
     ab_segment_frames: u32,
+    /// ticket 20：模块搜索/聚焦的纯状态机。
+    search: SearchState,
+    focus_handle: FocusHandle,
+    /// 首帧把键盘焦点交给画布，保证 `/` 与 `Ctrl/Cmd+F` 能到达。
+    keyboard_focus_pending: bool,
 }
 
 impl MapView {
@@ -1905,7 +1919,10 @@ impl MapView {
         let hit = self.state.select_at(position);
         if matches!(self.state.level(), Level::Modules) {
             if let Some(module) = hit {
-                self.state.drill_down(&module, &self.callgraph);
+                // 搜索只在模块级可用；下钻后回到初始态，避免标签指向已离开的层级。
+                if self.state.drill_down(&module, &self.callgraph) {
+                    self.search.reset();
+                }
             }
         }
     }
@@ -1914,6 +1931,54 @@ impl MapView {
     fn interrupt_reveal(&mut self) {
         if self.reveal.skip() {
             phase_marker("reveal:skip");
+        }
+    }
+
+    /// ticket 20：键盘入口。任何按键先结束揭示；有 `--from/--to` 时搜索整体禁用。
+    fn handle_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.interrupt_reveal();
+        if self.playback.is_some() {
+            return;
+        }
+        let keystroke = &event.keystroke;
+        let key = interpret_key(
+            &keystroke.key,
+            keystroke.key_char.as_deref(),
+            KeyModifiers {
+                secondary: keystroke.modifiers.secondary(),
+                alt: keystroke.modifiers.alt,
+            },
+        );
+        let viewport_size = (
+            f32::from(window.viewport_size().width),
+            f32::from(window.viewport_size().height),
+        );
+        match self.search.handle(key, self.state.viewport()) {
+            SearchAction::None => {}
+            SearchAction::Opened => {
+                phase_marker("search:open");
+                cx.notify();
+            }
+            SearchAction::Closed => {
+                phase_marker("search:close");
+                cx.notify();
+            }
+            SearchAction::Focused(request) => {
+                phase_marker("search:focus");
+                if self.state.begin_fly_to(Some(request.target), viewport_size) {
+                    self.transition_generation += 1;
+                    self.transition_delta = Rc::new(Cell::new(0.0));
+                    Self::schedule_transition_step(self, window, cx);
+                }
+                cx.notify();
+            }
+            SearchAction::Cleared(snapshot) => {
+                // 复原是精确的：中断进行中的转场后逐字段写回快照。
+                self.state.cancel_transition();
+                self.state.set_viewport(snapshot);
+                phase_marker("search:clear");
+                cx.notify();
+            }
         }
     }
 
@@ -2000,6 +2065,12 @@ impl Render for MapView {
             phase_marker("frame");
         }
         self.frame_count = self.frame_count.saturating_add(1);
+        if self.keyboard_focus_pending {
+            self.keyboard_focus_pending = false;
+            // 等首帧把 `track_focus` 挂上后再交焦点，避免句柄尚未注册时被忽略。
+            let handle = self.focus_handle.clone();
+            window.on_next_frame(move |window, _cx| window.focus(&handle));
+        }
         let tuning = self.current_tuning();
         if trace && !self.ab_segments.is_empty() {
             let ordinal = self.frame_count - 1;
@@ -2055,6 +2126,10 @@ impl Render for MapView {
 
         let mut root = div()
             .id("canvas")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_key(event, window, cx)
+            }))
             .relative()
             .size_full()
             .overflow_hidden()
@@ -2155,6 +2230,8 @@ impl Render for MapView {
 
         match scene {
             Scene::Modules(map) => {
+                // 聚焦态：焦点集合内 1.0，其余沿用 P1 的 0.68；不改变绘制顺序。
+                let search_focus = self.search.focus_set();
                 let stage_of_layer = map
                     .bands
                     .iter()
@@ -2186,12 +2263,18 @@ impl Render for MapView {
                             {
                                 return None;
                             }
+                            let opacity = match search_focus {
+                                Some(set) => {
+                                    set.edge_opacity(&edge.source, &edge.target) * reveal_overall
+                                }
+                                None => base_opacity,
+                            };
                             Some(EdgeDraw {
                                 from,
                                 to,
                                 adjusted: edge.direction_adjusted,
                                 strong: false,
-                                opacity: base_opacity,
+                                opacity,
                             })
                         })
                         .collect::<Vec<_>>();
@@ -2288,7 +2371,9 @@ impl Render for MapView {
                                 }
                             })
                             .unwrap_or(1.0),
-                        None => 1.0,
+                        None => search_focus
+                            .map(|set| set.module_opacity(&node.id))
+                            .unwrap_or(1.0),
                     };
                     let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
                     let opacity = opacity * self.reveal.opacity_for_stage(stage);
@@ -2400,6 +2485,10 @@ impl Render for MapView {
                     ));
                 }
             }
+        }
+
+        if self.search.is_open() {
+            root = root.child(search_panel_element(&self.search));
         }
 
         if let Some(overlay) = &overlay {
@@ -2612,6 +2701,49 @@ impl Render for MapView {
 enum Scene {
     Modules(MapLayout),
     Symbols(SymbolLayout),
+}
+
+/// 输入态面板：query、`前 6/共 N`（或 `无匹配 · 0/0`）与可见命中列表。
+fn search_panel_element(search: &SearchState) -> AnyElement {
+    let query = if search.query().is_empty() {
+        "输入以筛选模块".to_string()
+    } else {
+        search.query().to_string()
+    };
+    let mut panel = div()
+        .id("search-panel")
+        .absolute()
+        .left(px(12.))
+        .top(px(12.))
+        .w(px(420.))
+        .flex()
+        .flex_col()
+        .gap(px(3.))
+        .px(px(10.))
+        .py(px(8.))
+        .rounded(px(6.))
+        .bg(rgb(0x161b22))
+        .text_xs()
+        .text_color(rgb(0xe6edf3))
+        .child(format!("搜索模块 · {query}"))
+        .child(div().text_color(rgb(0x8b9bb0)).child(search.summary()));
+    let start = search.list_start();
+    for (offset, hit) in search.visible_hits().iter().enumerate() {
+        let selected = start + offset == search.selected();
+        panel = panel.child(
+            div()
+                .px(px(6.))
+                .py(px(2.))
+                .rounded(px(4.))
+                .bg(if selected {
+                    rgb(0x1f3a5f)
+                } else {
+                    rgb(0x0d1117)
+                })
+                .child(hit.id.clone()),
+        );
+    }
+    panel.into_any_element()
 }
 
 struct PlaybackOverlay {
