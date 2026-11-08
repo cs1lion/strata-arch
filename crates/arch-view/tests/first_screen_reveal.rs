@@ -1,8 +1,8 @@
-//! P5 首屏分层揭示（一次性、可跳过、默认关）的 B 档断言清单。
+//! P5 首屏分层揭示（一次性、可跳过、关闭态等价最终态）的 B 档断言清单。
 //!
 //! 判据先于实现：下列断言必须在实现前给出非零失败读数（断言级，不是编译错误）。
 //!
-//! 1. 默认关：关闭态不请求任何帧、不改变最终视觉（所有层带不透明度 1、位移 0）。
+//! 1. 关闭态：不请求任何帧、不改变最终视觉（所有层带不透明度 1、位移 0）。
 //! 2. 与加载态衔接：`pending` 时不得推进；未 `start()` 前内容保持最终可见态，
 //!    不会出现「加载态还在、揭示已经抢帧」的隐藏首帧。
 //! 3. 层序一次性：层带按传入顺序依次淡入/升起，进度单调不减；播完停在最终态，
@@ -15,7 +15,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use arch_view::reveal::{
-    reveal_allowed, RevealState, REVEAL_FADE_FRAMES, REVEAL_GAP_FRAMES, REVEAL_RISE_PX,
+    reveal_allowed, reveal_fade_frames, RevealState, REVEAL_FRAME_BUDGET, REVEAL_GAP_FRAMES,
+    REVEAL_RISE_PX,
 };
 
 fn started(stages: usize) -> RevealState {
@@ -61,9 +62,9 @@ fn source_files() -> Vec<PathBuf> {
 }
 
 #[test]
-fn default_off_requests_no_frames_and_keeps_final_state() {
+fn disabled_state_requests_no_frames_and_keeps_final_state() {
     let mut reveal = RevealState::new(false, 5);
-    assert!(!reveal.is_enabled(), "默认必须关闭");
+    assert!(!reveal.is_enabled(), "关闭态必须不可见");
     assert!(reveal.is_finished(), "关闭态等价于已结束");
     assert!(!reveal.is_pending() && !reveal.is_active());
     assert!(!reveal.start(), "关闭态不能被启动");
@@ -101,11 +102,13 @@ fn reveal_waits_for_data_ready_and_does_not_hide_content() {
 #[test]
 fn stages_reveal_in_layer_order_without_reordering() {
     let mut reveal = started(5);
+    let fade = reveal_fade_frames(5);
+    assert_eq!(reveal.fade_frames(), fade, "淡入帧数必须由层数静态推导");
     assert_eq!(reveal.opacity_for_stage(0), 0.0);
     assert_eq!(reveal.opacity_for_stage(1), 0.0);
     assert_eq!(reveal.opacity_for_stage(2), 0.0);
 
-    advance(&mut reveal, REVEAL_FADE_FRAMES);
+    advance(&mut reveal, fade);
     assert_eq!(reveal.opacity_for_stage(0), 1.0, "第 0 层先完成");
     assert_eq!(
         reveal.opacity_for_stage(1),
@@ -115,7 +118,7 @@ fn stages_reveal_in_layer_order_without_reordering() {
 
     advance(&mut reveal, REVEAL_GAP_FRAMES);
     assert_eq!(reveal.opacity_for_stage(1), 0.0, "第 1 层刚到起点");
-    advance(&mut reveal, REVEAL_FADE_FRAMES / 2);
+    advance(&mut reveal, fade / 2);
     let second = reveal.opacity_for_stage(1);
     assert!(
         second > 0.0 && second < 1.0,
@@ -218,7 +221,28 @@ fn reveal_is_mutually_exclusive_with_p1_path_playback() {
         !reveal_allowed(true, true),
         "存在 P1 路径播放时必须让位，同一时段只能一个主动效"
     );
-    assert!(!reveal_allowed(false, false), "未请求时保持默认关");
+    assert!(!reveal_allowed(false, false), "未请求时保持关闭态");
+}
+
+#[test]
+fn total_frames_stay_within_static_budget() {
+    // 软件渲染下帧间隔可达 210ms；20 帧 × 210ms ≈ 4.2s，必须守住 5s 上限。
+    for stages in 1..=REVEAL_FRAME_BUDGET as usize {
+        let reveal = RevealState::new(true, stages);
+        assert!(
+            reveal.total_frames() <= REVEAL_FRAME_BUDGET,
+            "{stages} 层的总帧数 {} 超出静态预算 {REVEAL_FRAME_BUDGET}",
+            reveal.total_frames()
+        );
+        assert!(
+            reveal.fade_frames() >= 1,
+            "{stages} 层时单层淡入不得为 0 帧"
+        );
+    }
+    // excalidraw 实测 6 层带：20/6 → 3 帧/层，共 18 帧。
+    assert_eq!(RevealState::new(true, 6).total_frames(), 18);
+    // 层带很多时退化为每层 1 帧，总帧数等于层数。
+    assert_eq!(RevealState::new(true, 30).total_frames(), 30);
 }
 
 #[test]
