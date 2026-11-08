@@ -21,6 +21,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools x11-utils openbox
       - name: build (locked)
         run: cargo build --locked --workspace
+      - name: test (locked)
+        # 几何等价（base vs A）等模型断言在 CI 常态执行；像素断言依赖可见桌面，留在 eval 脚本。
+        run: cargo test --locked --workspace
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
