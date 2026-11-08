@@ -49,8 +49,8 @@ switch ($Mode) {
     }
     "reveal" {
         $arguments += "--reveal"
-        # 软件渲染（lavapipe）+ 低端 CPU 上 80 帧可能远超 30s；这只是自动退出的上限，
-        # 正常路径在 `reveal:done` 后很快就会退出。取证 job 会显式调大。
+        # 揭示是固定 900ms 时长驱动（帧率只决定中间帧疏密），正常路径到 `reveal:done`
+        # 就退出；这个上限只是软件渲染/低端机上的自动退出兜底。
         $autoCloseMs = $RevealAutoCloseMs
         $windowTag = "reveal"
     }

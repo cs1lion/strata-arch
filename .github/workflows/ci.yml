@@ -129,8 +129,8 @@ jobs:
               2>&1 | tee "out/reveal/soft-1cpu-$i.log"
           done
       - name: reveal timing (small scene, lavapipe)
-        # 诊断：软件渲染下帧成本是「整窗光栅化」主导还是「节点数」主导。
-        # 若小场景也慢，按模块数分档无法把最坏时长压到 5s，规则需要更保守。
+        # 诊断：小场景与大场景的揭示时长是否都收敛到同一固定时长。
+        # 时长由 GPUI 动画时钟驱动，场景规模只应影响帧数、不应改变总时长。
         shell: bash
         run: |
           set -euo pipefail
