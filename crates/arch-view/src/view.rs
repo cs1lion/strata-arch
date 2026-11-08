@@ -118,12 +118,12 @@ pub struct PaintedSymbolEdge {
 
 /// 把符号边映射到屏幕坐标并决定是否强调「当前边」。
 ///
-/// 这是 `main.rs` 符号场景的唯一绘制入口：接线阶段先保持现有行为（全部不强调），
-/// 后续修复只改本函数，避免 UI 里再出现硬编码的 `strong`。
+/// 这是 `main.rs` 符号场景的唯一绘制入口：只有与 `current_edge` 完全一致的边
+/// 才标记 `strong`，其余边保持普通样式。
 pub fn paint_symbol_edges(
     layout: &SymbolLayout,
     viewport: &Viewport,
-    _current_edge: Option<&(String, String)>,
+    current_edge: Option<&(String, String)>,
 ) -> Vec<PaintedSymbolEdge> {
     layout
         .edges
@@ -133,7 +133,9 @@ pub fn paint_symbol_edges(
             target: edge.target.clone(),
             from: viewport.screen_point(edge.from),
             to: viewport.screen_point(edge.to),
-            strong: false,
+            strong: current_edge
+                .map(|(source, target)| source == &edge.source && target == &edge.target)
+                .unwrap_or(false),
         })
         .collect()
 }
@@ -183,11 +185,28 @@ impl CanvasState {
         self.viewport
     }
 
-    /// fly-to 的接线点：把目标世界坐标移到视口中心。
+    /// fly-to 接线点：把目标世界坐标移到视口中心。
     ///
-    /// 抽取阶段保持现有行为：不移动视口并返回 `false`；真正的移动在后续修复里实现。
-    pub fn apply_fly_to(&mut self, _target: Option<Point>, _viewport_size: (f32, f32)) -> bool {
-        false
+    /// 只调整平移、不改缩放；目标为空或已在中心时返回 `false`。
+    pub fn apply_fly_to(&mut self, target: Option<Point>, viewport_size: (f32, f32)) -> bool {
+        let Some(target) = target else {
+            return false;
+        };
+        let center = Point {
+            x: viewport_size.0 / 2.0,
+            y: viewport_size.1 / 2.0,
+        };
+        let zoom = self.viewport.zoom;
+        let pan_x = center.x - target.x * zoom;
+        let pan_y = center.y - target.y * zoom;
+        if (pan_x - self.viewport.pan_x).abs() < f32::EPSILON
+            && (pan_y - self.viewport.pan_y).abs() < f32::EPSILON
+        {
+            return false;
+        }
+        self.viewport.pan_x = pan_x;
+        self.viewport.pan_y = pan_y;
+        true
     }
 
     pub fn map(&self) -> &MapLayout {
