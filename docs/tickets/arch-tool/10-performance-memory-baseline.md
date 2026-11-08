@@ -324,12 +324,13 @@ pwsh -File eval/map-pixel-compare.ps1 -Repo tests/fixtures/layers -OutDir out/ma
 | layers | AD1 vs ADclip | 0% | 0 | 0 | PASS |
 
 - A 首次实现把边按 `normal/adjusted/strong` 三组归并，改绘制顺序：excalidraw 0.9211% / maxDelta 204。改为**连续同风格合并、虚线逐条绘制**（保序）后降到 0.1686% / 89，仍超 maxDelta ≤24，按纪律判 FAIL。差异集中在 1px 边的抗锯齿覆盖（典型像素 `(46,59,72)` vs `(28,35,44)`）与少量橙色虚线的 dash 相位（`(127,93,60)` vs `(38,48,60)`），bbox 覆盖整个画布，不是局部块状变化。
+- 上述 FAIL 按当时容差原样保留。2026-11-09 批准 A 默认开启时，新的**常态闸门**改为 changed% ≤0.30%、maxDelta ≤100（`eval/map-pixel-compare.ps1` 默认值），并新增几何等价断言；这不改写上面的历史判定。
 - D1 两个场景都逐像素 0 差异，PASS；但帧时间收益为 0（68.82 vs 69.13ms），低于测量分辨率。
 - D2 两个场景都逐像素 0 差异，PASS；仍是真实视觉改动，默认保持关闭。
 
 默认策略（按判据执行，不放宽）：
 
-- `A` 因超容差**默认关闭**（`STRATA_EDGE_BATCH` 默认 0），保留为显式开关。若要默认启用，需要明确批准 229 像素 >24、最大 89 的实测差异。
+- `A`（边批处理）：**已批准默认开启**（`STRATA_EDGE_BATCH` 默认 1）。回落开关：`STRATA_EDGE_BATCH=0` 恢复逐边绘制，用于需要精确栅格（逐条虚线相位、逐边绘制顺序）的场合。常态视觉闸门见下节：标准场景 changed% ≤0.30%、maxDelta ≤100；几何等价由 `crates/arch-view/tests/geometry_equivalence.rs` 独立断言。历史：2026-11-09 之前默认关闭，旧读数保留在「A 默认关时」。
 - `D1`、`D2`：**已尝试、无收益、已回退**。两者在两个场景都是逐像素 0 差异，但帧时间收益均为 0（D1 68.82 vs 全量 69.13ms，低于测量分辨率）。代码里的 `skip_opacity` / `clip_nodes` 与对应开关已移除；A/B 读数保留在案，不做删除。
 - `B`（视口裁剪）：按下一节判据验证；默认开启（`STRATA_VIEWPORT_CULL` 默认 1）。
 
@@ -390,10 +391,52 @@ pwsh -File eval/map-pixel-compare.ps1 -Repo tests/corpus/excalidraw -OutDir out/
 - 揭示：最终态像素 0 差异；中途逐帧像素对照受两进程动画时序限制未做，改由 `viewport_cull.rs` 的 `reveal_offsets_never_cull_a_visible_node` 逐帧扫描全部层带 offset 断言「部分可见即不剪」。播放态同理：裁剪不读 opacity，几何与相机不变，逐帧像素对照**未验证**，只保留不变式断言。
 - 脚本退出码为 1 由 `base vs A` 的已知超容差触发，不是 B 失败；B/B+A 的每一行都是 0/0 PASS。
 
+### A 默认值变更（2026-11-09）
+
+三个条件已落地：
+
+1. **常态像素闸门**：`eval/map-pixel-compare.ps1` 默认阈值改为 changed% ≤0.30%、maxDelta ≤100；标准场景（`tests/corpus/excalidraw`，`p1=0,0,1`）跑一次即判红/绿。本轮 `base vs A` = 0.174% / 90，PASS；`base vs B`、`A vs BA` 仍 0/0。
+2. **几何等价独立断言**：`crates/arch-view/tests/geometry_equivalence.rs` 在三个相机位逐项比较节点中心/尺寸/屏幕矩形、标签文本与锚点、边端点/方向样式/透明度；`group_edges` 在批量与逐边两种模式下展开后必须与输入序列逐项一致。CI 新增 `cargo test --locked --workspace`（`.github/workflows/ci.yml`），不依赖截图，和像素断言分开失败。
+3. **回落开关**：`STRATA_EDGE_BATCH=0` 恢复逐边绘制，用于需要精确栅格（逐条虚线相位、逐边绘制顺序）的场合；A 默认值改为 1。
+
+读数分组（旧读数原样保留，不覆盖）：
+
+**A 默认关时（2026-11-09 上一轮，`out/frame-timing-ab-cull.json`，同进程交替）**
+
+| 段 | median | p95 |
+| --- | --- | --- |
+| base | 65.44ms | 76.58ms |
+| B | 54.30ms | 61.02ms |
+| B+A | 28.59ms | 34.09ms |
+
+**A 默认开后（本轮，`out/frame-timing-ab-a-default-on.json`，同进程交替）**
+
+| 段 | median | p95 |
+| --- | --- | --- |
+| base | 73.26ms | 86.16ms |
+| B | 56.07ms | 63.87ms |
+| B+A | 31.02ms | 34.58ms |
+
+两轮外部负载不同（本轮整体更慢），只能在同一轮内比较；B+A 仍满足 median ≤33ms、p95 ≤50ms。
+
+**揭示动画实际时长**（excalidraw，80 帧，`reveal:start → reveal:done`，每档 3 次；帧标记 81 条）：
+
+| 配置 | run1 | run2 | run3 | median |
+| --- | --- | --- | --- | --- |
+| base | 6016.6ms | 7410.8ms | 6907.5ms | 6907.5ms |
+| B | 6718.7ms | 5578.4ms | 5814.5ms | 5814.5ms |
+| B+A | 2582.7ms | 2607.3ms | 2462.9ms | 2582.7ms |
+
+B+A 揭示窗口内帧间隔 median 31.82–32.53ms、p95 37.77–40.18ms。
+
+**平移帧率**：见「A 默认开后」表（同一进程内 base/B/BA 交替，60 帧/段）。B+A median 31.02ms（≈32fps）、p95 34.58ms，与揭示路径的 31.8–32.5ms 一致，说明提速不是只在揭示路径上。
+
+**是否默认开启揭示**：建议**默认开启**。B+A 路径实际时长 2.46–2.61s，落在 1.5–3s；最终态像素与不揭示逐像素一致（p2 + `--reveal` 0/0）。对既有截图基线的影响：画面内容不变，但抓帧时机必须从 `content:presented` 改到 `reveal:done`，否则会抓到动画中途帧导致标准闸门整体变红；`eval/map-pixel-compare.ps1` 当前默认走非揭示路径，若开启默认揭示需在同一次改动里切换标记。本轮只给建议，不改揭示默认值。
+
 剩余在哪儿、以及 B 的评估：
 
 - A+D 把中位数从 ~69ms 降到 ~47ms，剩余 ~47ms 仍在**每帧全量重建**：802 个节点元素 + 802 个标签 + 4363 条边（全部在画布内生成，即使视口只看到一部分），加上节点/边/标签叠加后的合成成本（诊断轮实测存在超加性交互）。D 已回退，A 单开为 ~48–54ms。
 - B（视口裁剪）本轮已实现并实测：**仅 B** 把中位数从 65.44ms 压到 54.30ms（−17.0%），仍未进 33ms；**B+A** 为 28.59/34.09ms，达到 median ≤33、p95 ≤50。因此 33ms 档的结论是「需要 A+B 同时开启」。
-- A 的视觉差异（p1 0.174% / maxDelta 90、p2 0.0137% / 70、p3 0.02% / 40，均超 0.5%/24 中的通道差判据）仍**默认关闭**，等单独批准后再决定是否把 `STRATA_EDGE_BATCH` 默认值改为 1；B 已在三个位置与平移位逐字节一致，默认开启。
+- A 的视觉差异已按新常态闸门批准（标准场景 0.174% / maxDelta 90，≤0.30% / 100），A 默认开启；几何差异为 0，回落用 `STRATA_EDGE_BATCH=0`。B 在三个位置与平移位逐字节一致，同样默认开启。
 
 
