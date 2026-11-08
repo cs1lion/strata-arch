@@ -6,12 +6,15 @@
 //! - **报告** [`DriftReport`]：与基线比较后的门禁结论、逐条违规与模块级 `added` /
 //!   `removed` / `moved` / `newViolations` / `resolvedViolations`。
 //!
-//! # 四类门禁判据（只拦「新增违规」，默认容差 0）
+//! # 四类门禁判据（只拦「新增违规」，没有任何数字容差）
 //!
-//! 1. **层人口突变**：每层模块计数相对基线变化。容差由基线字段 `populationTolerance`
-//!    显式记录（本项目取 `0`：任何计数变化都要求重新录制基线，而不是静默通过）。
-//!    违规带 `layer` / `baseline` / `current` / `delta`。层人口按「层」聚合，不看模块身份，
-//!    因此合法新增模块也会触发——这是有意的：重新录制基线必须是一次独立的、写明理由的提交。
+//! 1. **未确认的模块变更**（`unconfirmed-module-change`）：当前模块 ID 集合与基线不一致
+//!    （新增或删除）。违规按层分组，显式列出该层的 `added` / `removed` 模块 ID。
+//!    确认方式只有一种：重录基线（基线保存模块身份，重录即确认）。
+//!    同 ID 改层不算新增/删除，只在 `modules.moved` 里解释，不参与门禁。
+//!    v1 曾用「每层模块计数 + `populationTolerance`（0）」表达同类判据；v2 移除该数字阈值，
+//!    原因是计数无法区分「一个模块改层」与「两个模块增删」，且阈值可被事后调整凑绿。
+//!    原判据与推翻理由保留在 `docs/proposals/n1-architecture-drift.md`。
 //! 2. **新增反向边**：`directionAdjusted == true` 的 `(source, target, kind)` 出现在当前产物、
 //!    但不在基线中。违规带两端所在层，解释「哪条边、从哪层到哪层违反了外向程度」。
 //!    已存在的反向边记录在基线里，不重复计数；消失的反向边进入 `resolvedViolations`。
@@ -21,6 +24,9 @@
 //! 4. **external 泄漏**：`kind == "external-package"` 的模块出现在 `external` 之外的层。
 //!    违规带 `module` 与 `layer`，即「哪一层被外部包污染」。基线同样记录该集合，
 //!    因此新增与已解决分开计数。
+//!
+//! 判据 1 没有 `resolved` 概念：新增和删除都需要人工确认，任何 ID 集合差异都要求重录基线。
+//! 判据 2–4 保留 `new` / `resolved` 两个方向。
 //!
 //! # 事实边界（external 泄漏）
 //!
@@ -40,17 +46,16 @@
 //!
 //! 所有集合按字典序输出，同一输入两次运行字节一致。
 
-use crate::layers::{build_layers, LayeredModule, LayersArtifact, EXTERNAL, LAYER_ORDER};
+use crate::layers::{build_layers, LayeredModule, LayersArtifact, EXTERNAL};
 use crate::ScanError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// 漂移产物的独立 schema 版本，不复用 index / layers / callgraph / path / history 的版本号。
-pub const DRIFT_SCHEMA_VERSION: u32 = 1;
-
-/// 层人口容差默认值：0 表示任何计数变化都算漂移。
-pub const DEFAULT_POPULATION_TOLERANCE: u32 = 0;
+///
+/// v2（2026-11-08）：移除 `populationTolerance` 与按层计数，改为按层分组的模块身份变更。
+pub const DRIFT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,22 +64,12 @@ pub struct DriftBaseline {
     pub tool_version: String,
     /// 录制基线时的仓库 HEAD；非 git 仓库为 `None`。
     pub recorded_head: Option<String>,
-    /// 层人口容差（模块计数变化超过该值才算漂移）；本项目显式取 0。
-    pub population_tolerance: u32,
-    pub layers: Vec<LayerPopulation>,
     pub reverse_edges: Vec<ReverseEdgeKey>,
     /// 每个循环一条记录，成员按字典序排序。
     pub cycles: Vec<Vec<String>>,
     pub external_leaks: Vec<ExternalLeakRecord>,
-    /// 模块明细：`id → layer`，按 `id` 排序。
+    /// 模块明细：`id → layer`，按 `id` 排序。模块身份即门禁判据；重录基线即确认。
     pub modules: Vec<BaselineModule>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "camelCase")]
-pub struct LayerPopulation {
-    pub layer: String,
-    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -117,7 +112,6 @@ pub struct BaselineSummary {
     pub schema_version: u32,
     pub tool_version: String,
     pub recorded_head: Option<String>,
-    pub population_tolerance: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,7 +124,7 @@ pub struct DriftGate {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateChecks {
-    pub layer_population: CriterionCheck,
+    pub module_changes: CriterionCheck,
     pub reverse_edges: CriterionCheck,
     pub cycles: CriterionCheck,
     pub external_leaks: CriterionCheck,
@@ -167,12 +161,12 @@ pub struct MovedModule {
     rename_all_fields = "camelCase"
 )]
 pub enum Violation {
-    /// 层人口变化：`current - baseline`，正负都是漂移。
-    LayerPopulation {
+    /// 未确认的模块变更：按层分组，显式列出新增与删除的模块 ID。
+    /// 没有数字容差；确认方式是重录基线。
+    ModuleChange {
         layer: String,
-        baseline: usize,
-        current: usize,
-        delta: i64,
+        added: Vec<String>,
+        removed: Vec<String>,
     },
     /// 新增/消失的反向边：两端所在层用于解释方向规则。
     ReverseEdge {
@@ -194,26 +188,6 @@ pub enum Violation {
 
 /// 录制基线。纯函数：只读 `layers`，不写入。
 pub fn record_baseline(layers: &LayersArtifact, tool_version: &str) -> DriftBaseline {
-    let current_counts = population_by_layer(&layers.modules);
-
-    let mut layer_names = LAYER_ORDER
-        .iter()
-        .map(|layer| layer.to_string())
-        .collect::<Vec<_>>();
-    for layer in current_counts.keys() {
-        if !layer_names.iter().any(|known| known == layer) {
-            layer_names.push(layer.clone());
-        }
-    }
-    layer_names.sort();
-    let layers_population = layer_names
-        .into_iter()
-        .map(|layer| LayerPopulation {
-            count: current_counts.get(&layer).copied().unwrap_or(0),
-            layer,
-        })
-        .collect();
-
     let mut reverse_edges = reverse_edges_of(layers);
     reverse_edges.sort();
 
@@ -234,8 +208,6 @@ pub fn record_baseline(layers: &LayersArtifact, tool_version: &str) -> DriftBase
         schema_version: DRIFT_SCHEMA_VERSION,
         tool_version: tool_version.to_string(),
         recorded_head: layers.repo.head.clone(),
-        population_tolerance: DEFAULT_POPULATION_TOLERANCE,
-        layers: layers_population,
         reverse_edges,
         cycles: cycles_of(layers),
         external_leaks,
@@ -249,29 +221,9 @@ pub fn evaluate(
     layers: &LayersArtifact,
     tool_version: &str,
 ) -> DriftReport {
-    let current_counts = population_by_layer(&layers.modules);
-    let baseline_counts = baseline
-        .layers
-        .iter()
-        .map(|entry| (entry.layer.clone(), entry.count))
-        .collect::<BTreeMap<String, usize>>();
-
-    let mut population_violations = Vec::new();
-    let mut checked_layers = baseline_counts.keys().cloned().collect::<BTreeSet<_>>();
-    checked_layers.extend(current_counts.keys().cloned());
-    for layer in checked_layers {
-        let old = baseline_counts.get(&layer).copied().unwrap_or(0);
-        let new = current_counts.get(&layer).copied().unwrap_or(0);
-        let delta = new as i64 - old as i64;
-        if delta.abs() > i64::from(baseline.population_tolerance) {
-            population_violations.push(Violation::LayerPopulation {
-                layer,
-                baseline: old,
-                current: new,
-                delta,
-            });
-        }
-    }
+    let modules = module_drift(&baseline.modules, &layers.modules);
+    let module_change_violations =
+        module_change_violations(&modules, &baseline.modules, &layers.modules);
 
     let layer_by_id = layers
         .modules
@@ -324,7 +276,7 @@ pub fn evaluate(
         .cloned()
         .collect::<Vec<_>>();
 
-    let mut new_violations = population_violations;
+    let mut new_violations = module_change_violations;
     new_violations.extend(new_reverse.into_iter().map(|edge| {
         Violation::ReverseEdge {
             source_layer: layer_by_id
@@ -387,8 +339,11 @@ pub fn evaluate(
     );
 
     let checks = GateChecks {
-        layer_population: CriterionCheck {
-            new_count: population_count(&new_violations, Violation::is_layer_population),
+        module_changes: CriterionCheck {
+            new_count: new_violations
+                .iter()
+                .filter(|violation| matches!(violation, Violation::ModuleChange { .. }))
+                .count(),
             resolved_count: 0,
         },
         reverse_edges: CriterionCheck {
@@ -430,13 +385,12 @@ pub fn evaluate(
             schema_version: baseline.schema_version,
             tool_version: baseline.tool_version.clone(),
             recorded_head: baseline.recorded_head.clone(),
-            population_tolerance: baseline.population_tolerance,
         },
         gate: DriftGate {
             passed: new_violations.is_empty(),
             checks,
         },
-        modules: module_drift(&baseline.modules, &layers.modules),
+        modules,
         new_violations,
         resolved_violations,
     }
@@ -452,25 +406,44 @@ pub fn build_drift(
     Ok(evaluate(baseline, &layers, tool_version))
 }
 
-impl Violation {
-    fn is_layer_population(&self) -> bool {
-        matches!(self, Violation::LayerPopulation { .. })
-    }
-}
-
-fn population_count(violations: &[Violation], predicate: fn(&Violation) -> bool) -> usize {
-    violations
+/// 把模块级 `added` / `removed` 按层分组，生成 `unconfirmed-module-change` 违规。
+///
+/// 新增模块用当前层，删除模块用基线层；层按字典序输出，层内模块 ID 也已排序。
+/// 同 ID 改层不在 `added` / `removed` 中，因此不会进入这里。
+fn module_change_violations(
+    drift: &ModuleDrift,
+    baseline: &[BaselineModule],
+    current: &[LayeredModule],
+) -> Vec<Violation> {
+    let baseline_layer = baseline
         .iter()
-        .filter(|violation| predicate(violation))
-        .count()
-}
+        .map(|module| (module.id.as_str(), module.layer.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let current_layer = current
+        .iter()
+        .map(|module| (module.id.as_str(), module.layer))
+        .collect::<BTreeMap<_, _>>();
 
-fn population_by_layer(modules: &[LayeredModule]) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    for module in modules {
-        *counts.entry(module.layer.to_string()).or_insert(0) += 1;
+    let mut groups = BTreeMap::<&str, (Vec<String>, Vec<String>)>::new();
+    for id in &drift.added {
+        if let Some(layer) = current_layer.get(id.as_str()) {
+            groups.entry(*layer).or_default().0.push(id.clone());
+        }
     }
-    counts
+    for id in &drift.removed {
+        if let Some(layer) = baseline_layer.get(id.as_str()) {
+            groups.entry(*layer).or_default().1.push(id.clone());
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(layer, (added, removed))| Violation::ModuleChange {
+            layer: layer.to_string(),
+            added,
+            removed,
+        })
+        .collect()
 }
 
 fn reverse_edges_of(layers: &LayersArtifact) -> Vec<ReverseEdgeKey> {
@@ -650,7 +623,6 @@ mod tests {
 
     #[test]
     fn drift_schema_version_is_its_own_contract() {
-        assert_eq!(DRIFT_SCHEMA_VERSION, 1);
-        assert_eq!(DEFAULT_POPULATION_TOLERANCE, 0);
+        assert_eq!(DRIFT_SCHEMA_VERSION, 2);
     }
 }
