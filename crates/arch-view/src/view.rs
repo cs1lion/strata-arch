@@ -99,6 +99,20 @@ impl Viewport {
         }
     }
 
+    /// 世界矩形映射到屏幕矩形（左上角变换 + 尺寸乘缩放）。
+    pub fn screen_rect(&self, rect: Rect) -> Rect {
+        let origin = self.screen_point(Point {
+            x: rect.x,
+            y: rect.y,
+        });
+        Rect::new(
+            origin.x,
+            origin.y,
+            rect.width * self.zoom,
+            rect.height * self.zoom,
+        )
+    }
+
     pub fn pan_by(&mut self, dx: f32, dy: f32) {
         self.pan_x += dx;
         self.pan_y += dy;
@@ -115,6 +129,37 @@ impl Viewport {
         self.pan_x = anchor.x - world.x * next;
         self.pan_y = anchor.y - world.y * next;
     }
+}
+
+/// 视口裁剪的保守外扩像素：覆盖 1–2px 描边与抗锯齿，保证任何部分可见的元素不被剪掉。
+pub const CULL_MARGIN: f32 = 2.0;
+
+/// 屏幕矩形是否完全在视口外。只用于跳过绘制，不参与命中测试。
+///
+/// 判据是「完全在外」：只要与视口相交（含 `margin` 内）就返回 `false`，
+/// 因此静止帧的可见像素应与不裁剪时完全一致。
+pub fn rect_fully_outside(rect: Rect, viewport_size: (f32, f32), margin: f32) -> bool {
+    rect.x > viewport_size.0 + margin
+        || rect.x + rect.width < -margin
+        || rect.y > viewport_size.1 + margin
+        || rect.y + rect.height < -margin
+}
+
+/// 屏幕线段是否完全在视口外（按两端包围盒判定，等价于两端同在外侧）。
+pub fn segment_fully_outside(
+    from: Point,
+    to: Point,
+    viewport_size: (f32, f32),
+    margin: f32,
+) -> bool {
+    let min_x = from.x.min(to.x);
+    let max_x = from.x.max(to.x);
+    let min_y = from.y.min(to.y);
+    let max_y = from.y.max(to.y);
+    max_x < -margin
+        || min_x > viewport_size.0 + margin
+        || max_y < -margin
+        || min_y > viewport_size.1 + margin
 }
 
 /// 短镜头转场：相机在 `from` 与 `to` 之间按 `progress` 线性插值。
@@ -269,6 +314,11 @@ impl CanvasState {
 
     pub fn viewport(&self) -> Viewport {
         self.viewport
+    }
+
+    /// 证据抓帧用：直接设定相机；不参与交互逻辑，也不改变命中测试几何。
+    pub fn set_viewport(&mut self, viewport: Viewport) {
+        self.viewport = viewport;
     }
 
     /// fly-to 接线点：把目标世界坐标移到视口中心。

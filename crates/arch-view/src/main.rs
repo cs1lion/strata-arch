@@ -28,7 +28,8 @@ use arch_view::reveal::{reveal_allowed, RevealState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
-    symbol_kind_palette, CanvasState, Level, SymbolLayout, Viewport,
+    rect_fully_outside, segment_fully_outside, symbol_kind_palette, CanvasState, Level,
+    SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM, MIN_ZOOM,
 };
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
@@ -95,12 +96,30 @@ fn frame_trace_enabled() -> bool {
     std::env::var_os("STRATA_FRAME_TRACE").is_some()
 }
 
-/// 渲染调优开关（A/D）。`STRATA_AB_CYCLE` 存在时按帧段交替覆盖，用于同进程 A/B。
+/// 证据抓帧用固定相机：`STRATA_EVIDENCE_VIEWPORT=panX,panY,zoom`。
+/// 仅用于跨配置在「同一相机位」抓帧比较，不参与交互逻辑。
+fn evidence_viewport() -> Option<Viewport> {
+    let spec = std::env::var("STRATA_EVIDENCE_VIEWPORT").ok()?;
+    let parts = spec
+        .split(',')
+        .map(|part| part.trim().parse::<f32>())
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if parts.len() != 3 {
+        return None;
+    }
+    Some(Viewport {
+        pan_x: parts[0],
+        pan_y: parts[1],
+        zoom: parts[2].clamp(MIN_ZOOM, MAX_ZOOM),
+    })
+}
+
+/// 渲染调优开关（A/B）。`STRATA_AB_CYCLE` 存在时按帧段交替覆盖，用于同进程 A/B。
 #[derive(Clone, Copy)]
 struct RenderTuning {
     batch_edges: bool,
-    skip_opacity: bool,
-    clip_nodes: bool,
+    cull_viewport: bool,
 }
 
 fn env_flag(name: &str, default: bool) -> bool {
@@ -114,10 +133,10 @@ impl RenderTuning {
     fn from_env() -> Self {
         Self {
             // 实测 A（边批处理）超视觉等价容差（票 10），默认关闭；需显式
-            // `STRATA_EDGE_BATCH=1` 才启用。D1 逐像素一致，默认开启。
+            // `STRATA_EDGE_BATCH=1` 才启用。
             batch_edges: env_flag("STRATA_EDGE_BATCH", false),
-            skip_opacity: env_flag("STRATA_NODE_OPACITY_SKIP", true),
-            clip_nodes: env_flag("STRATA_NODE_CLIP", true),
+            // B（视口裁剪）：只剪完全在视口外的元素，静止帧逐像素一致，默认开启。
+            cull_viewport: env_flag("STRATA_VIEWPORT_CULL", true),
         }
     }
 
@@ -125,29 +144,21 @@ impl RenderTuning {
         match name {
             "base" => Self {
                 batch_edges: false,
-                skip_opacity: false,
-                clip_nodes: true,
+                cull_viewport: false,
             },
             "A" => Self {
                 batch_edges: true,
-                skip_opacity: false,
-                clip_nodes: true,
+                cull_viewport: false,
             },
-            "D1" => Self {
+            "B" => Self {
                 batch_edges: false,
-                skip_opacity: true,
-                clip_nodes: true,
+                cull_viewport: true,
             },
-            "ADclip" => Self {
+            "BA" | "AB" => Self {
                 batch_edges: true,
-                skip_opacity: true,
-                clip_nodes: false,
+                cull_viewport: true,
             },
-            _ => Self {
-                batch_edges: true,
-                skip_opacity: true,
-                clip_nodes: true,
-            },
+            _ => Self::from_env(),
         }
     }
 }
@@ -524,8 +535,15 @@ fn spawn_map_loading(
         );
 
         let built_view = cx.update(|cx| {
+            let evidence_camera = evidence_viewport();
             cx.new(move |_| MapView {
-                state: CanvasState::new(layout),
+                state: {
+                    let mut state = CanvasState::new(layout);
+                    if let Some(viewport) = evidence_camera {
+                        state.set_viewport(viewport);
+                    }
+                    state
+                },
                 callgraph,
                 playback,
                 ticker_running: false,
@@ -2008,6 +2026,10 @@ impl Render for MapView {
             .unwrap_or(false);
         let transition_enabled = self.state.transition_enabled();
         let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
+        let viewport_size = (
+            f32::from(window.viewport_size().width),
+            f32::from(window.viewport_size().height),
+        );
         if self.reveal.is_active() {
             Self::schedule_reveal_frame(self, window, cx);
         }
@@ -2138,12 +2160,21 @@ impl Render for MapView {
                     let edges = map
                         .edges
                         .iter()
-                        .map(|edge| EdgeDraw {
-                            from: viewport.screen_point(edge.from),
-                            to: viewport.screen_point(edge.to),
-                            adjusted: edge.direction_adjusted,
-                            strong: false,
-                            opacity: base_opacity,
+                        .filter_map(|edge| {
+                            let from = viewport.screen_point(edge.from);
+                            let to = viewport.screen_point(edge.to);
+                            if tuning.cull_viewport
+                                && segment_fully_outside(from, to, viewport_size, CULL_MARGIN)
+                            {
+                                return None;
+                            }
+                            Some(EdgeDraw {
+                                from,
+                                to,
+                                adjusted: edge.direction_adjusted,
+                                strong: false,
+                                opacity: base_opacity,
+                            })
                         })
                         .collect::<Vec<_>>();
                     root = root.child(edge_canvas(
@@ -2179,10 +2210,17 @@ impl Render for MapView {
                             } else {
                                 (playback.current() == index + 2, 1.0)
                             };
+                            let from = viewport.screen_point(*from);
+                            let to = viewport.screen_point(*to);
+                            if tuning.cull_viewport
+                                && segment_fully_outside(from, to, viewport_size, CULL_MARGIN)
+                            {
+                                continue;
+                            }
                             let opacity = opacity * reveal_overall;
                             path_edges.push(EdgeDraw {
-                                from: viewport.screen_point(*from),
-                                to: viewport.screen_point(*to),
+                                from,
+                                to,
                                 adjusted: true,
                                 strong,
                                 opacity,
@@ -2237,6 +2275,19 @@ impl Render for MapView {
                     let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
                     let opacity = opacity * self.reveal.opacity_for_stage(stage);
                     let offset_y = self.reveal.offset_for_stage(stage);
+                    // B：只剪完全在视口外的节点（含揭示动画的位移），部分可见一律照画。
+                    if tuning.cull_viewport {
+                        let rect = viewport.screen_rect(node.rect);
+                        let drawn = arch_view::layout::Rect::new(
+                            rect.x,
+                            rect.y + offset_y,
+                            rect.width,
+                            rect.height,
+                        );
+                        if rect_fully_outside(drawn, viewport_size, CULL_MARGIN) {
+                            continue;
+                        }
+                    }
                     root = root.child(node_element(
                         node,
                         viewport,
@@ -2246,8 +2297,6 @@ impl Render for MapView {
                         opacity,
                         focus,
                         offset_y,
-                        tuning.skip_opacity,
-                        tuning.clip_nodes && viewport.zoom < 0.3,
                     ));
                 }
             }
@@ -2263,6 +2312,15 @@ impl Render for MapView {
                 };
                 let edges = painted
                     .into_iter()
+                    .filter(|edge| {
+                        !tuning.cull_viewport
+                            || !segment_fully_outside(
+                                edge.from,
+                                edge.to,
+                                viewport_size,
+                                CULL_MARGIN,
+                            )
+                    })
                     .map(|edge| EdgeDraw {
                         from: edge.from,
                         to: edge.to,
@@ -2304,6 +2362,15 @@ impl Render for MapView {
                         None => 1.0,
                     };
                     let opacity = opacity * reveal_overall;
+                    if tuning.cull_viewport
+                        && rect_fully_outside(
+                            viewport.screen_rect(node.rect),
+                            viewport_size,
+                            CULL_MARGIN,
+                        )
+                    {
+                        continue;
+                    }
                     root = root.child(symbol_node_element(
                         node,
                         opacity,
@@ -2640,16 +2707,7 @@ fn edge_canvas(
 }
 
 fn scaled_rect(rect: arch_view::layout::Rect, viewport: Viewport) -> arch_view::layout::Rect {
-    let origin = viewport.screen_point(LayoutPoint {
-        x: rect.x,
-        y: rect.y,
-    });
-    arch_view::layout::Rect::new(
-        origin.x,
-        origin.y,
-        rect.width * viewport.zoom,
-        rect.height * viewport.zoom,
-    )
+    viewport.screen_rect(rect)
 }
 
 fn selection_border(
@@ -2715,8 +2773,6 @@ fn node_element(
     opacity: f32,
     focus: Option<&str>,
     offset_y: f32,
-    skip_opacity: bool,
-    clip: bool,
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
     let background = layer_color(node.layer, node.is_unclassified);
@@ -2735,22 +2791,15 @@ fn node_element(
         .top(px(rect.y + offset_y))
         .w(px(rect.width))
         .h(px(rect.height))
+        .overflow_hidden()
         .rounded(px(4.))
         .border_1()
         .border_color(border)
         .bg(background)
+        .opacity(opacity)
         .flex()
         .items_center()
         .px(px(6.));
-
-    // D1：opacity=1 时不挂透明度层（视觉等价，省去逐节点合成）。
-    if !(skip_opacity && opacity >= 1.0) {
-        element = element.opacity(opacity);
-    }
-    // D2：低缩放省略裁剪属真实视觉改动，由调用方按开关控制。
-    if clip {
-        element = element.overflow_hidden();
-    }
 
     if labels {
         element = element.child(
