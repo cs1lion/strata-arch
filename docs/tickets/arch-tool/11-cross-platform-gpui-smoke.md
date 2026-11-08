@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（分层地图，提供可渲染的最静态视图）
 
-**Status:** partial（2026-11-08：Windows 构建 + 窗口冒烟在 CI 通过；macOS/Linux 仅 CI 编译通过，未运行窗口；CI 已实际执行，见 run 42475740482）
+**Status:** partial（2026-11-08：Windows 构建 + 窗口冒烟在 CI 通过；macOS/Linux 仅 CI 编译通过，未运行窗口；CI 已实际执行，见 run 42475740482。同日追加本地像素证据链，人工项 14/14 通过，不进 CI）
 
 **固定样本：** `tests/fixtures/tiny`；启动冒烟使用 `--smoke` 模式。
 
@@ -106,13 +106,15 @@ error[E0425]: cannot find value `ENOATTR` in crate `::libc`
 ### Windows OS 窗口捕获（人工证据，不进 CI）
 
 - 脚本：`eval/capture-window.ps1`（手动执行；启动 `arch-view map`，取主窗口句柄，优先 `PrintWindow`，失败回退屏幕捕获）。
-- 实测（Windows，2026-11-08）：`pwsh -File eval/capture-window.ps1` → exit 0，窗口 1212×835，产物 `docs/evidence/11-window-capture.png`，SHA256 `DA6733FE135332AB7D0DDE292A5DE240385876E86613BBDDCBF7B6598FBAC7AE`；画面可见层带（cli/commands/components/server）、模块节点与标签、跨层边，非黑屏。
+- 实测（Windows，2026-11-08，**DPI-unaware 运行**）：`pwsh -File eval/capture-window.ps1` → exit 0，窗口读数 1212×835，产物 `docs/evidence/11-window-capture.png`（1212×835），SHA256 `DA6733FE135332AB7D0DDE292A5DE240385876E86613BBDDCBF7B6598FBAC7AE`。该读数来自 `GetWindowRect` 的虚拟坐标；`PrintWindow` 实际按物理像素渲染，图被右下裁切，底部面板与居中状态文案丢失，**仅作历史记录，不再作为完整画面证据**。
+- DPI 修正（2026-11-08 追加）：脚本启动时调用 `SetProcessDpiAwarenessContext(-4)`（per-monitor v2）。修正后实测 DPI 216 / 2.25x，窗口 2728×1879，加载/失败文案、地图播放面板、时间线刻度条完整可见。抓屏进程 DPI-aware 是硬前置条件。
+- 像素证据链（2026-11-08 追加，人工项，不进 CI）：`pwsh -File eval/pixel-evidence.ps1` 复用本脚本抓取加载 / 失败 / diff / P1 / P3 五个状态并做像素断言，最近一次 **14/14 通过**；判定方式、阈值依据与实测读数见 `docs/acceptance-gaps.md` 第 2.2.1 节。`PrintWindow` 动画首帧可能是空白帧（整帧平均亮度约 8.5，正常帧 24–30），脚本以平均亮度 15 剔除并记录编号。
 - 不进 CI：需要可见桌面会话，无头 runner 不可靠；每次运行像素受字体/DPI/GPU 影响，不作为门禁。
 
 ### 未验证
 
 - macOS/Linux 启动冒烟：CI 未运行，未验证。
-- 像素级差异基线：未建立，OS 捕获仅一次人工证据。
+- 像素级差异基线：未建立 CI 门禁；本地五状态像素断言已建立（见 `docs/acceptance-gaps.md` 2.2.1），但读数随 GPU/字体/缩放漂移。
 
 ## 截图能力重新定义（2026-11-07 开放项，2026-11-08 已裁决）
 

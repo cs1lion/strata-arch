@@ -78,14 +78,23 @@ playback: ended at tick 6
 
 **大历史冒烟（tsx 617 刻度）：**
 
-`target/debug/arch-view.exe timeline %TEMP%\tsx-hist --autoplay --auto-close-ms 5000` → exit 0；`timeline: 617 ticks, 136 modules, 4 bands`，帧推进 `tick 2 → 7`（每刻度约 700ms）。该历史默认 `max_commits=500`，每个刻度 `truncated=true`，footer 走 `degradation_label` 显示「采样结果（非完整历史）」；标记文案与接线有断言，**未做像素证据**。
+`target/debug/arch-view.exe timeline %TEMP%\tsx-hist --autoplay --auto-close-ms 5000` → exit 0；`timeline: 617 ticks, 136 modules, 4 bands`，帧推进 `tick 2 → 7`（每刻度约 700ms）。该历史默认 `max_commits=500`，每个刻度 `truncated=true`，footer 走 `degradation_label` 显示「采样结果（非完整历史）」；标记文案与接线有断言；像素证据仅覆盖 6 刻度 fixture（见下），大历史样本仍未采样。
 
 **时间源扫描：** `view_sources_do_not_query_wall_clock_or_randomness` 递归扫描 `arch-view/src`，禁用项 `Instant::now / SystemTime::now / Date::now / rand:: / thread_rng` 命中 0，通过。
+
+## 像素证据（2026-11-08 追加，人工项，不进 CI）
+
+- 命令：`pwsh -File eval/pixel-evidence.ps1`，样本 `tests/fixtures/history`，`timeline --autoplay`，等 `playback: frame tick 2` 后按 380ms 间隔连拍 5 帧；另拍同状态静态两帧作噪声基线。
+- 判定方式：相邻帧帧差（通道差 >6 记为变化像素，32×32 热点单元）；至少一对相邻帧有真实变化。
+- 阈值与依据：changedRatio ≥0.2% 且热点单元 ≥1。依据：单个时间线热力格约 0.4% 画面；静态基线噪声上限 0.1%，与 0.2% 拉开 2x。
+- 实测（2728×1879）：`f01→f02` changed=1.29%（bbox 覆盖内容区，含首帧到内容态切换）、`f02→f03` 0.65%、`f03→f04` 0.65%（后两对变化 bbox 集中在底部刻度条 y=1772–1824）、`f04→f05` 0.00%（同 tick）；`maxCell=100%`、hotCells 88/45/49；stdout `playback: frame tick` 5 行。
+- 静态基线：两帧逐位一致，`changed=0.000000%`。
+- 边界：可见桌面会话 + DPI-aware 抓屏是硬前置（脚本已设 per-monitor v2）；首帧若为 `PrintWindow` 空白帧会被平均亮度 15 的门限剔除并记录；不同 GPU/字体/缩放下读数会漂移。完整读数见 `docs/acceptance-gaps.md` 2.2.1。
 
 ## 已知偏差与未验证
 
 - **未做研究里的「可选 150ms cross-fade」**：本票判据 1 要求刻度之间不存在中间热力态，cross-fade 会违反该判据；保留研究原文，按更严格口径实现为纯离散切换。
-- **UI 点击未自动化**：播放/暂停/单步/速度/toggle 只做了窗口冒烟，没有 `gpui::test` 事件断言；没有像素证据（与 ticket 11 的截图缺口一致）。
+- **UI 点击未自动化**：播放/暂停/单步/速度/toggle 只做了窗口冒烟，没有 `gpui::test` 事件断言。P3 播放帧推进已补本地像素证据（见上），但点击交互本身仍未自动化。
 - **未接入系统 reduced-motion**：动画开关是应用内的「播放:开/关」，未读取系统偏好。
 - **未显示 commit 日期/数量**：footer 的离散位置只有「第 k/N 刻度」，commit hash/subject 仍在原有位置；研究 T4 的「显示日期/commit 数」未做。
 - **速度切换只做了模型断言**：UI 上的调速点击未做交互自动化。

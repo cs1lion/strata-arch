@@ -103,4 +103,5 @@
 - **窗口 smoke**：`cargo run -p arch-view -- timeline tests/fixtures/history --autoplay --auto-close-ms 5000` → exit 0，stdout `playback: 已采样 6/6 刻度`、`timeline: 6 ticks, 3 modules, 1 bands`、`playback: frame tick 2..6`、`playback: ended at tick 6`。
 - **时间源扫描**：`rg -n "Instant::now|SystemTime::now|Date::now|rand::|thread_rng" crates/arch-view/src` → 0 命中。
 - **回归**：`cargo test --workspace` → 全部 `test result: ok`，0 failed；`cargo fmt --all --check` → exit 0。
-- **未验证 / 部分自动化**：跳首/跳尾与采样空洞提示的按钮/footer 只有模型断言和源码接线，未做像素级证据；与票 18 的 UI 缺口一致。
+- **像素证据（2026-11-08 追加，人工项，不进 CI）**：`pwsh -File eval/pixel-evidence.ps1` 对 `tests/fixtures/history --autoplay` 连拍 5 帧；相邻帧 changed=1.29% / 0.65% / 0.65% / 0.00%（末对为同 tick），静态基线 0.000000%，判定方式与阈值依据见 `docs/acceptance-gaps.md` 2.2.1。
+- **未验证 / 部分自动化**：跳首/跳尾与采样空洞提示的按钮/footer 只有模型断言和源码接线，未做像素级证据；与票 18 的 UI 缺口一致。P3 相邻帧推进已补像素证据（见上），但按钮/footer 的交互与视觉仍未采样。

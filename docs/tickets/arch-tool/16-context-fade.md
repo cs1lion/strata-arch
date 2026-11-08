@@ -6,7 +6,7 @@
 
 **Blocked by:** 06/07（路径与步骤模型）、05（符号级视图与命中框）、15（P2 转场，不修改其机制）。
 
-**Status:** implemented & verified（2026-11-08；模型与绘制层断言全自动，真实帧缓冲未采样，见文末）。
+**Status:** implemented & verified（2026-11-08；模型与绘制层断言全自动；同日追加本地像素证据链，P1 前后帧可区分，人工项不进 CI，见文末）。
 
 **固定样本/commit：** `tests/fixtures/callgraph`。3 步路径 `src/b.ts#function:caller → src/a.ts#function:alpha → src/util.ts#function:helper`（三步均 `unclassified`，模块分别为 `src/b.ts` / `src/a.ts` / `src/util.ts`）；2 步同模块路径 `src/a.ts#function:beta → src/a.ts#function:alpha`；单步 `alpha → alpha`。开工基线 commit `096877e`。硬件/OS：`AMD Ryzen 7 8845H`、Windows、PowerShell 7.6.9；`cargo test` debug profile。
 
@@ -110,9 +110,18 @@ painted edges: 2 total, 1 strong, context opacity 0.68
 
 animation README 的 P1 落地要点 2 写「关闭动画时显示静态完整路径（所有路径边可见、当前边不高亮），并停止 ticker」。本轮按用户明确要求「关闭时必须与现在完全一致（回归判据，逐位对比）」执行：关闭态保持旧行为（路径 1.0 / 非路径 0.25、仅 incoming 强调、ticker 行为不变）。两处冲突在此登记；未静默删除 README 原判据，也未借机改关闭态语义。若后续要落地「静态完整路径」，应作为关闭态语义变更单独开票并提供改前/改后读数。
 
+## 像素证据（2026-11-08 追加，人工项，不进 CI）
+
+- 证据钩子：`STRATA_EVIDENCE_ANIMATION=1` 让 `map --from/--to` 启动即处于「动画: 开」态（等价用户在 UI 里点击一次开关），用于抓取关闭态/开启态对照帧；正常运行不受影响。
+- 命令：`pwsh -File eval/pixel-evidence.ps1`（固定样本 `tests/fixtures/callgraph`，`src/b.ts#function:caller → src/util.ts#function:helper`）。
+- 判定方式：关闭态最后一帧 vs 开启态最后一帧，整帧帧差（通道差 >6 记为变化像素，32×32 热点单元）。
+- 阈值与依据：changedRatio ≥2%、热点单元（≥30% 变化）≥10。依据：16 节点中 13 个非路径节点透明度 0.25→0.68，节点瓦片+标签约占画面 10%，取 1/5 余量；13 个节点各至少覆盖 1 格。
+- 实测：`changed=7.886%`、`meanAbs=1.256`、`maxCell=100%`、`hotCells=454`、变化 bbox `(37,142)-(2560,1816)`；同次复跑无空白帧。
+- 边界：需要可见 Windows 桌面会话与 DPI-aware 抓屏（脚本已设 per-monitor v2，物理尺寸 2728×1879）；不算 CI 自动断言，也不替代逐位像素比对。阈值与完整读数见 `docs/acceptance-gaps.md` 2.2.1。
+
 ## 未验证的
 
-- **真实帧缓冲未采样**：淡化透明度与标签对比度按 GPUI primitive alpha 合成模型计算；`gpui 0.2.2` 无公开离屏导出，无法对窗口像素逐位比对。
+- **真实帧缓冲未采样**：淡化透明度与标签对比度按 GPUI primitive alpha 合成模型计算；`gpui 0.2.2` 无公开离屏导出，无法对窗口像素逐位比对。（2026-11-08 追加：已用 Windows `PrintWindow` 采到关闭态/开启态两帧并做帧差，见上；仍非 CI 自动断言，也未逐位比对。）
 - **跨节点遮挡的视觉 z-order 未验证**：fixture 布局中节点矩形不重叠，绘制顺序断言只能证明「当前步最后绘制」，不能证明重叠时的实际遮挡；命中测试仍按 layout `z_index`，未改。
 - **DPI/刷新率/字体差异**未测；对比度对显示伽马的敏感性未做实测。
 - 关闭态的「逐位一致」是结构级判据（旧常量、旧 `current_edge`、旧绘制入口、原迭代顺序），不是像素 diff。
