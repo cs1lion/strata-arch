@@ -24,6 +24,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools x11-utils openbox
       - name: build (locked)
         run: cargo build --locked --workspace
+      - name: seed history fixture
+        # tests/fixtures/history 由 history-seed/build.ps1 生成且被 .gitignore 排除，
+        # 不进仓库；arch-core 的 history_prefixes 断言依赖它，测试前必须重建。
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/fixtures/history-seed/build.ps1
       - name: test (locked)
         # 几何等价（base vs A）等模型断言在 CI 常态执行；像素断言依赖可见桌面，留在 eval 脚本。
         # 本 job 不拉取 pinned 语料，故不含 arch-cli 的 path/history 测试（它们在 tests/corpus 就绪时执行）。
