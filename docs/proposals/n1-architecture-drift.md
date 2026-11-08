@@ -1,6 +1,6 @@
 # N1: 架构漂移检测
 
-**状态：** 已决策并实现（2026-11-08，用户拍板 B+C；实现见文末「决策与实现」）。原文的「待用户拍板」段与验收判据保留作历史对照，不删除。
+**状态：** 已决策并实现（2026-11-08，用户拍板 B+C；实现见文末「决策与实现」）。同日按用户裁决升级到 schema v2（见文末「判据调整」）。原文的「待用户拍板」段与验收判据保留作历史对照，不删除。
 
 ## 问题
 
@@ -90,6 +90,8 @@
 
 ## 决策与实现（2026-11-08）
 
+> **历史记录（v1）**：以下内容记录首次实现时的口径。用户随后裁定 schema v2 调整（见文末「判据调整」）：`populationTolerance` 与按层计数已移除。本段保留作对照，不静默改写。
+
 ### 落地形态
 
 - **门禁（B）**：只比较四类「新增违规」。容差 `0` 显式记录在基线 `populationTolerance` 里，而不是隐含在代码里。
@@ -125,9 +127,57 @@
 ### 实测读数（2026-11-08）
 
 - 正向基线：fixture 8 模块（cli 1 / commands 1 / components 1 / server 1 / utils 2 / external 1 / unclassified 1），reverseEdges 0、cycles 0、externalLeaks 0；自检 exit 0，`added`/`removed`/`moved` 全 0。
-- 反向用例：合法正向边 `cli → utils` 不报；`utils → commands` 反向边命中 1 条；`utils` 层内 `format ↔ text` 只报 1 个 SCC；同层 rename 门禁通过但 added/removed 显式；违规消失时 resolved 1 / new 0。
+- 反向用例：合法正向边 `cli → utils` 不报；`utils → commands` 反向边命中 1 条；`utils` 层内 `format ↔ text` 只报 1 个 SCC；同层 rename 门禁通过但 added/removed 显式（v2 起改为门禁失败，见下节）；违规消失时 resolved 1 / new 0。
 - 自动化：`cargo test -p arch-core --test drift` 10 passed / 0 failed；`cargo test -p arch-cli --test drift` 5 passed / 0 failed；`cargo test --workspace` 全绿；`cargo fmt --all --check` 通过。
 
 ### 基线重录纪律
 
 `drift-baseline.json` 的任何更新必须独立提交，提交信息写明旧读数、新读数与变更原因；不得与功能或测试提交混在一起。层人口容差为 0 时，任何合法新增模块也会要求重录基线——这是有意的流程约束，而不是误报。
+
+## 判据调整（2026-11-08，schema v2）
+
+### 用户裁决
+
+1. **去掉 `populationTolerance` 数字阈值**，改为「新增/删除模块必须人工确认层归属」。
+2. **external 泄漏判据维持现状**（回归不变量 + 合成产物验证）；**不**重新定义为「外部依赖面扩张」。
+
+### 变更内容
+
+- `DRIFT_SCHEMA_VERSION` 1 → 2；基线删除 `populationTolerance` 与按层计数 `layers`（计数可由 `modules` 推导，且不再参与门禁）。
+- 违规类型 `layer-population` → `module-change`（JSON `kind: "moduleChange"`）：
+  - 按层分组，字段 `layer` / `added` / `removed`；
+  - 新增模块用当前层，删除模块用基线层；层与模块 ID 都稳定排序；
+  - 没有 `resolved`：新增和删除都必须人工确认，任何 ID 集合差异都要求重录基线。
+- 同 ID 改层不进入 `moduleChange`，只在 `modules.moved` 解释。原提案提到的「模块改层」属于解释层，不参与门禁（v1 与 v2 都是这样）。
+- rename 现在会同时出现在 `added` 与 `removed`，并且**门禁变红**——这是「必须人工确认」的直接结果。
+
+### 为什么移除数字阈值（保留原判据与推翻理由）
+
+- 计数无法区分「一个模块改层」与「两个模块增删」，只能给层信号。
+- 阈值可被事后调整来凑绿，违反「不看读数回改判据」红线。
+- 模块身份是更可解释的判据：报告能直接说「哪一层的哪个模块是新增/删除」，确认动作就是重录基线。
+- 原 v1 判据「任意一层计数变化 > 0 即漂移」保留在本文件上文，未被删除；它的缺陷正是触发条件只与计数有关。
+
+### external 泄漏维持现状
+
+- 不重新定义为「外部依赖面扩张」：该口径没有精确定义（新增合法依赖与泄漏无法区分），硬造等于凑数。
+- 仍为回归不变量：`external-package` 必须落在 `external`；正向恒空，触发路径由合成 `LayersArtifact` 验证。
+
+### schema v2 的 Red / Green（实测）
+
+- Red：core `E0609 no field module_changes` / `E0599 no variant ModuleChange`；CLI 2 passed / 4 failed（schemaVersion 1≠2、`layerPopulation`、缺 `moduleChanges`、旧 v1 基线未被拒绝）。
+- Green：core 13 passed / 0 failed；CLI 6 passed / 0 failed。
+- 反向用例变化：同层 rename 由「门禁通过」变为「门禁失败 + 按层列出 added/removed」；其余 (a)(b)(c) 不变。
+
+### 真实基线实证（2026-11-08）
+
+- tsx（`tests/corpus/tsx`，pin `4473971`）：136 模块；`--record` 107ms → `eval/baseline/drift-tsx.json`
+  11,178 字节；基线自检 exit 0，四类 new/resolved 全 0，added/removed/moved 全 0。
+- excalidraw（`tests/corpus/excalidraw`，pin `701b901`）：802 模块；`--record` 905ms →
+  `eval/baseline/drift-excalidraw.json` 108,905 字节；自检 exit 0，四类全 0。
+- 比较耗时（`target/debug`，含 index + layers + 比较）：tsx 103ms；excalidraw 879ms。
+- fixture 基线 v1 → v2 重录：1,197 → 702 字节（`populationTolerance` 与 `layers` 计数移除）。
+- 新增文件门禁（tsx 真实基线 + 临时副本新增 `src/utils/drift-probe.ts`）：exit 1，实输出
+  `{"kind":"moduleChange","layer":"utils","added":["src/utils/drift-probe.ts"],"removed":[]}`，
+  同时 `modules.added` 列出同一 ID——报告能定位到层与模块，而不是只给计数。临时副本已删除。
+- 真实基线与 fixture 基线均单独提交；提交信息写明旧读数、新读数与原因。

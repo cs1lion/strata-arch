@@ -204,5 +204,38 @@
 - CLI 退出码：0 = 无新增违规；1 = 门禁未通过（报告仍完整输出）；2 = 输入错误（缺失/非法基线、schema 不匹配、参数冲突）；3 = 内部错误。
 - 未做/未验证：真实 tsx / excalidraw 基线未录制（不在本次样本集内）；UI 漂移标记未做；rename 归并明确不做；`unclassified` 原因码分布未单列（由层人口覆盖）。
 
+## N1 判据调整（2026-11-08，schema v2，A 档）
+
+- 用户裁决：(1) 去掉 `populationTolerance` 数字阈值，改为「新增/删除模块必须人工确认层归属」；
+  (2) external 泄漏维持现状（回归不变量 + 合成产物验证），不改成「外部依赖面扩张」。
+- Red（实现前实测）：core `E0609 no field module_changes` / `E0599 no variant ModuleChange`；
+  CLI 2 passed / 4 failed（schemaVersion 1≠2、`layerPopulation`、缺 `moduleChanges`、旧 v1 基线未被拒绝）。
+- Green（实测）：core 13 passed / 0 failed；CLI 6 passed / 0 failed。
+- schema v2：`DRIFT_SCHEMA_VERSION = 2`；基线删除 `populationTolerance` 与 `layers` 计数；
+  违规 `moduleChange` 按层分组，字段 `layer` / `added` / `removed`；无 resolved；
+  同 ID 改层只在 `modules.moved` 解释，不门禁。
+- 移除阈值理由：计数无法区分「一个模块改层」与「两个模块增删」；阈值可事后调整凑绿。
+  v1 原判据与推翻理由保留在 proposal 与 `drift.rs` 模块文档，未静默删除。
+- 行为变化：同层 rename 从「门禁通过」变为「门禁失败 + 按层列出 added/removed」。
+- external 泄漏未动：仍是「`external-package` 必须落在 `external`」的回归不变量，正向恒空。
+- 基线重录：fixture 基线单独提交；真实 tsx / excalidraw 基线单独提交，均写旧读数/新读数/原因。
+- 真实基线实测（2026-11-08，`target/debug/arch-cli`）：
+  - tsx：136 模块 / reverseEdges 0 / cycles 1 / externalLeaks 0；`--record` 107ms，
+    `eval/baseline/drift-tsx.json` 11,178 字节；自检 exit 0，四类 new/resolved 全 0，
+    added/removed/moved 全 0，比较耗时 103ms。
+  - excalidraw：802 模块 / reverseEdges 61 / cycles 3 / externalLeaks 0；`--record` 905ms，
+    `eval/baseline/drift-excalidraw.json` 108,905 字节；自检 exit 0，四类全 0，
+    added/removed/moved 全 0，比较耗时 879ms。
+  - fixture 基线 v1 → v2：1,197 → 702 字节（移除 `populationTolerance` 与按层计数，
+    模块身份改为唯一门禁判据）。
+- 新增文件门禁实测（tsx 真实基线 + 临时副本新增 `src/utils/drift-probe.ts`）：exit 1；
+  stderr `错误: 漂移门禁未通过: 1 条新增违规，详见报告 newViolations`；
+  stdout `newViolations[0] = {"kind":"moduleChange","layer":"utils","added":["src/utils/drift-probe.ts"],"removed":[]}`，
+  同时 `modules.added` 列出同一 ID——能报出「哪一层、哪个模块」，不是只有计数。临时副本已删除。
+- 全量回归：`cargo test --workspace` 全绿；`cargo fmt --all --check` 通过。
+  首次并行全量运行时 arch-view `smoke_renders_one_frame_and_exits_cleanly` 曾因 3 秒超时失败，
+  单跑与复跑全量均通过（既有超时 flake，与本次改动无关）。
+
+
 
 
