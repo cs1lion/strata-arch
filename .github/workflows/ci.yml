@@ -31,8 +31,9 @@ jobs:
         run: pwsh -NoProfile -File tests/fixtures/history-seed/build.ps1
       - name: test (locked)
         # 几何等价（base vs A）等模型断言在 CI 常态执行；像素断言依赖可见桌面，留在 eval 脚本。
-        # 本 job 不拉取 pinned 语料，故不含 arch-cli 的 path/history 测试（它们在 tests/corpus 就绪时执行）。
-        run: cargo test --locked -p arch-view -p arch-core
+        # 本 job 不拉取 pinned 语料：arch-cli 全部不跑；arch-core 只跳过 resolution_golden 的两个
+        # 语料基线（tsx/excalidraw），其余 arch-core / arch-view 测试全部执行。
+        run: cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
