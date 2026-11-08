@@ -115,4 +115,12 @@
 - 读数：`cargo test -p arch-view --test smoke` 2 passed / 0 failed（1.81s）；二进制 smoke `tests/fixtures/tiny` exit 0、墙钟 828ms、stdout `smoke: layout 3 modules, 2 edges, 1 bands` + `smoke: frame rendered`、stderr 空；`cargo build --locked --workspace` exit 0；全量 117 passed / 0 failed；fmt OK。
 - 偏差/未验证：CI 只在本地落盘、未实际执行（`--locked` 失败路径未实测）；mac/Linux 无 runner、gpui 系统依赖未知；截图开放项 (a)/(b)/(c)/(d) 仍未选定，本票不以截图通过；3 秒按已构建二进制计，不含 cargo 冷编译。
 
+## 新方向提案（N1/N2/N3，只设计）
+
+- `docs/proposals/n1-architecture-drift.md`：显式 `--base` 基线的漂移检测，比较层分布/反向边/循环/external 泄漏，`drift.json` 稳定排序。
+- `docs/proposals/n2-narrative-path.md`：在 06 路径上加固定模板的结构化叙述，证据必须来自产物，动态/require 显式标 conditional。
+- `docs/proposals/n3-evolution-playback.md`：09 时间线之上的播放器，指标只离散切换、复用 07 状态机，受 10 的采样成本约束。
+- 均未拆票、未写代码；验收判据、成本区间、与现有 ticket 关系、现在/以后做的理由写在各自文档。
+
+
 （后续每票在此追加）
