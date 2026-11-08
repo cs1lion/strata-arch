@@ -439,7 +439,7 @@ B+A 揭示窗口内帧间隔 median 31.82–32.53ms、p95 37.77–40.18ms。
 - B（视口裁剪）本轮已实现并实测：**仅 B** 把中位数从 65.44ms 压到 54.30ms（−17.0%），仍未进 33ms；**B+A** 为 28.59/34.09ms，达到 median ≤33、p95 ≤50。因此 33ms 档的结论是「需要 A+B 同时开启」。
 - A 的视觉差异已按新常态闸门批准（标准场景 0.174% / maxDelta 90，≤0.30% / 100），A 默认开启；几何差异为 0，回落用 `STRATA_EDGE_BATCH=0`。B 在三个位置与平移位逐字节一致，同样默认开启。
 
-## 揭示默认开启与静态帧预算（2026-11-09）
+## 揭示默认开启与静态帧预算（2026-11-09，判据已被下一节推翻；读数保留）
 
 **决策**：`map` 首屏分层揭示默认开启，`--no-reveal` 关闭。`--reveal` 保留为兼容参数；两者同时出现时以 `--no-reveal` 为准，且与参数顺序无关（解析只记录「是否出现关闭」，开不参与决定）。用法与 README 已写明。原 `STRATA_EVIDENCE_REVEAL` 环境变量随默认开启失去意义，已移除。
 
@@ -491,5 +491,47 @@ B+A 揭示窗口内帧间隔 median 31.82–32.53ms、p95 37.77–40.18ms。
 CI：`reveal budget` 为 `workflow_dispatch` 专属取证 job（不参与 push 门禁），产物 `reveal-budget` 保留 14 天；run `42530878813` 的 ubuntu/windows build、drift gate 与该 job 均绿，macOS 的 `smoke_renders_one_frame_and_exits_cleanly` 偶发 12s 内无首帧（exit 2、stderr 为空），已单独 rerun。
 
 未验证：真实低端硬件（非 CI 代理）的帧间隔；>16 层带场景的退化表现；揭示中途帧的跨进程像素对照（时序无法对齐，仍只覆盖最终态与不变式）。
+
+## 揭示改为固定时长驱动（2026-11-09，推翻上一节静态帧预算）
+
+### 被推翻的判据与理由
+
+- 旧判据：`REVEAL_FRAME_BUDGET = 16`、`fade = clamp(16/层带数, 1, 10)`，断言 `crates/arch-view/tests/first_screen_reveal.rs::total_frames_stay_within_static_budget`（读数见上一节）。
+- 推翻理由（实测 + 产品目的）：该预算把 Windows 本机 6 层带压到 **0.33–0.35s**，六层淡入挤在约 350ms 内，用户读不出「层按顺序归出来」；而揭示存在的唯一目的就是让用户看见层序。问题不在「总时长上限」，而在**用帧数当时间**：帧率越高，动画越短，快机器的表达力被一并压掉。
+- 旧判据的读数与推理保留在上一节，不删除；`total_frames_stay_within_static_budget` 已删除，替换为 `duration_is_fixed_and_frame_independent`、`reveal_state_is_not_frame_counted`、`progress_is_derived_only_from_framework_progress`。
+
+### 新规则：固定时长 + 框架动画时钟
+
+- `REVEAL_DURATION_MS = 900`。`MapView::render` 在揭示进行中给根元素挂
+  `with_animation(("reveal", 0), Animation::new(Duration::from_millis(900)), animator)`；
+  animator 把 GPUI 算好的 `0..=1` 已播时长占比写入 `Rc<Cell<f32>>`，帧回调读取后交给
+  `RevealState::set_progress`。视图不读墙钟、不注册定时器、不数帧。
+- 层序按时间均分：第 `i` 层在 `i / 层数` 处开始淡入，用 `1 / 层数` 的时长完成（6 层带 = 每层 150ms）。
+- 语义不变：一次性、播完停最终态、不循环、任何交互 `skip()` 立即到最终态、与 P1 路径播放互斥、加载态结束后才开始。
+- **量化误差是判据的一部分**：`with_animation` 只在帧回调里给出进度，`reveal:done` 在框架首次报告 1.0 后的那一帧回调发出，因此实测时长 ≈ 900ms + 1–2 个帧间隔。快机 +2%，单核软件渲染 +28%（帧间隔 128–144ms）。这不是偏差，而是「时长驱动 + 帧回调」的固有粒度。
+
+### 三档实测（excalidraw，6 层带，`reveal:start → reveal:done`，各 3 次）
+
+| 环境 | 三次读数 | 中位数 | 揭示期间帧数 | 帧间隔中位数 |
+| --- | --- | --- | --- | --- |
+| Windows 本机（硬件加速） | 935.3 / 929.9 / 933.5ms | **933.5ms** | 36–37 | 23–26ms |
+| lavapipe 多核（xvfb + openbox） | 1005.2 / 973.5 / 989.2ms | **989.2ms** | 13–15 | 64ms |
+| lavapipe + 单核（`taskset -c 0`） | 1159.4 / 1099.7 / 1179.0ms | **1159.4ms** | 8–9 | 128–144ms |
+
+- 跨环境一致性判据：`(1159.4 − 933.5) / 933.5 = 24.2%`，**≤30% 通过**。
+- 小场景对照（`tests/fixtures/layers`，8 层带）：多核 957.7ms（30 帧）、单核 1015.8ms（16 帧）——同场景帧数差近 2×，总时长仍收敛在 0.96–1.02s，佐证时长与帧数解耦。
+- 命令：本机 `pwsh -File eval/frame-timing.ps1 -Mode reveal` ×3；CI run `42533442075` 的 `reveal budget (software rendering)` job（`VK_ICD_FILENAMES=lvp_icd*.json`、`xvfb + openbox`、`taskset -c 0`），产物 `reveal-budget`。
+- 同一 run 的 windows / ubuntu / macOS build 与 drift gate 均绿。
+
+### 代价
+
+- 慢机器上中间帧更少（单核 8–9 帧），层序仍可读但淡入平滑度下降；这是「表达力优先」与「不按帧数自适应」的取舍。
+- 900ms 是产品参数，不是性能读数；调整它不改变任何墙钟/内存门禁，也不影响 `reveal:done` 之后的所有读数。
+
+### 未验证
+
+- 真实低端硬件（非 CI 代理）与 macOS 窗口的时长读数。
+- 30 层带以上（每层窗口 30ms）是否仍能读出层序。
+
 
 
