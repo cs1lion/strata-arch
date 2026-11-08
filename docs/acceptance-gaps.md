@@ -116,6 +116,28 @@ while (-not $p.HasExited) {
 - **读数会随 GPU / 字体 / 缩放漂移**：阈值仅用于本机人工证据，不设 CI 像素门禁。
 - 本次未改动任何 `eval/` 期望值文件（`corpus.toml`、`baseline/current.json` 未变），因此无需独立的期望值变更提交。
 
+### 2.2.2 Linux 窗口冒烟：xvfb + openbox + 软件渲染（2026-11-08 追加，已进 CI）
+
+目标：把 ubuntu job 的窗口运行从「编译通过」升级为「运行时验证」。结论：**可跑通**，条件是「`xvfb` 虚拟显示 + 窗口管理器 `openbox` + Mesa lavapipe 软件 Vulkan」。
+
+实测（CI run `42501294926`，ubuntu job，三次尝试同一次 job 内依次执行）：
+
+| 尝试 | 条件 | 结果 |
+| --- | --- | --- |
+| default | xvfb，无 WM，默认图形 | 12 秒内无帧请求，`smoke: timeout waiting for first frame`，exit 2 |
+| software | xvfb，无 WM，`LIBGL_ALWAYS_SOFTWARE=1` + `VK_ICD_FILENAMES=lvp_icd.json` | 30 秒内同样无帧请求，exit 2 |
+| openbox | xvfb，WM=openbox，lavapipe | `smoke: frame rendered`，exit 0，约 2.1 秒 |
+
+卡点定位（阶段标记 + `STRATA_SMOKE_LOG=1` 转发的 gpui 日志）：
+
+- Vulkan/lavapipe 初始化成功：`Adapter: "llvmpipe (LLVM 21.1.8, 256 bits)"`，`VK_KHR_xcb_surface` 可用，surface present mode `MAILBOX`。
+- 窗口创建成功，首次 draw 进入 `Render`（`smoke:render:enter`），随后 `smoke:window:opened`。
+- 但 gpui X11 的帧请求循环要等窗口 `MapNotify` 后才启动；无 WM 的虚拟显示下该循环不启动，`on_next_frame` 永不回调。加 WM 后同一二进制立刻出帧。
+
+定性：这是 **CI 环境限制（虚拟显示缺窗口管理器），不是本项目缺陷**；真实 Linux 桌面始终有 WM。若以后该路径失效，先看 `phase:` 标记：停在 `smoke:run:enter` 之前 = 客户端/GPU 初始化；停在 `smoke:window:opened` 之前 = 窗口/surface；`smoke:render:enter` 出现但无 `smoke:frame:callback` = 帧请求循环未启动（先查 WM/显示环境，而不是先改业务代码）。
+
+边界：软件渲染不代表真实 GPU 表现；只证明「能开窗、能出帧、能干净退出」，不证明画面正确，不替代 2.2.1 的像素证据。CI 门禁为 exit 0 + `smoke: frame rendered`，未使用 `|| true` / `continue-on-error` / 放宽断言。
+
 ### 2.3 「本轮接受风险」的边界
 
 只在以下范围默认放过：
