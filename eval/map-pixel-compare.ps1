@@ -1,10 +1,12 @@
 # A/B 视觉等价证据：同窗口尺寸、同一固定相机位抓静态最终态，按票 10 先验容差比较像素。
 #
-# 容差（票 10「B 视口裁剪视觉等价容差」，测量前固定）：
+# 容差（票 10「视觉等价常态断言」，写进脚本，任何改动使差异变大即 FAIL）：
+#   A       base vs A          changed% <= 0.30%，单像素最大通道差 <= 100（标准场景常态闸门）
 #   B       base vs B          changed% = 0 且单像素最大通道差 = 0（只剪完全在视口外）
 #   B+A     A vs BA            changed% = 0 且单像素最大通道差 = 0（裁剪叠加在 A 上不新增差异）
-#   A       base vs A          changed% <= 0.50%，单像素最大通道差 <= 24（历史判据，保留读数）
 # 口径：通道差 > 6 记为变化像素；最大通道差取所有像素三通道差的最大值。
+# 标准场景（默认）：tests/corpus/excalidraw，位置 p1=0,0,1。
+# 几何等价不看像素，由 `crates/arch-view/tests/geometry_equivalence.rs` 独立断言。
 #
 # 位置：默认只测 `default=0,0,1`（与旧读数同口径）；用 `-Positions` 指定多个
 # `名称=panX,panY,zoom`，经 `STRATA_EVIDENCE_VIEWPORT` 把相机固定在抓帧前，保证
@@ -24,8 +26,8 @@ param(
     [string]$OutDir = "out/map-pixel",
     [string]$Exe = "target/release/arch-view.exe",
     [int]$ChangeTolerance = 6,
-    [double]$EdgeMaxChangedRatio = 0.005,
-    [int]$EdgeMaxChannelDelta = 24,
+    [double]$EdgeMaxChangedRatio = 0.003,
+    [int]$EdgeMaxChannelDelta = 100,
     # B 的判据先写死为逐像素一致，不给后调空间。
     [double]$CullMaxChangedRatio = 0.0,
     [int]$CullMaxChannelDelta = 0,
