@@ -49,47 +49,23 @@ jobs:
           set -euo pipefail
           mkdir -p out
           export STRATA_PHASE_MARKERS=1
-          export STRATA_SMOKE_LOG=1
-          run_attempt() {
-            local label="$1"; shift
-            local log="out/linux-window-${label}.log"
-            echo "== ${label}: $* =="
-            set +e
-            "$@" 2>&1 | tee "$log"
-            local status="${PIPESTATUS[0]}"
-            set -e
-            if [ "$status" -eq 0 ] && grep -q "smoke: frame rendered" "$log"; then
-              echo "== ${label}: PASS (exit 0, frame marker found) =="
-              return 0
-            fi
-            echo "== ${label}: FAIL (exit ${status}) =="
-            return 1
-          }
-          # 第一轮保持 ticket 14 的 12 秒预算，用阶段标记定位卡点。
-          # 每轮都用 `timeout` 兜底，避免出现「进程不退出把 job 拖死」的情况。
-          if run_attempt default timeout -k 10s 35s xvfb-run -a -s "-screen 0 1280x1024x24" \
-              cargo run --locked -p arch-view -- smoke tests/fixtures/tiny; then
-            exit 0
+          # blade 在 Linux 走 Vulkan（不是 GL）：显式指定 lavapipe，避免隐式选驱动。
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          # 必须有窗口管理器：无 WM 的虚拟显示里 gpui 的 X11 后端不会启动帧请求循环，
+          # `on_next_frame` 永不回调（取证见 docs/acceptance-gaps.md 2.2.2 与 CI run 42501294926）。
+          # 软件渲染只用于验证窗口真的出帧，不代表真实 GPU 表现。
+          set +e
+          timeout -k 10s 90s xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+            'openbox >/dev/null 2>&1 & sleep 1; exec cargo run --locked -p arch-view -- smoke tests/fixtures/tiny' \
+            2>&1 | tee out/linux-window-smoke.log
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [ "$status" -eq 0 ] && grep -q "smoke: frame rendered" out/linux-window-smoke.log; then
+            echo "== linux smoke: PASS (exit 0, frame marker found) =="
+          else
+            echo "== linux smoke: FAIL (exit ${status}) =="
+            exit 1
           fi
-          # 第二轮：Mesa 软件渲染 + 30 秒预算。上一轮已证明不是「慢」，
-          # 这里只确认切换 lavapipe 后帧请求循环是否仍然不启动。
-          echo "default path failed; retrying with Mesa software renderer"
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export STRATA_SMOKE_TIMEOUT_SECS=30
-          if compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" > /dev/null; then
-            export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
-            echo "VK_ICD_FILENAMES=${VK_ICD_FILENAMES}"
-          fi
-          if run_attempt software timeout -k 10s 55s xvfb-run -a -s "-screen 0 1280x1024x24" \
-              cargo run --locked -p arch-view -- smoke tests/fixtures/tiny; then
-            exit 0
-          fi
-          # 第三轮：软件渲染 + 窗口管理器（openbox）。虚拟显示没有 WM 时窗口
-          # 不会进入 viewable 状态，gpui 的 MapNotify 驱动刷新循环可能因此不启动。
-          echo "software path failed; retrying with openbox window manager"
-          export STRATA_SMOKE_TIMEOUT_SECS=60
-          run_attempt openbox timeout -k 10s 95s xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
-              'openbox >/dev/null 2>&1 & sleep 1; exec cargo run --locked -p arch-view -- smoke tests/fixtures/tiny'
 
   drift:
     name: drift gate
