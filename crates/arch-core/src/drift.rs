@@ -47,7 +47,7 @@
 //! 所有集合按字典序输出，同一输入两次运行字节一致。
 
 use crate::layers::{build_layers, LayeredModule, LayersArtifact, EXTERNAL};
-use crate::ScanError;
+use crate::{ScanError, Stats};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -99,6 +99,9 @@ pub struct BaselineModule {
 pub struct DriftReport {
     pub schema_version: u32,
     pub tool_version: String,
+    /// 本次实际参与比较的索引规模（模块数/边数等），只用于让调用方日志自证比较面。
+    /// 不参与门禁判定，也不写入基线。
+    pub stats: Stats,
     pub baseline: BaselineSummary,
     pub gate: DriftGate,
     pub modules: ModuleDrift,
@@ -381,6 +384,12 @@ pub fn evaluate(
     DriftReport {
         schema_version: DRIFT_SCHEMA_VERSION,
         tool_version: tool_version.to_string(),
+        stats: Stats {
+            files: layers.stats.files,
+            modules: layers.stats.modules,
+            edges: layers.stats.edges,
+            unresolved: layers.stats.unresolved,
+        },
         baseline: BaselineSummary {
             schema_version: baseline.schema_version,
             tool_version: baseline.tool_version.clone(),

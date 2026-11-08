@@ -102,6 +102,7 @@ fn positive_baseline_reports_no_drift_in_any_criterion() {
 
     let report = report_for(&fixture(), &baseline);
 
+    assert_eq!(report.stats.modules, baseline.modules.len());
     assert!(report.gate.passed);
     assert_eq!(report.gate.checks.module_changes.new_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 0);

@@ -49,7 +49,7 @@ pub struct RepoInfo {
     pub is_git: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     pub files: usize,
