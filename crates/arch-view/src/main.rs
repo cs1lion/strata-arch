@@ -332,6 +332,9 @@ fn spawn_timeline_loading(view: Entity<TimelineView>, repo: PathBuf, autoplay: b
 
         let timeline = TimelineState::new(entries);
         let ticks = timeline.ticks();
+        if autoplay {
+            println!("playback: {}", timeline.sampling_label());
+        }
         println!(
             "timeline: {} ticks, {} modules, {} bands",
             ticks,
@@ -985,10 +988,13 @@ impl Render for TimelineView {
                     .rounded(px(2.))
                     .bg(if active { rgb(0xf2f5f8) } else { rgb(0x3d4b5c) })
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        if let Some(timeline) = this.timeline_mut() {
-                            timeline.scrub_to(index);
+                        let accepted = this
+                            .timeline_mut()
+                            .map(|timeline| timeline.scrub_to(index))
+                            .unwrap_or(false);
+                        if accepted {
+                            this.playback.on_scrub(index);
                         }
-                        this.playback.on_scrub(index);
                         cx.notify();
                     })),
             );
@@ -1081,6 +1087,42 @@ impl Render for TimelineView {
             )
             .child(
                 div()
+                    .id("timeline-playback-first")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child("首")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if this.playback.jump_to_first() {
+                            let index = this.playback.current();
+                            if let Some(timeline) = this.timeline_mut() {
+                                timeline.scrub_to(index);
+                            }
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("timeline-playback-last")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child("尾")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if this.playback.jump_to_last() {
+                            let index = this.playback.current();
+                            if let Some(timeline) = this.timeline_mut() {
+                                timeline.scrub_to(index);
+                            }
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
                     .id("timeline-playback-speed")
                     .px(px(6.))
                     .py(px(2.))
@@ -1109,6 +1151,11 @@ impl Render for TimelineView {
             .text_xs()
             .text_color(rgb(0xe6edf3))
             .child(commit)
+            .child(
+                div()
+                    .text_color(rgb(0x8b9bb0))
+                    .child(ready.timeline.sampling_label()),
+            )
             .child(ticks_row)
             .child(controls)
             .child("灰=无历史 · 蓝→橙=churn 0→11+")
@@ -1123,6 +1170,14 @@ impl Render for TimelineView {
                 div()
                     .text_color(rgb(0xe07b39))
                     .child(format!("退化标记: {label}")),
+            );
+        }
+
+        if let Some(notice) = ready.timeline.gap_notice() {
+            footer = footer.child(
+                div()
+                    .text_color(rgb(0xe07b39))
+                    .child(format!("采样空洞: {notice}")),
             );
         }
 

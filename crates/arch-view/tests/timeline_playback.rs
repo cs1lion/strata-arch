@@ -32,9 +32,13 @@ fn tick_times(repo: &PathBuf) -> Vec<u64> {
 }
 
 fn timeline_from(repo: &PathBuf, times: &[u64]) -> TimelineState {
+    TimelineState::new(entries_from(repo, times))
+}
+
+fn entries_from(repo: &PathBuf, times: &[u64]) -> Vec<TimelineEntry> {
     let artifacts =
         build_history_prefixes(repo, "test", HistoryOptions::default(), times).expect("history");
-    let entries = artifacts
+    artifacts
         .into_iter()
         .enumerate()
         .map(|(index, artifact)| TimelineEntry {
@@ -43,8 +47,7 @@ fn timeline_from(repo: &PathBuf, times: &[u64]) -> TimelineState {
             subject: format!("c{index}"),
             artifact,
         })
-        .collect::<Vec<_>>();
-    TimelineState::new(entries)
+        .collect::<Vec<_>>()
 }
 
 fn fixture_timeline() -> TimelineState {
@@ -344,4 +347,197 @@ fn degradation_labels_are_visible_text() {
         ..normal
     };
     assert_eq!(degradation_label(shallow), Some(SHALLOW_LABEL));
+}
+
+/// ticket 19 判据 1：跳首/跳尾必须落到目标刻度、停止播放、不伪造结束态。
+#[test]
+fn jump_to_first_and_last_stop_playback() {
+    let mut playback = TimelinePlayback::new(6);
+    playback.on_scrub(3);
+    assert!(playback.play());
+    assert!(playback.on_frame(PLAYBACK_DWELL_MS));
+
+    assert!(playback.jump_to_first(), "跳首应成功");
+    assert_eq!(playback.current(), 0);
+    assert!(!playback.is_playing(), "跳转后必须停止播放");
+    assert!(!playback.is_ended(), "跳首不是自然播放结束");
+
+    assert!(playback.jump_to_last(), "跳尾应成功");
+    assert_eq!(playback.current(), 5);
+    assert!(!playback.is_playing());
+    assert!(!playback.is_ended(), "跳尾不是自然播放结束");
+
+    assert!(playback.jump_to_first(), "重复跳首应幂等成功");
+    assert_eq!(playback.current(), 0);
+
+    let mut single = TimelinePlayback::new(1);
+    assert!(single.jump_to_first());
+    assert!(single.jump_to_last());
+    assert_eq!(single.current(), 0);
+
+    let mut empty = TimelinePlayback::new(0);
+    assert!(!empty.jump_to_first(), "0 刻度不能跳首");
+    assert!(!empty.jump_to_last(), "0 刻度不能跳尾");
+
+    let mut disabled = TimelinePlayback::new(6);
+    disabled.set_enabled(false);
+    assert!(!disabled.jump_to_first(), "关闭播放后不能跳首");
+    assert!(!disabled.jump_to_last(), "关闭播放后不能跳尾");
+}
+
+/// ticket 19 判据 2：已采样刻度数必须可读，空洞扣减、截断窗口单独标注。
+#[test]
+fn sampled_tick_count_is_visible_with_holes_and_truncation() {
+    let repo = fixture_repo();
+    let times = tick_times(&repo);
+    let normal = timeline_from(&repo, &times);
+    assert_eq!(normal.sampled_ticks(), 6);
+    assert_eq!(normal.sampling_label(), "已采样 6/6 刻度");
+
+    let holed =
+        TimelineState::new_with_holes(entries_from(&repo, &times[..4]), BTreeSet::from([1]));
+    assert_eq!(holed.sampled_ticks(), 3, "空洞刻度不计入已采样数");
+    assert_eq!(holed.sampling_label(), "已采样 3/4 刻度");
+
+    let mut full_entries = entries_from(&repo, &times);
+    full_entries.last_mut().expect("entries").artifact.truncated = true;
+    full_entries
+        .last_mut()
+        .expect("entries")
+        .artifact
+        .stats
+        .commits_scanned = 500;
+    full_entries
+        .last_mut()
+        .expect("entries")
+        .artifact
+        .stats
+        .commits_available = 617;
+    let truncated = TimelineState::new(full_entries);
+    assert_eq!(
+        truncated.sampling_label(),
+        "已采样 6/6 刻度（窗口 500/617 提交）"
+    );
+}
+
+/// ticket 19 判据 4：不同路径到达同一刻度时，读数快照必须字节级相等。
+#[test]
+fn snapshot_is_byte_identical_across_play_pause_and_reentry() {
+    let repo = fixture_repo();
+    let times = tick_times(&repo);
+    let mut direct = timeline_from(&repo, &times);
+    assert!(direct.scrub_to(3));
+    let direct_bytes = direct.snapshot_json();
+
+    let parsed: serde_json::Value = serde_json::from_str(&direct_bytes).expect("快照必须是 JSON");
+    assert_eq!(parsed["tick"], 3, "快照必须记录刻度号");
+    assert!(
+        parsed["artifact"]["stats"]["commitsScanned"].is_number(),
+        "快照必须带实测产物读数"
+    );
+
+    let mut replayed = timeline_from(&repo, &times);
+    let mut playback = TimelinePlayback::new(replayed.ticks());
+    playback.on_scrub(0);
+    assert!(playback.play());
+    for _ in 0..3 {
+        assert!(playback.on_frame(PLAYBACK_DWELL_MS));
+    }
+    assert_eq!(playback.current(), 3);
+    playback.pause();
+    assert!(replayed.scrub_to(playback.current()));
+    let replay_bytes = replayed.snapshot_json();
+    assert_eq!(
+        direct_bytes.as_bytes(),
+        replay_bytes.as_bytes(),
+        "播放/暂停路径与直接拖动必须字节级一致"
+    );
+    assert_eq!(replay_bytes, replayed.snapshot_json(), "重复快照必须稳定");
+}
+
+/// ticket 19 判据 5：采样空洞必须显式提示，不得静默沿用上一刻度。
+#[test]
+fn missing_tick_jump_shows_explicit_gap_notice() {
+    let repo = fixture_repo();
+    let times = tick_times(&repo);
+    let entries = entries_from(&repo, &times[..4]);
+    let mut timeline = TimelineState::new_with_holes(entries, BTreeSet::from([1]));
+    assert_eq!(timeline.current_index(), 3, "默认停在最后一个已采样刻度");
+
+    assert!(!timeline.scrub_to(1), "缺失刻度不能被静默命中");
+    assert_eq!(
+        timeline.current_index(),
+        3,
+        "缺失刻度失败后不得改动当前索引"
+    );
+    let notice = timeline.gap_notice().expect("缺失刻度必须有显式提示");
+    assert!(
+        notice.contains("第 2/4 刻度"),
+        "提示必须写明缺失刻度: {notice}"
+    );
+    assert!(notice.contains("未采样"), "提示必须写明原因: {notice}");
+    assert!(
+        notice.contains("历史采样空洞"),
+        "提示必须写明空洞来源: {notice}"
+    );
+
+    assert!(timeline.scrub_to(3));
+    assert_eq!(timeline.gap_notice(), None, "成功拖动后必须清空提示");
+}
+
+/// ticket 19 判据 3（C 档）：模型单帧更新 p95 ≤16.7ms，3 次运行 × 19 步。
+#[test]
+#[ignore]
+fn model_frame_update_p95_is_within_budget() {
+    let repo = fixture_repo();
+    let base = tick_times(&repo);
+    let mut times = base.clone();
+    while times.len() < 20 {
+        times.push(*base.last().expect("fixture times"));
+    }
+    let ids = {
+        let probe = timeline_from(&repo, &times);
+        union_ids(&probe)
+    };
+
+    let mut run_p95 = Vec::new();
+    for run in 0..3 {
+        let mut timeline = timeline_from(&repo, &times);
+        let mut playback = TimelinePlayback::new(timeline.ticks());
+        playback.on_scrub(0);
+        assert!(playback.play());
+
+        let mut samples = Vec::new();
+        for _ in 0..19 {
+            let start = std::time::Instant::now();
+            let advanced = playback.on_frame(PLAYBACK_DWELL_MS);
+            if advanced {
+                assert!(timeline.scrub_to(playback.current()));
+            }
+            let mut digest = 0u64;
+            for id in &ids {
+                let heat = timeline.heat(id);
+                digest = digest
+                    .wrapping_add(heat.color[0] as u64)
+                    .wrapping_add(heat.size_scale_percent as u64);
+            }
+            std::hint::black_box(digest);
+            samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        assert_eq!(playback.current(), 19, "第 {run} 轮未推进到末刻度");
+        samples.sort_by(|left, right| left.partial_cmp(right).expect("finite"));
+        let index = ((samples.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
+        let p95 = samples[index.min(samples.len() - 1)];
+        println!(
+            "model frame update run{}: p95={p95:.4}ms median={:.4}ms n={}",
+            run + 1,
+            samples[samples.len() / 2],
+            samples.len()
+        );
+        run_p95.push(p95);
+    }
+
+    let worst = run_p95.iter().copied().fold(0.0, f64::max);
+    println!("model frame update p95 per run: {run_p95:?}; worst={worst:.4}ms");
+    assert!(worst <= 16.7, "模型单帧 p95 超预算: {worst:.4}ms > 16.7ms");
 }

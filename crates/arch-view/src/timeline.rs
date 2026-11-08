@@ -64,6 +64,8 @@ pub struct TimelineState {
     entries: Vec<TimelineEntry>,
     current: usize,
     selected: Option<String>,
+    missing: BTreeSet<usize>,
+    gap_index: Option<usize>,
 }
 
 impl TimelineState {
@@ -74,6 +76,26 @@ impl TimelineState {
             entries,
             current,
             selected: None,
+            missing: BTreeSet::new(),
+            gap_index: None,
+        }
+    }
+
+    /// 构造带采样空洞的时间线；空洞刻度保留位置，但不可被拖动命中。
+    pub fn new_with_holes(entries: Vec<TimelineEntry>, missing: BTreeSet<usize>) -> Self {
+        let total = entries.len();
+        let mut sanitized = BTreeSet::new();
+        sanitized.extend(missing.into_iter().filter(|index| *index < total));
+        let mut current = total.saturating_sub(1);
+        while current > 0 && sanitized.contains(&current) {
+            current -= 1;
+        }
+        Self {
+            entries,
+            current,
+            selected: None,
+            missing: sanitized,
+            gap_index: None,
         }
     }
 
@@ -93,13 +115,67 @@ impl TimelineState {
         &self.entries
     }
 
-    /// 拖动时间线；越界返回 `false` 且索引不变。
+    /// 拖动时间线；越界或命中采样空洞返回 `false` 且索引不变。
     pub fn scrub_to(&mut self, index: usize) -> bool {
         if index >= self.entries.len() {
             return false;
         }
+        if self.missing.contains(&index) {
+            self.gap_index = Some(index);
+            return false;
+        }
         self.current = index;
+        self.gap_index = None;
         true
+    }
+
+    /// 已实际采样的刻度数（空洞不计入）。
+    pub fn sampled_ticks(&self) -> usize {
+        self.entries.len().saturating_sub(self.missing.len())
+    }
+
+    /// 可见的已采样刻度数文案。
+    pub fn sampling_label(&self) -> String {
+        let mut label = format!("已采样 {}/{} 刻度", self.sampled_ticks(), self.ticks());
+        if let Some(entry) = self.current_entry() {
+            let stats = &entry.artifact.stats;
+            if entry.artifact.truncated && stats.commits_available > 0 {
+                label.push_str(&format!(
+                    "（窗口 {}/{} 提交）",
+                    stats.commits_scanned, stats.commits_available
+                ));
+            }
+        }
+        label
+    }
+
+    /// 上一次跳到采样空洞时的显式提示；成功拖动后清空。
+    pub fn gap_notice(&self) -> Option<String> {
+        self.gap_index.map(|index| {
+            format!(
+                "第 {}/{} 刻度未采样（历史采样空洞），仍显示第 {}/{} 刻度",
+                index + 1,
+                self.ticks(),
+                self.current + 1,
+                self.ticks()
+            )
+        })
+    }
+
+    /// 当前刻度读数的稳定 JSON 快照，用于字节级复现对比。
+    pub fn snapshot_json(&self) -> String {
+        let mut map = serde_json::Map::new();
+        map.insert("tick".to_string(), serde_json::json!(self.current));
+        if let Some(entry) = self.current_entry() {
+            map.insert("hash".to_string(), serde_json::json!(entry.hash));
+            map.insert("time".to_string(), serde_json::json!(entry.time));
+            map.insert("subject".to_string(), serde_json::json!(entry.subject));
+            map.insert(
+                "artifact".to_string(),
+                serde_json::to_value(&entry.artifact).expect("history artifact must serialize"),
+            );
+        }
+        serde_json::Value::Object(map).to_string()
     }
 
     pub fn module_ids(&self) -> BTreeSet<String> {
@@ -302,6 +378,27 @@ impl TimelinePlayback {
             return false;
         }
         self.current -= 1;
+        self.playing = false;
+        self.ended = false;
+        self.accumulated_ms = 0.0;
+        true
+    }
+
+    /// 跳到首刻度并停止播放；无刻度或播放关闭时返回 `false`。
+    pub fn jump_to_first(&mut self) -> bool {
+        self.jump_to(0)
+    }
+
+    /// 跳到末刻度并停止播放；无刻度或播放关闭时返回 `false`。
+    pub fn jump_to_last(&mut self) -> bool {
+        self.jump_to(self.ticks.saturating_sub(1))
+    }
+
+    fn jump_to(&mut self, index: usize) -> bool {
+        if !self.enabled || self.ticks == 0 {
+            return false;
+        }
+        self.current = index.min(self.ticks - 1);
         self.playing = false;
         self.ended = false;
         self.accumulated_ms = 0.0;
