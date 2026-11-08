@@ -30,10 +30,16 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/fixtures/history-seed/build.ps1
       - name: test (locked)
+        if: runner.os != 'Linux'
         # 几何等价（base vs A）等模型断言在 CI 常态执行；像素断言依赖可见桌面，留在 eval 脚本。
         # 本 job 不拉取 pinned 语料：arch-cli 全部不跑；arch-core 只跳过 resolution_golden 的两个
         # 语料基线（tsx/excalidraw），其余 arch-core / arch-view 测试全部执行。
         run: cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline
+      - name: test (locked, no window)
+        if: runner.os == 'Linux'
+        # 无显示环境：启动窗口的 smoke 由本 job 后面的「linux window smoke (xvfb)」步骤覆盖，
+        # 这里跳过该用例，避免 headless 下 gpui 初始化直接 panic。
+        run: cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline --skip smoke_renders_one_frame_and_exits_cleanly
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
