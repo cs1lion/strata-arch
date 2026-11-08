@@ -146,4 +146,10 @@
 - 偏差/未做：提案里的 `--explain` 名称改为用户裁决的 `--narrative`；`confidence` 数值字段、备选路径（同层次短，上限 2 条）、UI 文案复用未做；模板版本由 `schemaVersion` 承担。
 - 未验证：无（本项为纯 CLI/core，无 GUI/平台依赖）。
 
+## N1 架构漂移：基线粒度方案（2026-11-08，只设计）
+
+- 产出：`docs/proposals/n1-architecture-drift.md` 增补 A 整仓 / B 按层 / C 按模块三档，含抓到的、误报的、产物大小量级、实现复杂度；推荐 B+C 组合（层聚合做门禁、模块明细做解释）。
+- 实测依据：`arch-cli index/layers` pretty JSON 大小——tsx index 72KB；excalidraw index 892KB、layers 1.1MB（802 模块 / 4363 边）。
+- 产品级选择（登记待拍板，不自行裁决）：是否采用 B+C、门禁是否只挡「四类违规新增」、基线是否以仓库内 `drift-baseline.json` 显式提交。未拍板前不写代码、不拆票。
+
 
