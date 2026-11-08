@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（分层地图，提供可渲染的最静态视图）
 
-**Status:** partial（Windows 冒烟与截图证据实测通过；mac/Linux 未验证；CI 未实际执行）
+**Status:** partial（2026-11-08：Windows 构建 + 窗口冒烟在 CI 通过；macOS/Linux 仅 CI 编译通过，未运行窗口；CI 已实际执行，见 run 42475740482）
 
 **固定样本：** `tests/fixtures/tiny`；启动冒烟使用 `--smoke` 模式。
 
@@ -14,9 +14,9 @@
 
 ## 验收项
 
-- [x] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。本地 `cargo build --locked --workspace` exit 0；CI 配置已加，**CI 实际执行未验证**。
+- [x] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`。本地 `cargo build --locked --workspace` exit 0；CI 已实际执行（2026-11-08 run 42475740482 三平台全绿）。
 - [x] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。实测二进制墙钟 828ms（debug 构建），stdout `smoke: layout 3 modules, 2 edges, 1 bands` 与 `smoke: frame rendered`。（**判据修正 2026-11-08 / ticket 14**：3 秒预算经 20+20 次压测判定不成立，改为 15 秒；原读数保留，理由见 `14-flaky-smoke-timeout.md`。）
-- [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵已裁决 2026-11-08：Windows 主验收；macOS/Linux 仅编译未验证，无 runner 实际执行**）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
+- [x] macOS 与 Linux：`cargo build --locked --workspace` 在 CI 通过（2026-11-08 run 42475740482，`ubuntu-latest` 与 `macos-latest`）；启动冒烟未执行。**平台矩阵已裁决 2026-11-08：Windows 主验收；macOS/Linux 仅编译验证，运行未验证。**
 - [x] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。仓库无 `.github/dependabot.yml` / `renovate.json`；`Cargo.lock` 已跟踪。
 - [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超预算（原 3s，ticket 14 修正为 15s）、窗口未能创建、锁文件被隐式改写。
 - [x] 截图能力：按 2026-11-08 裁决执行为「IR 快照进 CI + Windows OS 捕获人工证据」。IR 快照 `arch-view scene` 输出节点/边/层带/z-order/命中框，同输入两次字节一致；`eval/capture-window.ps1` 为手动脚本，不参与 CI。**mac/Linux 截图不做，未验证。**
@@ -54,10 +54,42 @@
 
 ### 已知偏差与未验证
 
-- **CI 未实际执行**：`.github/workflows/ci.yml` 只在本地落盘，没有远端运行记录；「锁文件不一致即失败」依赖 CI 的 `--locked`，未经实测。
-- **mac/Linux 未验证**：没有可用 runner；gpui 在 Linux 需要系统图形依赖，能否在 `ubuntu-latest` 直接构建未知。
+- **CI 已实际执行（2026-11-08）**：run [42475740482](https://github.com/cs1lion/strata-arch/actions/runs/42475740482) 三平台构建全绿；Windows 冒烟原文 `smoke: layout 3 modules, 2 edges, 1 bands` / `smoke: frame rendered`。此前 main 的 Ubuntu 构建长期红，原因与修复见下节。「锁文件不一致即失败」仍未单独实测。
+- **mac/Linux 运行未验证**：CI 只做 `cargo build --locked --workspace`，不启动窗口；gpui 运行时还需要图形会话/驱动，未在 runner 上验证。
 - **截图路径已裁决（(d)+(a)）**：IR 快照做提交级门禁，Windows OS 捕获仅作人工证据；mac/Linux 不截图。
 - **`cargo run` 计时口径**：3 秒预算按已构建二进制的墙钟计；`cargo run` 的冷编译时间不计入。
+
+## CI 平台构建修复（2026-11-08）
+
+### 事实
+
+- main 上 32 次 run 全部 failure，唯一失败 job 为 `build (ubuntu-latest)`；从第一次 run [42428089452](https://github.com/cs1lion/strata-arch/actions/runs/42428089452)（`f1f3c44`，即引入 CI 的同一次 push）起就红，不存在「曾绿过」的区间。
+- 失败原文（run 42472801703）：
+
+```
+error[E0425]: cannot find value `ENOATTR` in crate `::libc`
+ 12 |               pub const ENOATTR: ::libc::c_int = ::libc::ENOATTR;
+```
+
+- 依赖链：`arch-view → gpui 0.2.2 → gpui_http_client 0.2.2 → zed-async-tar 0.5.0-zed → xattr 0.2.3 → libc`。`xattr 0.2.3` 在 Linux 上引用 `libc::ENOATTR`；`libc 0.2.189` 仍提供（deprecated，值等于 `ENODATA`），`libc 0.2.190/0.2.191` 已移除。
+
+### 修复
+
+1. `Cargo.lock` 将 `libc` pin 到 `0.2.189`（`xattr` 只能停留在 0.2.x，`zed-async-tar` 的 `xattr = "0.2"` 无法升到 1.x）。
+2. Ubuntu build job 安装系统库：`libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev`；缺库时链接原文为 `rust-lld: error: unable to find library -lxcb` / `-lxkbcommon` / `-lxkbcommon-x11`。
+
+### 验证
+
+- 本地（Windows）：`cargo check --locked -p arch-view` exit 0；Linux 目标单独交叉 `cargo check --target x86_64-unknown-linux-gnu`（`xattr 0.2.3 + libc 0.2.189`）exit 0。
+- CI：run [42475740482](https://github.com/cs1lion/strata-arch/actions/runs/42475740482) 全绿；Ubuntu 日志原文 `Downloaded libc v0.2.189` / `Compiling xattr v0.2.3` / `Finished dev profile ... in 2m 06s`；macOS `2m 13s`；Windows `4m 49s` + 冒烟两行。
+
+### 平台口径（以此为准）
+
+| 平台 | 构建 | 启动/运行 | 状态 |
+| --- | --- | --- | --- |
+| Windows | CI 通过 | 窗口冒烟通过（CI） | **已验证** |
+| macOS | CI 通过 | 未运行 | **仅编译验证** |
+| Linux | CI 通过（需系统库） | 未运行 | **仅编译验证** |
 
 ## 截图路径裁决（2026-11-08，已执行）
 
@@ -79,8 +111,7 @@
 
 ### 未验证
 
-- macOS/Linux 构建与启动冒烟：无 runner，未验证。
-- CI 实际执行：本地配置存在，无远端运行记录。
+- macOS/Linux 启动冒烟：CI 未运行，未验证。
 - 像素级差异基线：未建立，OS 捕获仅一次人工证据。
 
 ## 截图能力重新定义（2026-11-07 开放项，2026-11-08 已裁决）
