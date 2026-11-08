@@ -71,7 +71,7 @@
 - 两类边：依赖边（模块/符号引用）与调用边（调用表达式、JSX 组件使用）；边上带 `kind` 与解析状态。
 - 未解析项进入 `unresolved` 集合，带原因类别（外部包、动态导入、非 TS/JS 扩展、路径别名未命中、语法错误），且在 UI 中可见。
 - 无法归因的调用（`call-unattributed`）默认只保留聚合计数 `stats.unattributedCalls`，不进入 `unresolved` 明细、不进入边列表/图、不参与路径查询；`arch-cli callgraph --include-unattributed` 输出完整明细供诊断。其余原因类别（`dynamic-import`、`external-call`、`unresolved` 导入）始终保留明细。
-- 产物为版本化 JSON：顶层含 `schemaVersion`、工具版本、目标仓库标识（路径与 HEAD commit，若可用）、统计窗口与截断标记；集合字段排序固定。调用图为独立产物，使用独立的 `CALLGRAPH_SCHEMA_VERSION`（04c 起为 2：拆分统计 + `external-call` + 默认聚合）；`index` / `layers` 仍使用 `SCHEMA_VERSION = 1`，两者不共用版本号。
+- 产物为版本化 JSON：顶层含 `schemaVersion`、工具版本、目标仓库标识（路径与 HEAD commit，若可用）、统计窗口与截断标记；集合字段排序固定。调用图为独立产物，使用独立的 `CALLGRAPH_SCHEMA_VERSION`（04c 起为 2：拆分统计 + `external-call` + 默认聚合）；`index` / `layers` 仍使用 `SCHEMA_VERSION = 1`，两者不共用版本号。`path` 使用独立的 `PATH_SCHEMA_VERSION`（N2 起为 2），其入口候选产物使用 `ENTRY_SCHEMA_VERSION = 1`，两者各自演进。
 - 默认不写墙钟时间戳；如需时间戳，仅通过显式参数开启并排除在 golden 比较之外。
 
 ### 3. 模块解析
@@ -109,8 +109,10 @@
 - 多条等长路径的固定选择规则：按目标符号 ID 字典序，再按边种类、行、列；BFS 逐层访问，先到先得。
 - 入口可以是符号 ID，也可以是模块 ID（后者规范化为 `<module>#module-toplevel`）；未知符号退出 `2`。
 - 路径产物包含有序的「模块 → 符号」步骤、每步的边种类与所属层；不可达时退出 `4`，stdout 为空，stderr 给出原因。
+- 路径产物 schema v1 → v2（N2）：v1 每步只有 `module` / `symbol` / `layer` / `via`；v2 在保留这四个字段的基础上，为每步新增 `evidence`（进入该步的边位置 `{file,line,column}`，首步为 `null`）、`layerFrom`（上一步的层，首步为 `null`）、`layerTo`、`conditional`（边为 `dynamic-import` / `require` 时为 `true`）、`testOnly`（任一端层为 `tests` 时为 `true`）、`narrative`（固定模板生成的单步叙述）。入口候选产物不受影响，继续使用 `ENTRY_SCHEMA_VERSION = 1`。
+- 叙述文本使用固定模板、不引入 LLM：起点写成「`符号` 是起点（层：`层`，模块：`模块`）」，后续步写成「`前驱` 通过 `边种类` 到达 `符号`（`file:line:column`；层：`上层` → `本层`）」，条件边追加「，条件执行」，测试层追加「，仅测试」。同一输入两次输出字节一致。
 - 入口候选为零时退出 `5` 并在 stderr 说明，不返回空列表冒充成功。
-- 路径可输出为文字序列（用于复制与脚本断言），GUI 播放只是同一产物的呈现。
+- 路径可输出为文字序列（用于复制与脚本断言），GUI 播放只是同一产物的呈现；`--narrative` 输出固定模板文本，`--out` 写文件时 stdout 不重复输出。
 
 ### 7. 历史演化（独立能力）
 
@@ -165,9 +167,9 @@
 
 ### 10. CLI 契约与错误码
 
-- 子命令：`index`（结构产物）、`callgraph`（符号与调用图，含 `--include-unattributed`）、`history`（演化产物）、`path`（入口候选 `--entries` 与引导式路径 `--from/--to`）、`layers`（层推断结果，便于脚本断言）。
+- 子命令：`index`（结构产物）、`callgraph`（符号与调用图，含 `--include-unattributed`）、`history`（演化产物）、`path`（入口候选 `--entries` 与引导式路径 `--from/--to`，可加 `--narrative` 输出文本叙述）、`layers`（层推断结果，便于脚本断言）。
 - 成功 `0`；输入/参数错误 `2`；内部错误 `3`；路径不可达 `4`；历史不可用（非 git、无提交、浅克隆不满足）或入口候选为零 `5`。
-- 所有成功输出为合法 JSON 到 stdout（或指定文件），诊断信息走 stderr；不得把日志混入 stdout。
+- 所有成功输出为合法 JSON 到 stdout（或指定文件），诊断信息走 stderr；不得把日志混入 stdout。`path --narrative` 是显式选择的文本模式，输出固定模板文本而非 JSON；`--entries` 与 `--narrative` 同时出现按输入错误退出 `2`。
 - `--out` 指定产物路径；`--schema` 打印 `index` / `layers` 使用的 `SCHEMA_VERSION`；调用图版本只通过产物内的 `schemaVersion` 字段暴露；未知参数报错退出 `2`。
 
 ### 11. 配置与确定性

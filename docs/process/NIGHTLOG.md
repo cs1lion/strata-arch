@@ -137,4 +137,13 @@
 
 
 
-（后续每票在此追加）
+## N2 叙述式路径解释（2026-11-08）
+
+- 档位：A（真实 Red）。先写 `crates/arch-core/tests/path_narrative.rs` 与 CLI `--narrative` 三项测试。
+- Red（实现前实测）：core 测试编译失败 `E0432 unresolved import render_narrative` + `E0609 no field evidence/layer_from/layer_to/narrative`；CLI `cargo test -p arch-cli --test path narrative` → 0 passed / 3 failed，全部因退出码 2（`未知参数: --narrative`）。
+- 完成：`PATH_SCHEMA_VERSION` 1 → 2（每步新增 `evidence` / `layerFrom` / `layerTo` / `conditional` / `testOnly` / `narrative`），入口候选产物独立为 `ENTRY_SCHEMA_VERSION = 1`；`render_narrative` 固定模板；CLI `--narrative`（stdout 或 `--out` 文本；与 `--entries` 冲突退出 2）。
+- 读数（实测）：`cargo test -p arch-core --test path_narrative` 4 passed / 0 failed；`cargo test -p arch-cli --test path` 13 passed / 0 failed（含原有 10 项）。叙述文本两次运行字节一致；禁用词「一定 / 必然 / 证明」未出现。
+- 偏差/未做：提案里的 `--explain` 名称改为用户裁决的 `--narrative`；`confidence` 数值字段、备选路径（同层次短，上限 2 条）、UI 文案复用未做；模板版本由 `schemaVersion` 承担。
+- 未验证：无（本项为纯 CLI/core，无 GUI/平台依赖）。
+
+
