@@ -19,11 +19,14 @@ use arch_core::layers::build_layers;
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
-use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
+use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::timeline::{TimelineEntry, TimelineState};
-use arch_view::view::{paint_symbol_edges, CanvasState, Level, SymbolLayout, Viewport};
+use arch_view::view::{
+    band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
+    symbol_kind_palette, CanvasState, Level, SymbolLayout, Viewport,
+};
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt, App, Application,
+    canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, App, Application,
     Bounds, ClickEvent, Context, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PathBuilder, Render, ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds,
     WindowOptions,
@@ -738,6 +741,11 @@ impl Render for MapView {
         };
         let can_go_back = self.state.can_go_back();
         let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
+        let fade_enabled = self
+            .playback
+            .as_ref()
+            .map(|playback| playback.animation_enabled())
+            .unwrap_or(false);
         let transition_enabled = self.state.transition_enabled();
         let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
 
@@ -825,6 +833,7 @@ impl Render for MapView {
                 for band in &map.bands {
                     root = root.child(band_element(band, viewport));
                 }
+                let base_opacity = if fade_enabled { CONTEXT_OPACITY } else { 1.0 };
                 let edges = map
                     .edges
                     .iter()
@@ -833,6 +842,7 @@ impl Render for MapView {
                         to: viewport.screen_point(edge.to),
                         adjusted: edge.direction_adjusted,
                         strong: false,
+                        opacity: base_opacity,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -841,26 +851,36 @@ impl Render for MapView {
                     map.height * viewport.zoom,
                 ));
 
-                if let Some(overlay) = &overlay {
+                if let Some(playback) = &self.playback {
                     let centers = map
                         .nodes
                         .iter()
                         .map(|node| (node.id.clone(), node.rect.center()))
                         .collect::<std::collections::BTreeMap<_, _>>();
                     let mut path_edges = Vec::new();
-                    for (index, pair) in overlay.steps.windows(2).enumerate() {
-                        let Some(from) = centers.get(&pair[0]) else {
+                    for (index, pair) in playback.steps().windows(2).enumerate() {
+                        let (source_module, target_module) = (&pair[0].module, &pair[1].module);
+                        if fade_enabled && source_module == target_module {
+                            continue;
+                        }
+                        let Some(from) = centers.get(source_module) else {
                             continue;
                         };
-                        let Some(to) = centers.get(&pair[1]) else {
+                        let Some(to) = centers.get(target_module) else {
                             continue;
                         };
-                        let strong = overlay.current == index + 2;
+                        let (strong, opacity) = if fade_enabled {
+                            let role = playback.module_edge_role(source_module, target_module);
+                            (role.strong(), role.opacity())
+                        } else {
+                            (playback.current() == index + 2, 1.0)
+                        };
                         path_edges.push(EdgeDraw {
                             from: viewport.screen_point(*from),
                             to: viewport.screen_point(*to),
                             adjusted: true,
                             strong,
+                            opacity,
                         });
                     }
                     root = root.child(edge_canvas(
@@ -870,20 +890,40 @@ impl Render for MapView {
                     ));
                 }
 
-                for node in &map.nodes {
-                    let opacity = overlay
+                let focus = overlay
+                    .as_ref()
+                    .and_then(|overlay| overlay.current_module.as_deref());
+                let indices = if fade_enabled {
+                    self.playback
                         .as_ref()
-                        .map(|overlay| {
-                            if overlay.path_modules.contains(&node.id) {
-                                1.0
-                            } else {
-                                NON_PATH_OPACITY
-                            }
+                        .map(|playback| {
+                            let ids = map
+                                .nodes
+                                .iter()
+                                .map(|node| node.id.as_str())
+                                .collect::<Vec<_>>();
+                            playback.module_paint_order(&ids)
                         })
-                        .unwrap_or(1.0);
-                    let focus = overlay
-                        .as_ref()
-                        .and_then(|overlay| overlay.current_module.as_deref());
+                        .unwrap_or_else(|| (0..map.nodes.len()).collect())
+                } else {
+                    (0..map.nodes.len()).collect::<Vec<_>>()
+                };
+                for index in indices {
+                    let node = &map.nodes[index];
+                    let opacity = match &self.playback {
+                        Some(playback) if fade_enabled => playback.module_context_opacity(&node.id),
+                        Some(_) => overlay
+                            .as_ref()
+                            .map(|overlay| {
+                                if overlay.path_modules.contains(&node.id) {
+                                    1.0
+                                } else {
+                                    NON_PATH_OPACITY
+                                }
+                            })
+                            .unwrap_or(1.0),
+                        None => 1.0,
+                    };
                     root = root.child(node_element(
                         node,
                         viewport,
@@ -899,13 +939,20 @@ impl Render for MapView {
                 let current_edge = overlay
                     .as_ref()
                     .and_then(|overlay| overlay.current_edge.as_ref());
-                let edges = paint_symbol_edges(&symbols, &viewport, current_edge)
+                let painted = match (&self.playback, fade_enabled) {
+                    (Some(playback), true) => {
+                        paint_symbol_edges_with_roles(&symbols, &viewport, playback)
+                    }
+                    _ => paint_symbol_edges(&symbols, &viewport, current_edge),
+                };
+                let edges = painted
                     .into_iter()
                     .map(|edge| EdgeDraw {
                         from: edge.from,
                         to: edge.to,
                         adjusted: false,
                         strong: edge.strong,
+                        opacity: edge.opacity,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -914,15 +961,31 @@ impl Render for MapView {
                     symbols.height * viewport.zoom,
                 ));
 
-                for node in &symbols.nodes {
-                    let opacity = self
-                        .playback
+                let focus = overlay
+                    .as_ref()
+                    .and_then(|overlay| overlay.current_symbol.as_deref());
+                let indices = if fade_enabled {
+                    self.playback
                         .as_ref()
-                        .map(|playback| playback.node_opacity(&node.id))
-                        .unwrap_or(1.0);
-                    let focus = overlay
-                        .as_ref()
-                        .and_then(|overlay| overlay.current_symbol.as_deref());
+                        .map(|playback| {
+                            let ids = symbols
+                                .nodes
+                                .iter()
+                                .map(|node| node.id.as_str())
+                                .collect::<Vec<_>>();
+                            playback.paint_order(&ids)
+                        })
+                        .unwrap_or_else(|| (0..symbols.nodes.len()).collect())
+                } else {
+                    (0..symbols.nodes.len()).collect::<Vec<_>>()
+                };
+                for index in indices {
+                    let node = &symbols.nodes[index];
+                    let opacity = match &self.playback {
+                        Some(playback) if fade_enabled => playback.node_context_opacity(&node.id),
+                        Some(playback) => playback.node_opacity(&node.id),
+                        None => 1.0,
+                    };
                     root = root.child(symbol_node_element(
                         node,
                         opacity,
@@ -1133,7 +1196,6 @@ enum Scene {
 }
 
 struct PlaybackOverlay {
-    steps: Vec<String>,
     path_modules: BTreeSet<String>,
     current_module: Option<String>,
     current_symbol: Option<String>,
@@ -1152,23 +1214,13 @@ impl PlaybackOverlay {
             .iter()
             .map(|step| step.module.clone())
             .collect::<Vec<_>>();
-        let current = playback.current();
         Self {
             path_modules: modules.iter().cloned().collect(),
-            current_module: if current > 0 {
-                Some(modules[current - 1].clone())
-            } else {
-                None
-            },
-            current_symbol: if current > 0 {
-                Some(steps[current - 1].symbol.clone())
-            } else {
-                None
-            },
+            current_module: playback.current_module().map(ToOwned::to_owned),
+            current_symbol: playback.current_symbol().map(ToOwned::to_owned),
             current_edge: playback.current_edge(),
-            steps: modules,
             len: steps.len(),
-            current,
+            current: playback.current(),
             playing: playback.is_playing(),
             animation: playback.animation_enabled(),
             fly_to: playback.fly_to_enabled(),
@@ -1181,6 +1233,15 @@ struct EdgeDraw {
     to: LayoutPoint,
     adjusted: bool,
     strong: bool,
+    opacity: f32,
+}
+
+fn edge_color_at(base: u32, opacity: f32) -> gpui::Rgba {
+    if opacity >= 1.0 {
+        rgb(base)
+    } else {
+        rgba((base << 8) | u32::from(opacity_alpha_byte(opacity)))
+    }
 }
 
 fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElement {
@@ -1194,13 +1255,14 @@ fn edge_canvas(edges: Vec<EdgeDraw>, width: f32, height: f32) -> impl IntoElemen
             |_, _, _| (),
             move |bounds, _, window, _| {
                 for edge in &edges {
-                    let color = if edge.strong {
-                        rgb(0xf2f5f8)
+                    let base = if edge.strong {
+                        0xf2f5f8
                     } else if edge.adjusted {
-                        rgb(0xd98a3d)
+                        0xd98a3d
                     } else {
-                        rgb(0x3d4b5c)
+                        0x3d4b5c
                     };
+                    let color = edge_color_at(base, edge.opacity);
                     let mut builder =
                         PathBuilder::stroke(if edge.strong { px(2.) } else { px(1.) });
                     if edge.adjusted {
@@ -1253,12 +1315,16 @@ fn selection_border(
 
 fn band_element(band: &BandLayout, viewport: Viewport) -> impl IntoElement {
     let rect = scaled_rect(band.rect, viewport);
-    let (background, border, label) = if band.is_unclassified {
-        (rgb(0x1f1a12), rgb(0x6b552f), rgb(0xd98a3d))
+    let background = rgb(band_background_palette(
+        band.is_unclassified,
+        band.is_external,
+    ));
+    let (border, label) = if band.is_unclassified {
+        (rgb(0x6b552f), rgb(0xd98a3d))
     } else if band.is_external {
-        (rgb(0x101d21), rgb(0x2f5a60), rgb(0x6fb3b8))
+        (rgb(0x2f5a60), rgb(0x6fb3b8))
     } else {
-        (rgb(0x11161c), rgb(0x1c2633), rgb(0x8b9bb0))
+        (rgb(0x1c2633), rgb(0x8b9bb0))
     };
     div()
         .absolute()
@@ -1385,27 +1451,9 @@ fn symbol_node_element(
 }
 
 fn symbol_kind_color(kind: &str) -> gpui::Rgba {
-    match kind {
-        "function" => rgb(0x244a66),
-        "component" => rgb(0x4a3768),
-        "class" => rgb(0x5f4524),
-        "method" => rgb(0x23543d),
-        _ => rgb(0x2a3440),
-    }
+    rgb(symbol_kind_palette(kind))
 }
 
 fn layer_color(layer: &str, is_unclassified: bool) -> gpui::Rgba {
-    if is_unclassified {
-        return rgb(0x3a2f22);
-    }
-    match layer {
-        "cli" => rgb(0x244a66),
-        "commands" => rgb(0x23543d),
-        "components" => rgb(0x4a3768),
-        "server" => rgb(0x5f4524),
-        "utils" => rgb(0x2f4652),
-        "tests" => rgb(0x53303c),
-        "external" => rgb(0x243b3d),
-        _ => rgb(0x2a3440),
-    }
+    rgb(layer_palette(layer, is_unclassified))
 }
