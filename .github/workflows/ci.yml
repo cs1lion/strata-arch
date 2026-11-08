@@ -35,6 +35,8 @@ jobs:
           xvfb-run -a -s "${xvfb_args}" timeout 20s xdpyinfo | sed -n '1,6p'
           xvfb-run -a -s "${xvfb_args}" timeout 20s xdpyinfo -queryExtensions \
             | grep -E "SYNC|XInputExtension|PRESENT|RANDR|Composite|GLX"
+          echo "== xrandr --query =="
+          xvfb-run -a -s "${xvfb_args}" timeout 20s xrandr --query
           echo "== vulkan ICDs =="
           ls -1 /usr/share/vulkan/icd.d
           echo "== vulkaninfo --summary =="
@@ -47,6 +49,7 @@ jobs:
           set -euo pipefail
           mkdir -p out
           export STRATA_PHASE_MARKERS=1
+          export STRATA_SMOKE_LOG=1
           run_attempt() {
             local label="$1"; shift
             local log="out/linux-window-${label}.log"
