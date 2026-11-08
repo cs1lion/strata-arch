@@ -1,0 +1,82 @@
+[
+  {
+    "iteration": 11,
+    "exit": 101,
+    "wallMs": 5749.0,
+    "processesAtStart": 16,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.10s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (58396) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.14s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 12,
+    "exit": 101,
+    "wallMs": 5182.0,
+    "processesAtStart": 17,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (67580) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.09s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 13,
+    "exit": 101,
+    "wallMs": 5433.0,
+    "processesAtStart": 18,
+    "processesAtEnd": 22,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (70768) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.13s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 14,
+    "exit": 101,
+    "wallMs": 5708.0,
+    "processesAtStart": 17,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.01s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (27328) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.10s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 15,
+    "exit": 101,
+    "wallMs": 5751.0,
+    "processesAtStart": 16,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.37s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (20128) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.36s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 16,
+    "exit": 101,
+    "wallMs": 5409.0,
+    "processesAtStart": 18,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.85s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (13780) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r\n\r\n"
+  },
+  {
+    "iteration": 17,
+    "exit": 101,
+    "wallMs": 5856.0,
+    "processesAtStart": 17,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (71676) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.37s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 18,
+    "exit": 101,
+    "wallMs": 5561.0,
+    "processesAtStart": 19,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.89s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (72012) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.14s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 19,
+    "exit": 0,
+    "wallMs": 4085.0,
+    "processesAtStart": 19,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.82s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.29s\r\n\r\n"
+  },
+  {
+    "iteration": 20,
+    "exit": 101,
+    "wallMs": 5247.0,
+    "processesAtStart": 17,
+    "processesAtEnd": 16,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.03s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (24768) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.10s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  }
+]

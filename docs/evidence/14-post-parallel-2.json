@@ -1,0 +1,92 @@
+[
+  {
+    "iteration": 11,
+    "exit": 0,
+    "wallMs": 6890.0,
+    "processesAtStart": 16,
+    "processesAtEnd": 16,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.49s\r",
+    "output": "    Blocking waiting for file lock on package cache\r\n    Blocking waiting for file lock on package cache\r\n    Blocking waiting for file lock on package cache\r\n    Blocking waiting for file lock on artifact directory\r\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.49s\r\n\r\n"
+  },
+  {
+    "iteration": 12,
+    "exit": 0,
+    "wallMs": 7211.0,
+    "processesAtStart": 18,
+    "processesAtEnd": 22,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.21s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.21s\r\n\r\n"
+  },
+  {
+    "iteration": 13,
+    "exit": 0,
+    "wallMs": 7563.0,
+    "processesAtStart": 18,
+    "processesAtEnd": 17,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.83s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.83s\r\n\r\n"
+  },
+  {
+    "iteration": 14,
+    "exit": 0,
+    "wallMs": 5762.0,
+    "processesAtStart": 19,
+    "processesAtEnd": 18,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.13s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.13s\r\n\r\n"
+  },
+  {
+    "iteration": 15,
+    "exit": 0,
+    "wallMs": 6028.0,
+    "processesAtStart": 19,
+    "processesAtEnd": 16,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.04s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.85s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.04s\r\n\r\n"
+  },
+  {
+    "iteration": 16,
+    "exit": 0,
+    "wallMs": 4631.0,
+    "processesAtStart": 20,
+    "processesAtEnd": 16,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.43s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.79s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.43s\r\n\r\n"
+  },
+  {
+    "iteration": 17,
+    "exit": 0,
+    "wallMs": 8728.0,
+    "processesAtStart": 16,
+    "processesAtEnd": 18,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.35s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.08s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.35s\r\n\r\n"
+  },
+  {
+    "iteration": 18,
+    "exit": 0,
+    "wallMs": 6265.0,
+    "processesAtStart": 18,
+    "processesAtEnd": 19,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.04s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.04s\r\n\r\n"
+  },
+  {
+    "iteration": 19,
+    "exit": 0,
+    "wallMs": 5243.0,
+    "processesAtStart": 16,
+    "processesAtEnd": 17,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.51s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.80s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.51s\r\n\r\n"
+  },
+  {
+    "iteration": 20,
+    "exit": 0,
+    "wallMs": 6407.0,
+    "processesAtStart": 17,
+    "processesAtEnd": 18,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.48s\r",
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.82s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.48s\r\n\r\n"
+  }
+]

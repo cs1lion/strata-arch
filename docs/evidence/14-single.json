@@ -1,0 +1,182 @@
+[
+  {
+    "iteration": 1,
+    "exit": 0,
+    "wallMs": 15688.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.91s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "   Compiling arch-core v0.1.0 (D:\\project\\1107\\crates\\arch-core)\r\n   Compiling arch-view v0.1.0 (D:\\project\\1107\\crates\\arch-view)\r\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.42s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.91s\r\n\r\n"
+  },
+  {
+    "iteration": 2,
+    "exit": 101,
+    "wallMs": 4154.0,
+    "result": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r",
+    "frame": true,
+    "kill3s": true,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (63416) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\nsmoke: frame rendered\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 3,
+    "exit": 0,
+    "wallMs": 2948.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.92s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.92s\r\n\r\n"
+  },
+  {
+    "iteration": 4,
+    "exit": 0,
+    "wallMs": 2566.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.64s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.64s\r\n\r\n"
+  },
+  {
+    "iteration": 5,
+    "exit": 0,
+    "wallMs": 2676.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.74s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.74s\r\n\r\n"
+  },
+  {
+    "iteration": 6,
+    "exit": 0,
+    "wallMs": 2751.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.80s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.80s\r\n\r\n"
+  },
+  {
+    "iteration": 7,
+    "exit": 0,
+    "wallMs": 2505.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.58s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.58s\r\n\r\n"
+  },
+  {
+    "iteration": 8,
+    "exit": 0,
+    "wallMs": 2957.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.01s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.01s\r\n\r\n"
+  },
+  {
+    "iteration": 9,
+    "exit": 0,
+    "wallMs": 2530.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.60s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.67s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.60s\r\n\r\n"
+  },
+  {
+    "iteration": 10,
+    "exit": 0,
+    "wallMs": 2621.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.68s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.68s\r\n\r\n"
+  },
+  {
+    "iteration": 11,
+    "exit": 0,
+    "wallMs": 2525.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.62s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.62s\r\n\r\n"
+  },
+  {
+    "iteration": 12,
+    "exit": 0,
+    "wallMs": 3135.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.19s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.19s\r\n\r\n"
+  },
+  {
+    "iteration": 13,
+    "exit": 0,
+    "wallMs": 3605.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.62s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.62s\r\n\r\n"
+  },
+  {
+    "iteration": 14,
+    "exit": 0,
+    "wallMs": 2477.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.58s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.58s\r\n\r\n"
+  },
+  {
+    "iteration": 15,
+    "exit": 0,
+    "wallMs": 2418.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.54s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.54s\r\n\r\n"
+  },
+  {
+    "iteration": 16,
+    "exit": 0,
+    "wallMs": 2688.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.81s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.81s\r\n\r\n"
+  },
+  {
+    "iteration": 17,
+    "exit": 0,
+    "wallMs": 2651.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.76s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.76s\r\n\r\n"
+  },
+  {
+    "iteration": 18,
+    "exit": 0,
+    "wallMs": 3029.0,
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.06s\r",
+    "frame": false,
+    "kill3s": false,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... ok\r\n\r\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.06s\r\n\r\n"
+  },
+  {
+    "iteration": 19,
+    "exit": 101,
+    "wallMs": 4329.0,
+    "result": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r",
+    "frame": false,
+    "kill3s": true,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (26916) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  },
+  {
+    "iteration": 20,
+    "exit": 101,
+    "wallMs": 4169.0,
+    "result": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r",
+    "frame": false,
+    "kill3s": true,
+    "output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s\r\n     Running tests\\smoke.rs (target\\debug\\deps\\smoke-b15453ecb15c3ef5.exe)\r\n\r\nrunning 1 test\r\ntest smoke_renders_one_frame_and_exits_cleanly ... FAILED\r\n\r\nfailures:\r\n\r\n---- smoke_renders_one_frame_and_exits_cleanly stdout ----\r\n\r\nthread 'smoke_renders_one_frame_and_exits_cleanly' (26776) panicked at crates\\arch-view\\tests\\smoke.rs:36:17:\r\nsmoke 未在 3 秒内退出: stdout=smoke: layout 3 modules, 2 edges, 1 bands\r\n stderr=\r\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\r\n\r\n\r\nfailures:\r\n    smoke_renders_one_frame_and_exits_cleanly\r\n\r\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.08s\r\n\r\nerror: test failed, to rerun pass `-p arch-view --test smoke`\r\n"
+  }
+]
