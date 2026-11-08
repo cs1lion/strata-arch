@@ -128,6 +128,24 @@ jobs:
               "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 150000 -OutJson out/reveal/soft-1cpu-$i.json" \
               2>&1 | tee "out/reveal/soft-1cpu-$i.log"
           done
+      - name: reveal timing (small scene, lavapipe)
+        # 诊断：软件渲染下帧成本是「整窗光栅化」主导还是「节点数」主导。
+        # 若小场景也慢，按模块数分档无法把最坏时长压到 5s，规则需要更保守。
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+            "openbox >/dev/null 2>&1 & sleep 1; exec pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/small-soft.json" \
+            2>&1 | tee "out/reveal/small-soft.log"
+      - name: reveal timing (small scene, lavapipe + 1 CPU)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+            "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 150000 -OutJson out/reveal/small-1cpu.json" \
+            2>&1 | tee "out/reveal/small-1cpu.log"
       - name: summarize reveal durations
         shell: pwsh
         run: |
