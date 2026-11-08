@@ -40,11 +40,12 @@ use gpui::{
 };
 
 const USAGE: &str = "用法:
-  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--reveal] [--from <入口ID> --to <符号ID>]
+  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--reveal|--no-reveal] [--from <入口ID> --to <符号ID>]
   arch-view timeline <目标仓库> [--auto-close-ms <毫秒>] [--autoplay]
   arch-view diff <目标仓库> --from <commit> --to <commit> [--no-fade] [--auto-close-ms <毫秒>]
   arch-view scene <目标仓库> [--out <场景文件>]
-  arch-view smoke <目标仓库>";
+  arch-view smoke <目标仓库>
+  首屏分层揭示默认开启；--no-reveal 关闭。两者同时出现时以 --no-reveal 为准（与顺序无关）。";
 
 /// 阶段标记：仅在 `STRATA_PHASE_MARKERS=1` 时输出，供外部计时脚本记录到达时间。
 /// 不在视图源码里取墙钟（`arch-view/src` 禁用时间源判据不变），时间戳由外部进程提供。
@@ -350,6 +351,14 @@ fn main() -> ExitCode {
     }
 }
 
+/// 首屏揭示的 CLI 语义：默认开启；只要出现 `--no-reveal` 就关闭。
+///
+/// `--reveal` 保留为显式兼容参数，不参与决定，因此两者同时出现时以显式关闭为准，
+/// 且与参数顺序无关。
+fn reveal_default_on(explicit_off: bool) -> bool {
+    !explicit_off
+}
+
 fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let target = args
         .next()
@@ -361,7 +370,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let mut auto_close_ms: Option<u64> = None;
     let mut from: Option<String> = None;
     let mut to: Option<String> = None;
-    let mut reveal_requested = false;
+    let mut reveal_off = false;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--auto-close-ms" => {
@@ -374,7 +383,10 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                         .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
                 );
             }
-            "--reveal" => reveal_requested = true,
+            // 默认已开启，`--reveal` 只保留为显式兼容参数；是否关闭只看 `--no-reveal`，
+            // 因此两者同时出现、无论顺序，都以显式关闭为准。
+            "--reveal" => {}
+            "--no-reveal" => reveal_off = true,
             "--from" => {
                 from = Some(
                     args.next()
@@ -395,7 +407,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     };
 
     let repo = PathBuf::from(&target);
-    let reveal_requested = reveal_requested || std::env::var_os("STRATA_EVIDENCE_REVEAL").is_some();
+    // 默认开启；`--no-reveal` 显式关闭，且优先于同批出现的 `--reveal`。
+    let reveal_requested = reveal_default_on(reveal_off);
 
     // 先开窗：分层/调用图/布局都在窗口打开后的后台任务里完成，
     // 长操作期间窗口显示阶段文案，用户可随时关闭或点取消。
@@ -2847,4 +2860,20 @@ fn symbol_kind_color(kind: &str) -> gpui::Rgba {
 
 fn layer_color(layer: &str, is_unclassified: bool) -> gpui::Rgba {
     rgb(layer_palette(layer, is_unclassified))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reveal_default_on;
+
+    #[test]
+    fn reveal_is_on_by_default() {
+        assert!(reveal_default_on(false), "未给开关时必须默认开启");
+    }
+
+    #[test]
+    fn explicit_no_reveal_turns_reveal_off() {
+        // `--reveal` 不参与决定，所以与 `--no-reveal` 同时出现时、无论顺序都以关闭为准。
+        assert!(!reveal_default_on(true), "--no-reveal 必须关闭揭示");
+    }
 }
