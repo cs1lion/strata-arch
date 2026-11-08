@@ -18,7 +18,9 @@ use arch_view::layout::{
 };
 use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
 use arch_view::timeline::{TimelineEntry, TimelineState};
-use arch_view::view::{CanvasState, Level, SymbolLayout, Viewport};
+use arch_view::view::{
+    paint_symbol_edges, CanvasState, Level, SymbolLayout, Viewport,
+};
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
     IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
@@ -150,6 +152,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     callgraph,
                     playback,
                     ticker_running: false,
+                    fly_to_anchor: None,
                     press_origin: None,
                     drag_last: None,
                     dragged: false,
@@ -616,12 +619,56 @@ struct MapView {
     callgraph: CallGraphArtifact,
     playback: Option<PlaybackState>,
     ticker_running: bool,
+    /// 最近一次 fly-to 已居中的步骤符号；用于只在步骤变化时移动相机。
+    fly_to_anchor: Option<String>,
     press_origin: Option<LayoutPoint>,
     drag_last: Option<LayoutPoint>,
     dragged: bool,
 }
 
 impl MapView {
+    /// fly-to 接线：只在启用且当前步骤变化时把相机移到当前节点；
+    /// 关闭时清空锚点，避免再次打开时沿用旧状态。
+    fn apply_fly_to_if_needed(&mut self, scene: &Scene, window: &Window) -> Viewport {
+        if let Some(playback) = &self.playback {
+            let anchor = playback
+                .steps()
+                .get(playback.current().saturating_sub(1))
+                .map(|step| step.symbol.clone());
+            if playback.fly_to_enabled() && anchor.as_deref() != self.fly_to_anchor.as_deref() {
+                let rects = match scene {
+                    Scene::Symbols(symbols) => symbols
+                        .nodes
+                        .iter()
+                        .map(|node| (node.id.clone(), node.rect))
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    Scene::Modules(map) => playback
+                        .steps()
+                        .iter()
+                        .filter_map(|step| {
+                            map.nodes
+                                .iter()
+                                .find(|node| node.id == step.module)
+                                .map(|node| (step.symbol.clone(), node.rect))
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                };
+                let target = playback.camera_center(&rects);
+                let viewport_size = (
+                    f32::from(window.viewport_size().width),
+                    f32::from(window.viewport_size().height),
+                );
+                self.state.apply_fly_to(target, viewport_size);
+                self.fly_to_anchor = anchor;
+            } else if !playback.fly_to_enabled() {
+                self.fly_to_anchor = None;
+            }
+        } else {
+            self.fly_to_anchor = None;
+        }
+        self.state.viewport()
+    }
+
     fn screen_position(position: gpui::Point<gpui::Pixels>) -> LayoutPoint {
         LayoutPoint {
             x: f32::from(position.x),
@@ -643,8 +690,7 @@ impl MapView {
 }
 
 impl Render for MapView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let viewport = self.state.viewport();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let labels = self.state.labels_visible();
         let selected = self.state.selected().map(ToOwned::to_owned);
         let highlighted = self.state.highlighted();
@@ -654,6 +700,7 @@ impl Render for MapView {
         };
         let can_go_back = self.state.can_go_back();
         let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
+        let viewport = self.apply_fly_to_if_needed(&scene, window);
 
         let mut root = div()
             .id("canvas")
@@ -810,14 +857,16 @@ impl Render for MapView {
                 }
             }
             Scene::Symbols(symbols) => {
-                let edges = symbols
-                    .edges
-                    .iter()
+                let current_edge = overlay
+                    .as_ref()
+                    .and_then(|overlay| overlay.current_edge.as_ref());
+                let edges = paint_symbol_edges(&symbols, &viewport, current_edge)
+                    .into_iter()
                     .map(|edge| EdgeDraw {
-                        from: viewport.screen_point(edge.from),
-                        to: viewport.screen_point(edge.to),
+                        from: edge.from,
+                        to: edge.to,
                         adjusted: false,
-                        strong: false,
+                        strong: edge.strong,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -1018,6 +1067,7 @@ struct PlaybackOverlay {
     path_modules: BTreeSet<String>,
     current_module: Option<String>,
     current_symbol: Option<String>,
+    current_edge: Option<(String, String)>,
     len: usize,
     current: usize,
     playing: bool,
@@ -1045,6 +1095,7 @@ impl PlaybackOverlay {
             } else {
                 None
             },
+            current_edge: playback.current_edge(),
             steps: modules,
             len: steps.len(),
             current,

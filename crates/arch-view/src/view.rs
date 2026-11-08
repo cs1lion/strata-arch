@@ -107,6 +107,37 @@ pub struct SymbolLayout {
     pub edges: Vec<SymbolEdgeLayout>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaintedSymbolEdge {
+    pub source: String,
+    pub target: String,
+    pub from: Point,
+    pub to: Point,
+    pub strong: bool,
+}
+
+/// 把符号边映射到屏幕坐标并决定是否强调「当前边」。
+///
+/// 这是 `main.rs` 符号场景的唯一绘制入口：接线阶段先保持现有行为（全部不强调），
+/// 后续修复只改本函数，避免 UI 里再出现硬编码的 `strong`。
+pub fn paint_symbol_edges(
+    layout: &SymbolLayout,
+    viewport: &Viewport,
+    _current_edge: Option<&(String, String)>,
+) -> Vec<PaintedSymbolEdge> {
+    layout
+        .edges
+        .iter()
+        .map(|edge| PaintedSymbolEdge {
+            source: edge.source.clone(),
+            target: edge.target.clone(),
+            from: viewport.screen_point(edge.from),
+            to: viewport.screen_point(edge.to),
+            strong: false,
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Level {
     Modules,
@@ -150,6 +181,13 @@ impl CanvasState {
 
     pub fn viewport(&self) -> Viewport {
         self.viewport
+    }
+
+    /// fly-to 的接线点：把目标世界坐标移到视口中心。
+    ///
+    /// 抽取阶段保持现有行为：不移动视口并返回 `false`；真正的移动在后续修复里实现。
+    pub fn apply_fly_to(&mut self, _target: Option<Point>, _viewport_size: (f32, f32)) -> bool {
+        false
     }
 
     pub fn map(&self) -> &MapLayout {
