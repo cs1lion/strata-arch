@@ -15,9 +15,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          # `arch-cli` 的 history 测试要求完整历史；默认浅克隆会让该测试以退出码 5 判红。
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: install gpu window deps (Linux)
         if: runner.os == 'Linux'
@@ -26,7 +23,8 @@ jobs:
         run: cargo build --locked --workspace
       - name: test (locked)
         # 几何等价（base vs A）等模型断言在 CI 常态执行；像素断言依赖可见桌面，留在 eval 脚本。
-        run: cargo test --locked --workspace
+        # 本 job 不拉取 pinned 语料，故不含 arch-cli 的 path/history 测试（它们在 tests/corpus 就绪时执行）。
+        run: cargo test --locked -p arch-view -p arch-core
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
