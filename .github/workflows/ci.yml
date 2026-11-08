@@ -18,12 +18,46 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: install gpu window deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb mesa-vulkan-drivers libgl1-mesa-dri
       - name: build (locked)
         run: cargo build --locked --workspace
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
+      - name: linux window smoke (xvfb)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          run_attempt() {
+            local label="$1"; shift
+            local log="out/linux-window-${label}.log"
+            echo "== ${label}: $* =="
+            set +e
+            "$@" 2>&1 | tee "$log"
+            local status="${PIPESTATUS[0]}"
+            set -e
+            if [ "$status" -eq 0 ] && grep -q "smoke: frame rendered" "$log"; then
+              echo "== ${label}: PASS (exit 0, frame marker found) =="
+              return 0
+            fi
+            echo "== ${label}: FAIL (exit ${status}) =="
+            return 1
+          }
+          # 先走默认图形路径；失败保留日志后再试 Mesa 软件渲染（llvmpipe/lavapipe）。
+          if run_attempt default xvfb-run -a -s "-screen 0 1280x1024x24" \
+              cargo run --locked -p arch-view -- smoke tests/fixtures/tiny; then
+            exit 0
+          fi
+          echo "default GL path failed; retrying with Mesa software renderer"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          if compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" > /dev/null; then
+            export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+            echo "VK_ICD_FILENAMES=${VK_ICD_FILENAMES}"
+          fi
+          run_attempt software xvfb-run -a -s "-screen 0 1280x1024x24" \
+              cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
 
   drift:
     name: drift gate
