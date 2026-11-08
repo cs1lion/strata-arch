@@ -86,8 +86,16 @@ fn reveal_waits_for_data_ready_and_does_not_hide_content() {
     assert!(reveal.start(), "数据就绪后启动");
     assert!(reveal.is_active(), "启动后进入揭示");
     assert!(!reveal.start(), "start 必须幂等");
-    assert_eq!(reveal.opacity_for_stage(0), 0.0, "揭示从第 0 层 0 不透明度开始");
-    assert_eq!(reveal.offset_for_stage(0), REVEAL_RISE_PX, "揭示从下沉位移开始");
+    assert_eq!(
+        reveal.opacity_for_stage(0),
+        0.0,
+        "揭示从第 0 层 0 不透明度开始"
+    );
+    assert_eq!(
+        reveal.offset_for_stage(0),
+        REVEAL_RISE_PX,
+        "揭示从下沉位移开始"
+    );
 }
 
 #[test]
@@ -205,10 +213,7 @@ fn progress_is_derived_only_from_frame_count() {
 
 #[test]
 fn reveal_is_mutually_exclusive_with_p1_path_playback() {
-    assert!(
-        reveal_allowed(true, false),
-        "无 P1 路径时允许首屏揭示"
-    );
+    assert!(reveal_allowed(true, false), "无 P1 路径时允许首屏揭示");
     assert!(
         !reveal_allowed(true, true),
         "存在 P1 路径播放时必须让位，同一时段只能一个主动效"
@@ -220,7 +225,14 @@ fn reveal_is_mutually_exclusive_with_p1_path_playback() {
 fn reveal_source_has_no_wallclock_random_or_timer() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/reveal.rs");
     let text = fs::read_to_string(&path).expect("读取 reveal.rs");
-    for forbidden in ["Instant", "SystemTime", "rand", "random", "thread_rng", "Timer"] {
+    for forbidden in [
+        "Instant",
+        "SystemTime",
+        "rand",
+        "random",
+        "thread_rng",
+        "Timer",
+    ] {
         assert!(
             !text.contains(forbidden),
             "reveal.rs 不得出现 {forbidden:?}：进度只能由 GPUI 帧回调驱动"
