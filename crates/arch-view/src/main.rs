@@ -53,6 +53,39 @@ fn phase_marker(label: &str) {
     }
 }
 
+/// 冒烟诊断：`STRATA_SMOKE_LOG=1` 时把 gpui 的 log 输出到 stderr，
+/// 用于在无 GPU 的 CI 上定位帧请求循环为什么没启动（不改变正常运行的输出）。
+fn install_smoke_logger() {
+    static LOGGER: StderrLogger = StderrLogger;
+    if std::env::var_os("STRATA_SMOKE_LOG").is_none() {
+        return;
+    }
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
+struct StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!(
+                "log[{}] {}: {}",
+                record.level(),
+                record.target(),
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {}
+}
+
 fn main() -> ExitCode {
     phase_marker("main:start");
     let mut args = env::args().skip(1);
@@ -699,6 +732,7 @@ fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     });
 
     phase_marker("smoke:app:before-new");
+    install_smoke_logger();
     let application = Application::new();
     phase_marker("smoke:app:built");
     application.run(move |cx: &mut App| {
