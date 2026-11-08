@@ -15,9 +15,7 @@ use arch_core::guided_path::{build_path, GuidedPathArtifact};
 use arch_core::layers::build_layers;
 use arch_view::layout::{layout_map, LayoutConfig, Point, Rect};
 use arch_view::playback::PlaybackState;
-use arch_view::view::{
-    paint_symbol_edges, CanvasState, SYMBOL_CANVAS_HEIGHT, SYMBOL_CANVAS_WIDTH,
-};
+use arch_view::view::{paint_symbol_edges, CanvasState, SYMBOL_CANVAS_HEIGHT, SYMBOL_CANVAS_WIDTH};
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -77,7 +75,10 @@ fn current_path_edge_is_emphasized_in_symbol_scene() {
         .filter(|edge| pairs.contains(&(edge.source.clone(), edge.target.clone())))
         .count();
     let strong = painted.iter().filter(|edge| edge.strong).count();
-    assert!(present >= 1, "fixture must draw the path edge inside src/a.ts; drew {present}/{total}");
+    assert!(
+        present >= 1,
+        "fixture must draw the path edge inside src/a.ts; drew {present}/{total}"
+    );
     assert_eq!(
         strong, 0,
         "step 1 has no incoming edge, but strong {strong}/{total} (path edges present {present})"
@@ -102,6 +103,7 @@ fn current_path_edge_is_emphasized_in_symbol_scene() {
         vec![("src/a.ts#function:beta", "src/a.ts#function:alpha")],
         "strong edge must be exactly the current one: strong {strong}/{total}"
     );
+    eprintln!("symbol scene: strong {strong}/{total}, path edges drawn {present}");
 }
 
 #[test]
@@ -146,6 +148,7 @@ fn fly_to_moves_viewport_center_to_current_node() {
         delta > 10.0,
         "viewport center movement must be measurable: delta {delta}px"
     );
+    eprintln!("fly-to: delta {delta}px, before {before:?}, after {after:?}, target {target:?}");
 }
 
 #[test]
