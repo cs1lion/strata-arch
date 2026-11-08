@@ -35,11 +35,16 @@ jobs:
         # 本 job 不拉取 pinned 语料：arch-cli 全部不跑；arch-core 只跳过 resolution_golden 的两个
         # 语料基线（tsx/excalidraw），其余 arch-core / arch-view 测试全部执行。
         run: cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline
-      - name: test (locked, no window)
+      - name: test (locked, xvfb)
         if: runner.os == 'Linux'
-        # 无显示环境：启动窗口的 smoke 由本 job 后面的「linux window smoke (xvfb)」步骤覆盖，
-        # 这里跳过该用例，避免 headless 下 gpui 初始化直接 panic。
-        run: cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline --skip smoke_renders_one_frame_and_exits_cleanly
+        # 多个集成测试会真的启动窗口（smoke / scene_snapshot / timeline_loading），headless 下 gpui
+        # 初始化即 panic；这里按窗口 smoke 同一套虚拟显示 + 软件 Vulkan 跑，不跳过任何用例。
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+            'openbox >/dev/null 2>&1 & sleep 1; exec cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline'
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
