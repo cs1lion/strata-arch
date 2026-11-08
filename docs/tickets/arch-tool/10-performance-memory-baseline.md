@@ -111,8 +111,64 @@
 - 可取消：`diff_commits_cancellable` 在阶段边界与每 32 个导出文件检查取消标志；命中后返回 `CommitDiffError::Cancelled` 并正常清理临时快照。测试 `diff_honours_cancel_flag_before_work` 通过；`diff_reports_progress_stages_in_order` 锁定阶段顺序。
 - 像素证据：`out/pixel-evidence/diff-loading.png`、`map-loading.png`（加载文案与取消按钮）；`diff-content.png`、`map-content.png`（切换到内容视图）。
 
+### diff 优化判据（实现前固定，2026-11-09）
+
+优化目标只针对「同一棵树被完整导出两次」的重复写盘，不改解析、不改 `renameHint` 阈值、不改 diff 判定。
+
+**等价性判据（必须逐字节相等）**
+
+- 对同一对 commit，优化路径（`DiffSnapshotStrategy::Reuse`）与旧全量导出路径（`DiffSnapshotStrategy::Full`，保留为参照实现）的 `CommitDiffArtifact` 经 `serde_json::to_string` 序列化后必须**逐字节相等**。
+- 覆盖样本：合成 fixture（added / removed / modified / 疑似重命名同时出现）、workspace 自身 `2b66deb → 29f8e27`、excalidraw 语料双 commit（`#[ignore]` 手工跑）。
+- 覆盖字段：`added` / `removed` / `modified` 三类记录、`renameHint`、`renames`（含 `pathSimilarity` / `symbolOverlap` 浮点值）、`stats`。
+- 三类边界各设专门用例：纯重命名、纯删除、纯新增，均要求新旧路径字节相等，且 `renameHint` 与相似度判定不变。
+- 取消行为一致：同一个取消标志在同一阶段边界被置位时，两条路径都返回 `CommitDiffError::Cancelled`，且临时快照照常清理。
+
+**事实复用边界（不可越界）**
+
+- 只复用「文件内容」：`to` 树中与 `from` 树同 path、同 mode、同 blob oid 的条目用硬链接复用（跨卷回退为从 `from` 快照复制），其余条目仍从 git 拉取。
+- 不复用事实：`from` / `to` 两侧仍各自独立运行 `build_index` + `build_call_graph`，层归属与模块 ID 一律按各自 commit 的路径计算。做不到这一点就不宣称等价。
+
+**预算（先验，非事后）**
+
+- 热 diff 内容就绪（`main:start → content:presented`）：median ≤5000ms、p95 ≤6000ms（旧读数 median 6890ms）。
+- 分项估算：`from` 全量导出 ≈2.4s + `to` 未变化文件硬链接 ≈0.15s + 两侧 facts ≈2.0s + 比对 ≈0.1s ≈4.6s。
+- 冷 diff 另行计算，不与本轮热读数混算；`index` 冷缓存失败读数继续保留。
+- 收益门槛：预期节省 ≈2.3s（两次导出 → 一次导出 + 链接）。实测节省若 <1.15s（预期一半），如实报失败，不调阈值、不改判据。
+
+### diff 优化实测结论（2026-11-09）
+
+**做到的**
+
+- 等价性 **PASS**：`DiffSnapshotStrategy::Reuse` 与 `Full` 在混合 fixture（added 3 / removed 2 / modified 1 / renames 1）、纯重命名、纯删除、纯新增、workspace `2b66deb → 29f8e27`、excalidraw 语料双 commit 上，`serde_json` 序列化产物逐字节相等；`renameHint`、`renames` 的 `pathSimilarity` / `symbolOverlap` 与 `stats` 均未变。
+- 取消行为一致：同一取消标志在 `MaterializingTo` 边界置位时，两条路径都返回 `CommitDiffError::Cancelled`（测试 `reuse_and_full_export_cancel_at_same_stage_boundary`）。
+- 两侧 facts 仍独立计算：`from` / `to` 各自跑 `build_index` + `build_call_graph`，未做跨侧事实复用，层归属与模块 ID 按各自 commit 路径。
+- 命令：`cargo test -p arch-core --test commit_diff`（15 passed / 0 failed / 2 ignored）；`cargo test --release -p arch-core --test commit_diff large_corpus_reuse_matches_full_export -- --ignored --nocapture`。
+
+**没做到的（预算未达标，收益低于预期一半）**
+
+- 热 diff 内容就绪 **FAILED**：release + `eval/path-timing.ps1 -Path diff -Runs 3 -AutoCloseMs 20000` → 8684 / 8604 / 8563ms，median 8604ms、p95 8684ms，预算 5000/6000ms。
+- 同进程 3 轮交替对照（同一临时仓、同一进程，release，`#[ignore]` 手工跑）：
+
+| 轮次 | Reuse 总耗时 (ms) | Full 总耗时 (ms) | 节省 (ms) |
+| --- | --- | --- | --- |
+| 1 | 7222 | 7554 | 332 |
+| 2 | 7532 | 7215 | -317 |
+| 3 | 7239 | 7571 | 332 |
+
+  median：Reuse 7239ms，Full 7554ms，节省 **332ms（4.4%）**，低于预期一半（1150ms）。第 2 轮 Reuse 反而更慢，差异在噪声量级。
+
+- 分项打点（release，一轮代表值）：`from` 全量导出 657–897ms；`to` 导出 Reuse 1160ms vs Full 971ms（**复用路径在导出阶段反而更慢**）；两侧 facts 各约 2.0s（合计约 4s）；`build_artifact` + 临时快照删除约 0.64s。
+- **原判断被推翻并保留**：此前「两次完整 tree 导出约 4.9s」是「总耗时 6.9s − facts 约 2s」的推断，不是实测。实测单次导出仅约 0.65–1.16s，成本主要是每文件的 `create_dir_all` / 写入等文件系统操作，blob 读取占比很小；两次 facts（约 4s）才是最大头。因此「只导出变化文件 + 硬链接复用未变化内容」无法达到预期收益，也不足以让热 diff 进 5000ms 预算。**不调阈值、不改判据**。
+- 环境噪声：本轮 UI 测量 `app init` 约 1.0s（改动前批次约 0.5s），`first visible` 约 1.0s；UI 总耗时 8.6s 与旧 6.9s 不是同一负载下的读数，故以同进程交替对照作为收益判据。
+
+**未验证 / 待决策**
+
+- 未改 `eval/path-timing.ps1` 的 diff 预算（仍是 12000/16000），避免把失败的预算悄悄改绿；若保留本轮判据，应另起提交把预算改为 5000/6000 并记录旧读数、新读数与理由。
+- 未做 facts 级复用（跨侧复用 `snapshot_facts`）——层归属可能受其他文件变化影响，不在本轮判据允许范围。
+- 当前实现保留 Reuse 为默认路径，等价性成立但收益仅 4.4%；是否保留该复杂度由维护者决策，代码与票中已如实记录收益不足。
+
 ### 未做 / 未验证
 
-- 本轮未做 diff 算法优化。候选方案与预期收益（先立项再动手）：按 `git diff --name-status` 只导出变化文件，未变化文件复用上一快照事实或持久化 facts 缓存；预期热 diff 从 6.9s 降到 1–2s，冷 diff 仍需事实构建。收益未实测，不写成结论。
+- 本轮未做 diff 算法优化。候选方案与预期收益（先立项再动手）：按 `git diff --name-status` 只导出变化文件，未变化文件复用上一快照事实或持久化 facts 缓存；预期热 diff 从 6.9s 降到 1–2s，冷 diff 仍需事实构建。收益未实测，不写成结论。该候选被本轮判据取代：本轮只做内容级硬链接去重，facts 仍两侧独立计算。
 - 取消按钮的鼠标点击未做自动化像素/交互测试；当前证据是模型测试 + 代码路径 + 关闭窗口即退出的行为。跨平台（Linux/macOS）四条路径未测。
 
