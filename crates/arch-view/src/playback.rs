@@ -8,7 +8,66 @@ use arch_core::guided_path::GuidedPathArtifact;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const PATH_OPACITY: f32 = 1.0;
+/// 当前步节点的透明度；与路径节点同值，但层级最高。
+pub const CURRENT_OPACITY: f32 = 1.0;
+/// 非路径元素（上下文）的淡化下限。
+///
+/// 依据：`div.opacity()` 在 GPUI 中按 primitive 乘 alpha，标签与节点底色同时淡化。
+/// 在 0.68 时，全部调色板的标签对比度实测最低约 5.2:1，高于 WCAG AA 正文 4.5:1；
+/// 旧值 0.25 实测约 2.1:1，不可辨认。低于 0.54 会跌破 4.5:1，0.68 留出约 15% 余量。
+pub const CONTEXT_OPACITY: f32 = 0.68;
 pub const NON_PATH_OPACITY: f32 = 0.25;
+
+/// 把透明度换算成 8 位 alpha，保证绘制层逐帧取值确定。
+pub fn opacity_alpha_byte(opacity: f32) -> u8 {
+    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// 淡出态（动画开启）的视觉角色；层级 `Context < Path < Current`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VisualRole {
+    Context,
+    Path,
+    Current,
+}
+
+impl VisualRole {
+    pub fn opacity(self) -> f32 {
+        match self {
+            VisualRole::Current | VisualRole::Path => PATH_OPACITY,
+            VisualRole::Context => CONTEXT_OPACITY,
+        }
+    }
+
+    pub fn rank(self) -> u8 {
+        match self {
+            VisualRole::Context => 0,
+            VisualRole::Path => 1,
+            VisualRole::Current => 2,
+        }
+    }
+}
+
+/// 边的视觉角色；只有当前步的 incoming/outgoing 边被强调。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeRole {
+    Context,
+    Path,
+    Current,
+}
+
+impl EdgeRole {
+    pub fn opacity(self) -> f32 {
+        match self {
+            EdgeRole::Current | EdgeRole::Path => PATH_OPACITY,
+            EdgeRole::Context => CONTEXT_OPACITY,
+        }
+    }
+
+    pub fn strong(self) -> bool {
+        self == EdgeRole::Current
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaybackStep {
@@ -146,6 +205,8 @@ impl PlaybackState {
     }
 
     /// 进入当前步的那条边；第 1 步没有入边。
+    ///
+    /// 保留给关闭态（回归判据）：旧绘制只强调 incoming。
     pub fn current_edge(&self) -> Option<(String, String)> {
         if self.current < 2 {
             return None;
@@ -154,6 +215,148 @@ impl PlaybackState {
             self.steps[self.current - 2].symbol.clone(),
             self.steps[self.current - 1].symbol.clone(),
         ))
+    }
+
+    /// 当前步的符号；尚未开始时为 `None`。
+    pub fn current_symbol(&self) -> Option<&str> {
+        self.current
+            .checked_sub(1)
+            .and_then(|index| self.steps.get(index))
+            .map(|step| step.symbol.as_str())
+    }
+
+    /// 当前步所属模块；尚未开始时为 `None`。模块级与符号级视图共用此索引。
+    pub fn current_module(&self) -> Option<&str> {
+        self.current
+            .checked_sub(1)
+            .and_then(|index| self.steps.get(index))
+            .map(|step| step.module.as_str())
+    }
+
+    fn role_of(symbol: &str, current: Option<&str>, steps: &[PlaybackStep]) -> VisualRole {
+        if current == Some(symbol) {
+            VisualRole::Current
+        } else if steps.iter().any(|step| step.symbol == symbol) {
+            VisualRole::Path
+        } else {
+            VisualRole::Context
+        }
+    }
+
+    /// 节点角色：当前步 `Current`、其余路径节点 `Path`、非路径节点 `Context`。
+    pub fn node_role(&self, symbol: &str) -> VisualRole {
+        Self::role_of(symbol, self.current_symbol(), &self.steps)
+    }
+
+    pub fn node_context_opacity(&self, symbol: &str) -> f32 {
+        self.node_role(symbol).opacity()
+    }
+
+    /// 路径上全部相邻的符号边。
+    pub fn path_edges(&self) -> BTreeSet<(String, String)> {
+        self.steps
+            .windows(2)
+            .map(|pair| (pair[0].symbol.clone(), pair[1].symbol.clone()))
+            .collect()
+    }
+
+    /// 当前步的 incoming 与 outgoing 边；第 1 步只有 outgoing，末步只有 incoming。
+    pub fn current_edges(&self) -> BTreeSet<(String, String)> {
+        let mut edges = BTreeSet::new();
+        if self.current >= 2 {
+            edges.insert((
+                self.steps[self.current - 2].symbol.clone(),
+                self.steps[self.current - 1].symbol.clone(),
+            ));
+        }
+        if self.current >= 1 && self.current < self.steps.len() {
+            edges.insert((
+                self.steps[self.current - 1].symbol.clone(),
+                self.steps[self.current].symbol.clone(),
+            ));
+        }
+        edges
+    }
+
+    pub fn edge_role(&self, source: &str, target: &str) -> EdgeRole {
+        let pair = (source.to_string(), target.to_string());
+        if self.current_edges().contains(&pair) {
+            EdgeRole::Current
+        } else if self.path_edges().contains(&pair) {
+            EdgeRole::Path
+        } else {
+            EdgeRole::Context
+        }
+    }
+
+    pub fn edge_context_opacity(&self, source: &str, target: &str) -> f32 {
+        self.edge_role(source, target).opacity()
+    }
+
+    /// 模块路径边：相邻步骤跨模块时产生的边；同模块相邻对跳过（避免零长度边）。
+    pub fn module_path_edges(&self) -> BTreeSet<(String, String)> {
+        self.steps
+            .windows(2)
+            .filter(|pair| pair[0].module != pair[1].module)
+            .map(|pair| (pair[0].module.clone(), pair[1].module.clone()))
+            .collect()
+    }
+
+    pub fn current_module_edges(&self) -> BTreeSet<(String, String)> {
+        let mut edges = BTreeSet::new();
+        if self.current >= 2 {
+            let source = &self.steps[self.current - 2].module;
+            let target = &self.steps[self.current - 1].module;
+            if source != target {
+                edges.insert((source.clone(), target.clone()));
+            }
+        }
+        if self.current >= 1 && self.current < self.steps.len() {
+            let source = &self.steps[self.current - 1].module;
+            let target = &self.steps[self.current].module;
+            if source != target {
+                edges.insert((source.clone(), target.clone()));
+            }
+        }
+        edges
+    }
+
+    pub fn module_role(&self, module: &str) -> VisualRole {
+        if self.current_module() == Some(module) {
+            VisualRole::Current
+        } else if self.steps.iter().any(|step| step.module == module) {
+            VisualRole::Path
+        } else {
+            VisualRole::Context
+        }
+    }
+
+    pub fn module_context_opacity(&self, module: &str) -> f32 {
+        self.module_role(module).opacity()
+    }
+
+    pub fn module_edge_role(&self, source: &str, target: &str) -> EdgeRole {
+        let pair = (source.to_string(), target.to_string());
+        if self.current_module_edges().contains(&pair) {
+            EdgeRole::Current
+        } else if self.module_path_edges().contains(&pair) {
+            EdgeRole::Path
+        } else {
+            EdgeRole::Context
+        }
+    }
+
+    /// 绘制顺序：Context → Path → Current；同角色保持传入顺序（稳定排序）。
+    pub fn paint_order(&self, symbols: &[&str]) -> Vec<usize> {
+        let mut order = (0..symbols.len()).collect::<Vec<_>>();
+        order.sort_by_key(|index| self.node_role(symbols[*index]).rank());
+        order
+    }
+
+    pub fn module_paint_order(&self, modules: &[&str]) -> Vec<usize> {
+        let mut order = (0..modules.len()).collect::<Vec<_>>();
+        order.sort_by_key(|index| self.module_role(modules[*index]).rank());
+        order
     }
 
     /// 非路径节点淡出，路径节点保持可见。
