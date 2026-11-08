@@ -279,7 +279,7 @@ cargo run -q -p arch-core --example history_prefix_equiv -- %TEMP%\tsx-hist 617
 
 - 标记只在 `STRATA_PHASE_MARKERS=1` 时输出 `phase: <label>`，默认路径只多一次环境变量读取，不改变行为。
 - `arch-view/src` 仍然**没有墙钟/随机源命中**：`cargo test -p arch-view --test commit_diff_view view_sources_do_not_query_wall_clock_or_randomness` 通过。时间戳由外部脚本读到每行标记时记录，因此含管道与调度延迟（毫秒级）。
-- 标记位置：`main:start`、`prep:git-log`、`prep:history`、`prep:layers`、`prep:layout`、`app:created`（`Application::new` 返回）、`app:entry`、`window:opened`（`open_window` 返回并 activate）、`frame:render`（首次 `render`）、`frame:presented`（首帧后的 `on_next_frame`）、`quit:auto`、`main:end`，`process:exit` 由外部脚本记录。
+- 标记位置：`main:start`、`prep:git-log`、`prep:history`、`prep:layers`、`prep:layout`、`app:created`（`Application::new` 返回）、`app:entry`、`window:callback`（`open_window` 创建回调入口）、`window:created`（`open_window` 返回）、`window:activated`（`cx.activate(true)` 返回）、`frame:render`（首次 `render`）、`frame:presented`（首帧后的 `on_next_frame`）、`quit:auto`、`main:end`，`process:exit` 由外部脚本记录。下文「对账复核」用细分后的标记；第一节表格中旧的 `window:opened` 是 `created + activated` 合并值。
 - 计时工具：`eval/phase-timing.ps1`（外部 harness，一次运行 = 启动进程 → 逐行记录标记到达时间 → 等进程真正退出）。
 
 **命令：**
@@ -307,7 +307,7 @@ pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/debug/arch-view.exe   -R
 **波动说明：**
 
 - 交错批次的 release 首帧 3 次为 1424 / 1509 / 1953 ms（中位数 1509，极差 529ms，约 ±17.5%）。debug 为 2476 / 2967 / 3025 ms（中位数 2967）。
-- 另有两批 release 单构建读数（同命令、`AutoCloseMs=3000`）：首帧 1296 / 1559 / 1703 ms 与 2171 / 2379 / 3225 ms。把 9 次 release 读数合并，中位数 **1703 ms**、范围 **1296–3225 ms**；极值出现在并行线负载较高的批次。**判据应取空闲机器的 3 次中位数**，负载批次只作波动上界。
+- 另有两批 release 单构建读数（同命令、`AutoCloseMs=3000`）：首帧 1296 / 1559 / 1703 ms 与 2171 / 2379 / 3225 ms。把 9 次 release 读数合并，中位数 **1703 ms**、范围 **1296–3225 ms**。**上一版把极值归因为「并行线负载批次漂移」，该说法证据不足，已作废；真实可变段见下文「对账复核」的同 harness ac0/ac500 读数。**
 - `frame:render` 的绝对时间比 `window:opened` 标记早约 14–53ms：`open_window` 在返回前已同步触发首次渲染，所以「窗口可用 → 首帧呈现」与「建窗口」有轻微重叠，表中按标记墙钟顺序拆开，不重复计时。
 
 ### 数据准备与首帧的先后（已查清）
@@ -320,20 +320,67 @@ pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/debug/arch-view.exe   -R
 
 - 旧读数原样保留：debug 端到端 5436ms / 残差 3166ms（58.3%）；交错后 debug 4742 / release 4302ms，release 残差 2868.8ms（66.7%）。
 - 直接打点：release 首帧 **1509ms**、关闭→退出 **109ms**。**假设「2.9s 残差主要是退出」不成立**——退出不到 0.1s。
-- 旧 ac0 3855ms、ac500 4302ms 与「首帧 1509 + 退出 109 + 对应等待」相加明显对不上（分别高出约 2.2s），说明那两批总量自身受并行线负载漂移影响；减法残差把无法归因的部分整体塞给了「GPUI 启动/退出」。这是**口径错误**，不是产品阶段真实耗时。
-- 修正后的结论：release 617 刻度首帧 ≈ **1509ms**，构成 = 进程/运行时 ≈115ms + 数据准备 ≈776ms（git log 115 + 采样 471 + layers 190 + layout <1）+ `Application::new` ≈424ms + 建窗口 ≈172ms + 首帧呈现 ≈34ms。**数据准备是最大单项（约 51%），GPUI 相关（Application::new + 窗口 + 呈现）约 42%，退出 <0.1s、可忽略。** 原「瓶颈转移到 GPUI 启动」相对采样算法仍成立，但按首帧口径不能说 GPUI 独占六成。
+- 旧 ac0 3855ms、ac500 4302ms 与「首帧 1509 + 退出 109 + 对应等待」相加明显对不上（分别高出约 2.2s）。**上一版把差额归因为「并行线负载批次漂移」，无证据支撑，已作废。**同 harness 重跑显示账目可以闭合（见「对账复核」）；新批次其它段稳定，差额只可能落在旧批次未打点的 `app:created`→`window:callback` 窗口创建段（推断，旧批次无分项标记）。旧总量因此不能与新批次的阶段读数混用。减法残差仍属**口径错误**，但原因不是「漂移」，而是跨批次混用。
+- 修正后的结论（该批次读数）：release 617 刻度首帧 ≈ **1509ms**，构成 = 进程/运行时 ≈115ms + 数据准备 ≈776ms（git log 115 + 采样 471 + layers 190 + layout <1）+ `Application::new` ≈424ms + 建窗口 ≈172ms + 首帧呈现 ≈34ms。**数据准备是最大单项（约 51%），GPUI 相关（Application::new + 窗口 + 呈现）约 42%，退出 <0.1s、可忽略。** 原「瓶颈转移到 GPUI 启动」相对采样算法仍成立，但按首帧口径不能说 GPUI 独占六成。**注意：这里的「建窗口 172ms」只属于该低窗口成本批次；同 harness 重跑实测该段为 188–1431ms，是首帧波动的主要来源（见「对账复核」）。**
 
-### 判断与阈值建议
+### 对账复核：ac0 / ac500 同 harness（2026-11-08）
 
-**判断：release 首帧 1.5s（空闲机器中位数；合并中位数 1.7s）对「5 分钟看懂陌生仓库」不构成阻塞问题。** 任务承诺是分钟级，1.5–1.7s 启动只占其不到 1%；且首帧已包含 617 个提交的全部采样，不是空窗口。但负载下会到 2.4–3.2s，属于「可感知等待」，不能宣称「瞬时」。
+**触发：** 上一版把旧 ac0 3855ms、ac500 4302ms 与「首帧 1509 + 等待 500 + 退出 109」之间的约 2.2s 差额归因为「并行线负载批次漂移」，无证据支撑。本节用同一 harness、release、串行、空闲（无 cargo/rustc/arch-view 残留）、各 3 次重跑 ac0 与 ac500，并把窗口段拆成 `window:callback` / `window:created` / `window:activated`。
 
-**建议判据（待用户确认）：release、617 刻度、空闲机器、同命令，首帧（进程启动→首帧呈现）3 次中位数 ≤ 2.0s，单次硬上限 ≤ 3.0s；目标 ≤ 1.5s。**
+**命令：**
 
-- 不建议写 ≤ 1s：当前仅数据准备 0.78s + `Application::new` 0.42s 已是 1.2s，不改架构就不可达，写进去只会变成长期红项。
-- ≤ 2.0s 的余量来自实测：首帧中位数 1.5s，交错批次最大 1.95s；再高就进入明显卡顿区。
-- 若未来要求 ≤ 1s，唯一可行方向是把数据准备移出首帧关键路径（先开窗显示加载态，再异步填时间线）；这是产品代码改动，本节不实施。
+```
+pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/release/arch-view.exe -Repo "$env:TEMP\tsx-hist" -Runs 3 -AutoCloseMs 500
+pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/release/arch-view.exe -Repo "$env:TEMP\tsx-hist" -Runs 3 -AutoCloseMs 0
+```
 
-**未验证：** `Application::new` 内部（字体/GPU/后端初始化）与 `open_window` 内部仍未细分；外部时间戳含毫秒级管道延迟。
+**逐段读数（单位 ms；同一轮相邻标记差值）：**
+
+| 段 | 标记区间 | ac500（3 次） | ac0（3 次） |
+| --- | --- | --- | --- |
+| 进程启动 → `main:start` | — | 108 / 75 / 112 | 126 / 86 / 118 |
+| 数据准备 | `main:start`→`prep:layout` | 707 / 773 / 850 | 777 / 870 / 803 |
+| `Application::new` | `prep:layout`→`app:created` | 483 / 522 / 540 | 337 / 589 / 645 |
+| **窗口创建（进回调前）** | `app:created`→`window:callback` | **188 / 306 / 457** | **1045 / 1256 / 1431** |
+| 视图构建 + `open_window` 返回 | `window:callback`→`window:created` | 15 / 15 / 15 | 15 / 13 / 15 |
+| `activate(true)` | `window:created`→`window:activated` | 0 / 0 / 0 | 0 / 0 / 0 |
+| 首帧呈现 | `window:activated`→`frame:presented` | 31 / 33 / 34 | 无（0ms 自动关闭在呈现前退出） |
+| 人为等待 | `frame:presented`→`quit:auto`（ac0 为 `window:activated`→`quit:auto`） | 495 / 509 / 496 | 22 / 9 / 16 |
+| 关闭 → `main:end` | `quit:auto`→`main:end` | 6 / 22 / 15 | 209 / 115 / 52 |
+| `main:end` → 进程退出 | `main:end`→`process:exit` | 75 / 102 / 92 | 236 / 193 / 198 |
+| **外部墙钟总量** | `process:exit` | **2108 / 2461 / 2611** | **2767 / 3131 / 3278** |
+
+**闭合结果：** 对每一次运行，`process:exit − main:start` 恰好等于上表各相邻段之和；逐次核对差 **0 ms**（整数取整 ≤1ms）。ac500 首次 108+707+483+188+15+31+495+6+75 = 2108；ac0 首次 126+777+337+1045+15+22+209+236 = 2767。**账目闭合，无未归因段。**
+
+**逐项排查：**
+
+- **代码路径一致**：端到端与打点走同一个 `run_timeline`；没有第二条索引路径。数据准备段 707–870ms 与独立测量（批式采样 522ms + 刻度 git log ~150ms + layers ~180ms + layout <1ms）一致，没有重复索引。
+- **无多余轮询**：`window:created`→`window:activated` 为 0ms；`activate` 不等待；首帧呈现 31–34ms。
+- **进程启动空档小**：`process:start`→`main:start` 75–147ms，不是 2.2s 的来源。
+- **唯一大幅可变段是 `app:created`→`window:callback`**：本轮 ac500 188–457ms、ac0 1045–1431ms；上一批 ac500 的窗口段约 1.9–2.0s。旧 ac0/ac500 总量 3855/4302ms 对应的窗口段约 2.0–2.5s，与旧总量自洽。该段在 `open_window` 进入我们的创建回调**之前**，属于 GPUI/窗口管理器/驱动的创建等待，不是我们的代码、也不是数据准备。
+- **旧读数处置**：旧批次没有分项标记，无法直接证明差额一定落在窗口段；但新批次所有其它段稳定、闭合为 0，且窗口段是唯一能吸收 1–2s 的段。因此**旧总量保留为「高窗口创建批次」的原始读数，不再与其它批次的首帧混算；旧「残差 3166/2868.8ms」的推导作废**，原因写明为「跨批次混用 + 窗口创建段未打点」，不是「负载漂移」。
+
+### 首帧判据（账目闭合后再提）
+
+**首帧读数（ac500，同 harness 3 批，单位 ms）：** 1532 / 1828 / 2008（窗口段 188–457ms）；2347 / 2447 / 2450（窗口段 ~1.0s）；3652 / 3927 / 4065（窗口段 ~2.0s）。合并 9 次中位数 **2447ms**、范围 **1532–4065ms**。首帧与 `window:callback` 同向变化，不能脱离窗口段单独报。
+
+**判断：** 对「5 分钟看懂陌生仓库」不构成阻塞——最坏 4.1s 也占承诺时间不到 1.5%；但超过 2s 已属可感知等待，不能宣称「瞬时」。617 刻度首帧包含全部采样，不是空窗口。
+
+**建议判据（待用户确认；这是判据提议，不是达标声明）：release、617 刻度、同一会话串行 3 次，首帧中位数 ≤ 2.0s，且 `window:callback` 中位数 ≤ 1.0s；两项同时满足才算通过。若 `window:callback` > 1.0s，该批标记为窗口创建异常批并复测，不用于产品判定，也不得只挑首帧数字。**
+
+- 依据：窗口段 188–457ms 的批次首帧 1532–2008ms（≤2s 可达）；窗口段 1.0–1.5s 的批次首帧会到 3s 左右；≤2s 目标只有在窗口段正常时成立。
+- 不建议写 ≤1s：数据准备 0.7–0.9s + `Application::new` 0.3–0.6s 已是 1.0–1.5s，不改架构不可达。
+- 账目闭合前首帧只作分项读数；本判据在闭合后提出，正式入库仍待用户确认。
+
+### 门控等价证明
+
+同一命令 `timeline <tsx> --auto-close-ms 0`，只改环境变量：
+
+- **未设 `STRATA_PHASE_MARKERS`**：stdout 仅 `timeline: 617 ticks, 136 modules, 4 bands`，退出码 0。
+- **设 `STRATA_PHASE_MARKERS=1`**：同一行仍在同一位置，前后只多出 `phase:` 行；顺序为 `prep:*` → `timeline:` → `app:created` → `app:entry` → `window:callback` → `frame:render` → `window:created` → `window:activated` → `quit:auto` → `main:end`，退出码 0。
+- 代码上 `phase_marker` 只读取 `std::env::var_os` 并打印，不参与任何分支；门控关闭时正式路径与改动前相同。
+
+**未验证：** `window:callback` 之前的 GPUI/OS 窗口创建内部（驱动/窗口管理器）未细分；外部时间戳含毫秒级管道延迟；旧批次无分项标记，窗口段归因是「唯一可变段」推断，不是旧批次实测。
 
 ### 逐字节等价（真实 tsx 抽查）
 
@@ -350,7 +397,7 @@ pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/debug/arch-view.exe   -R
 
 - 逐字节等价与反向用例：已自动化（`crates/arch-core/tests/history_prefixes.rs`，fixture + 合成仓）。
 - 617 真实历史规模曲线、debug/release 采样对照与等价抽查：**手工一次性测量**（`arch-core/examples/history_scale_curve.rs`、`history_batch_probe.rs`、`history_prefix_equiv.rs`），未纳入 CI；依赖真实 tsx 克隆，不能在 Gate 默认跑。
-- 已补测：617 刻度端到端 debug/release（含 UI 启动与布局，见上节）；**首帧四段已拆分**（`eval/phase-timing.ps1` + `STRATA_PHASE_MARKERS=1`，见「首帧分阶段打点」）；未验证：`Application::new` / `open_window` 内部细分。
+- 已补测：617 刻度端到端 debug/release（含 UI 启动与布局，见上节）；**首帧四段与窗口段已拆分**（`eval/phase-timing.ps1` + `STRATA_PHASE_MARKERS=1`，见「首帧分阶段打点」「对账复核」）；未验证：`window:callback` 之前的 GPUI/OS 窗口创建内部细分。
 - 首帧打点工具是**手工测量**：依赖真实 tsx 克隆与图形后端，未纳入 CI；标记默认关闭，不影响 Gate 的正式路径。
 
 端到端同口径（`target/debug/arch-view.exe timeline tests/fixtures/history --auto-close-ms 500`，3 次；debug 构建）：`3993.9 / 3845.5 / 3031.5 ms`，中位数 3845.5 ms；旧读数 4435 ms。
