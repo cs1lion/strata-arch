@@ -4,6 +4,7 @@
 //! 相对导入、`tsconfig` 路径别名、workspace 包与外部包级节点。
 
 pub mod callgraph;
+pub mod commit_diff;
 pub(crate) mod config;
 pub mod drift;
 pub mod guided_path;
