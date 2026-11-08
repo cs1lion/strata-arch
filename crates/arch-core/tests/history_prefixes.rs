@@ -324,7 +324,11 @@ fn fixture_six_tick_runs() -> Vec<f64> {
 }
 
 /// C 档：B1/B2/B3 预算断言，3 次运行，打印每次读数、中位数与 p95（3 样本取最大）。
+///
+/// 计时必须在单线程且无并行测试的环境下跑；`cargo test --workspace` 的并行执行会把
+/// 其他测试的 git 进程算进来，故标 ignore，由 ticket 里的固定命令显式触发。
 #[test]
+#[ignore = "C 档计时需 --test-threads=1 单独运行，避免并行测试的 git 进程污染读数"]
 fn batch_sampling_meets_pinned_budget() {
     let fixture_runs = fixture_six_tick_runs();
     let mut fixture_sorted = fixture_runs.clone();
