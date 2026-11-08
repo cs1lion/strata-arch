@@ -41,7 +41,17 @@ const USAGE: &str = "用法:
   arch-view scene <目标仓库> [--out <场景文件>]
   arch-view smoke <目标仓库>";
 
+/// 阶段标记：仅在 `STRATA_PHASE_MARKERS=1` 时输出，供外部计时脚本记录到达时间。
+/// 不在视图源码里取墙钟（`arch-view/src` 禁用时间源判据不变），时间戳由外部进程提供。
+fn phase_marker(label: &str) {
+    if std::env::var_os("STRATA_PHASE_MARKERS").is_some() {
+        println!("phase: {label}");
+        let _ = std::io::stdout().flush();
+    }
+}
+
 fn main() -> ExitCode {
+    phase_marker("main:start");
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("map") => match run_map(args) {
@@ -224,7 +234,9 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let entries = build_timeline_entries(&repo)?;
     let artifact = build_layers(&repo, env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("构建层产物失败: {error}"))?;
+    phase_marker("prep:layers");
     let layout = layout_map(&artifact, LayoutConfig::default());
+    phase_marker("prep:layout");
     let timeline = TimelineState::new(entries);
     println!(
         "timeline: {} ticks, {} modules, {} bands",
@@ -233,7 +245,10 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         layout.bands.len()
     );
 
-    Application::new().run(move |cx: &mut App| {
+    let application = Application::new();
+    phase_marker("app:created");
+    application.run(move |cx: &mut App| {
+        phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         cx.open_window(
             WindowOptions {
@@ -259,17 +274,20 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         )
         .expect("open timeline window");
         cx.activate(true);
+        phase_marker("window:opened");
 
         if let Some(milliseconds) = auto_close_ms {
             cx.spawn(async move |cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(milliseconds))
                     .await;
+                phase_marker("quit:auto");
                 let _ = cx.update(|cx| cx.quit());
             })
             .detach();
         }
     });
+    phase_marker("main:end");
 
     Ok(())
 }
@@ -501,6 +519,7 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
         let subject = parts.next().unwrap_or_default().to_string();
         commits.push((hash, time, subject));
     }
+    phase_marker("prep:git-log");
 
     // 一次 git 遍历生成所有刻度前缀，替代逐刻度重跑 build_history 的 O(刻度×遍历) 采样。
     let tick_times = commits.iter().map(|(_, time, _)| *time).collect::<Vec<_>>();
@@ -511,6 +530,7 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
         &tick_times,
     )
     .map_err(|error| format!("构建历史产物失败: {error}"))?;
+    phase_marker("prep:history");
 
     let mut entries = Vec::new();
     for ((hash, time, subject), artifact) in commits.into_iter().zip(artifacts) {
@@ -766,8 +786,14 @@ impl TimelineView {
     }
 }
 
+static TIMELINE_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+
 impl Render for TimelineView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !TIMELINE_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("frame:render");
+            window.on_next_frame(|_, _cx| phase_marker("frame:presented"));
+        }
         let layout = self.state.map().clone();
         let full_scale = self.timeline.heat_is_full_scale();
         let flags = self.timeline.flags();
