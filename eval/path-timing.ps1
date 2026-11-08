@@ -164,7 +164,8 @@ function Invoke-ViewRun([int]$Index) {
     $psi.RedirectStandardError = $true
     $psi.Environment["STRATA_PHASE_MARKERS"] = "1"
     $arguments = switch ($Path) {
-        "map" { @("map", $Corpus, "--auto-close-ms", "$AutoCloseMs") }
+        # 揭示默认开启；这里测的是加载到首帧的时序，显式关掉动画以保持读数口径不变。
+        "map" { @("map", $Corpus, "--no-reveal", "--auto-close-ms", "$AutoCloseMs") }
         "timeline" { @("timeline", $HistoryRepo, "--auto-close-ms", "$AutoCloseMs") }
         "diff" { @("diff", $DiffRepo, "--from", $From, "--to", $To, "--auto-close-ms", "$AutoCloseMs") }
     }

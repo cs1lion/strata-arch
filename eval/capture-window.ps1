@@ -24,7 +24,7 @@
 #     -Frames 3 -IntervalMs 400 `
 #     -OutPng out/pixel-evidence/playback.png
 #
-# 做法：用 .NET Process 启动 `arch-view`（默认 `map <Repo>`，或用 -AppArgs 指定任意子命令），
+# 做法：用 .NET Process 启动 `arch-view`（默认 `map <Repo> --no-reveal`，或用 -AppArgs 指定任意子命令），
 # 后台线程持续收集 stdout；等待主窗口句柄与可选 stdout 标记，先用 PrintWindow
 # （PW_RENDERFULLCONTENT）尝试离屏抓取；若返回失败则回退到屏幕 CopyFromScreen。
 # 捕获后关闭进程。本脚本只作人工证据，不参与 CI；失败时退出 1 并说明原因。
@@ -37,7 +37,8 @@ param(
     [string]$Repo = "tests/fixtures/layers",
     [string]$OutPng = "docs/evidence/11-window-capture.png",
     [string]$Exe = "target/release/arch-view.exe",
-    # 为空时沿用旧行为：map <Repo>；否则完整指定子命令与参数。
+    # 为空时沿用旧行为：map <Repo> --no-reveal；否则完整指定子命令与参数。
+    # 抓帧口径：揭示默认开启，静态最终态截图请等 `phase: reveal:done`，或显式传 --no-reveal。
     [string[]]$AppArgs = @(),
     [int]$WarmupMs = 1500,
     [int]$TimeoutSeconds = 20,
@@ -69,7 +70,9 @@ if (-not (Test-Path $Exe)) {
     throw "缺少 $Exe；先运行 cargo build --release -p arch-view"
 }
 if ($AppArgs.Count -eq 0) {
-    $AppArgs = @("map", $Repo)
+    # 默认单帧捕获要的是最终布局：揭示默认开启，这里显式关闭，避免 1.5s 预热落在动画中途。
+    # 需要捕捉揭示过程时用 -AppArgs 自行指定（可等 `phase: reveal:done` 或中途标记）。
+    $AppArgs = @("map", $Repo, "--no-reveal")
     if (-not (Test-Path $Repo)) {
         throw "缺少目标仓库 $Repo"
     }

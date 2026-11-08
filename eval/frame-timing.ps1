@@ -21,6 +21,8 @@ param(
     [string]$AbCycle = "base,B,BA",
     [int]$AbSegmentFrames = 60,
     [int]$IdleMs = 5000,
+    # reveal 模式的自动退出上限；软件渲染/低端机上可调大，正常路径到 `reveal:done` 后仍要等它。
+    [int]$RevealAutoCloseMs = 30000,
     [string]$Exe = "target/release/arch-view.exe",
     [string]$OutJson = "out/frame-timing.json"
 )
@@ -39,20 +41,27 @@ $windowTag = ""
 
 switch ($Mode) {
     "pan" {
+        # 揭示默认开启，但平移/空闲/交替测的是稳态帧率，显式关闭揭示以免把 80 帧动画算进去。
+        $arguments += "--no-reveal"
         $envVars["STRATA_AUTOPAN_FRAMES"] = "$Frames"
         $autoCloseMs = 2500 + ($Frames * 250) + 8000
         $windowTag = "pan"
     }
     "reveal" {
         $arguments += "--reveal"
-        $autoCloseMs = 35000
+        # 软件渲染（lavapipe）+ 低端 CPU 上 80 帧可能远超 30s；这只是自动退出的上限，
+        # 正常路径在 `reveal:done` 后很快就会退出。取证 job 会显式调大。
+        $autoCloseMs = $RevealAutoCloseMs
         $windowTag = "reveal"
     }
     "idle" {
+        $arguments += "--no-reveal"
         $autoCloseMs = 2500 + $IdleMs + 5000
         $windowTag = "idle"
     }
     "ab" {
+        # 交替测的是稳态帧率，揭示动画会把前 80 帧混进来，显式关闭。
+        $arguments += "--no-reveal"
         $segments = @($AbCycle.Split(',') | Where-Object { $_.Trim() })
         $envVars["STRATA_AB_CYCLE"] = ($segments -join ",")
         $envVars["STRATA_AB_SEGMENT_FRAMES"] = "$AbSegmentFrames"

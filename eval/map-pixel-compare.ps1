@@ -17,6 +17,10 @@
 #   pwsh -File eval/map-pixel-compare.ps1
 #   pwsh -File eval/map-pixel-compare.ps1 -Repo tests/fixtures/layers -OutDir out/map-pixel-layers
 #   pwsh -File eval/map-pixel-compare.ps1 -Positions "p1=0,0,1;p2=-240,-160,0.4;p3=-100,-400,0.25"
+#   pwsh -File eval/map-pixel-compare.ps1 -NoReveal   # 需要精确静态帧时
+#
+# 抓帧口径：揭示默认开启，默认等 `phase: reveal:done` 再抓，避免抓到动画中途帧；
+# 只有 `-NoReveal`（带 --no-reveal 启动）才回到 `content:presented`。
 #
 # 依赖可见桌面会话（Windows）；产物在 out/ 下，已被 .gitignore 排除。
 
@@ -36,8 +40,8 @@ param(
     [int]$AutoCloseMs = 9000,
     # 复用 OutDir 里已有的 PNG，只重算像素比较（调试用；判据不变）。
     [switch]$SkipCapture,
-    # 揭示动画最终态：带 --reveal 启动，等 `reveal:done` 再抓帧。
-    [switch]$Reveal,
+    # 等揭示结束（`phase: reveal:done`）再抓最终态。揭示默认开启，因此默认走这条路径。
+    [switch]$NoReveal,
     # 诊断：四个配置全部用 base 参数重复抓帧，用于量「跨进程重绘噪声」。
     [switch]$RepeatBase
 )
@@ -160,10 +164,11 @@ foreach ($spec in $Positions) {
 }
 
 $appArgs = @("map", $Repo, "--auto-close-ms", "$AutoCloseMs")
-$marker = "phase: content:presented"
-if ($Reveal) {
-    $appArgs += "--reveal"
-    $marker = "phase: reveal:done"
+# 默认抓「揭示结束后」的最终态；`-NoReveal` 用于需要精确静态帧/中途帧的场合。
+$marker = "phase: reveal:done"
+if ($NoReveal) {
+    $appArgs += "--no-reveal"
+    $marker = "phase: content:presented"
 }
 
 $captured = @{}
