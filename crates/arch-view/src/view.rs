@@ -72,6 +72,16 @@ impl Viewport {
     }
 }
 
+/// 短镜头转场：相机在 `from` 与 `to` 之间按 `progress` 线性插值。
+///
+/// `progress` 只由 UI 用 GPUI 的动画帧进度写入，模型自身不读墙钟。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraTransition {
+    pub from: Viewport,
+    pub to: Viewport,
+    pub progress: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SymbolNodeLayout {
@@ -158,6 +168,8 @@ pub struct CanvasState {
     viewport: Viewport,
     selected: Option<String>,
     saved: Option<SavedView>,
+    transition: Option<CameraTransition>,
+    transition_enabled: bool,
 }
 
 impl CanvasState {
@@ -169,6 +181,8 @@ impl CanvasState {
             viewport: Viewport::default(),
             selected: None,
             saved: None,
+            transition: None,
+            transition_enabled: true,
         }
     }
 
@@ -211,6 +225,86 @@ impl CanvasState {
 
     pub fn map(&self) -> &MapLayout {
         &self.map
+    }
+
+    pub fn transition_enabled(&self) -> bool {
+        self.transition_enabled
+    }
+
+    /// 关闭转场时立即清掉进行中的转场，相机停在当前插值位置。
+    pub fn set_transition_enabled(&mut self, enabled: bool) {
+        self.transition_enabled = enabled;
+        if !enabled {
+            self.transition = None;
+        }
+    }
+
+    pub fn transition(&self) -> Option<CameraTransition> {
+        self.transition
+    }
+
+    /// 启动短镜头转场；返回 `true` 表示相机将按帧插值到目标中心。
+    ///
+    /// 目标为空、已在目标中心或转场关闭时不启动转场；转场关闭时直接复用
+    /// `apply_fly_to` 的即时行为（回归判据）。
+    pub fn begin_fly_to(&mut self, target: Option<Point>, viewport_size: (f32, f32)) -> bool {
+        let Some(target) = target else {
+            return false;
+        };
+        let center = Point {
+            x: viewport_size.0 / 2.0,
+            y: viewport_size.1 / 2.0,
+        };
+        let zoom = self.viewport.zoom;
+        let to = Viewport {
+            pan_x: center.x - target.x * zoom,
+            pan_y: center.y - target.y * zoom,
+            zoom,
+        };
+        if (to.pan_x - self.viewport.pan_x).abs() < f32::EPSILON
+            && (to.pan_y - self.viewport.pan_y).abs() < f32::EPSILON
+        {
+            return false;
+        }
+        if !self.transition_enabled {
+            self.apply_fly_to(Some(target), viewport_size);
+            return false;
+        }
+        self.transition = Some(CameraTransition {
+            from: self.viewport,
+            to,
+            progress: 0.0,
+        });
+        true
+    }
+
+    /// 写入 GPUI 动画帧给出的进度（`0..=1`）；相机同步到对应插值位置。
+    ///
+    /// `progress = 1` 时落在精确终点并清除转场状态。
+    pub fn set_transition_progress(&mut self, progress: f32) {
+        let Some(mut transition) = self.transition else {
+            return;
+        };
+        let progress = progress.clamp(0.0, 1.0);
+        transition.progress = progress;
+        self.viewport = Viewport {
+            pan_x: transition.from.pan_x
+                + (transition.to.pan_x - transition.from.pan_x) * progress,
+            pan_y: transition.from.pan_y
+                + (transition.to.pan_y - transition.from.pan_y) * progress,
+            zoom: transition.from.zoom,
+        };
+        if progress >= 1.0 {
+            self.viewport = transition.to;
+            self.transition = None;
+        } else {
+            self.transition = Some(transition);
+        }
+    }
+
+    /// 中断转场并保留当前插值位置；返回是否确实中断了一次转场。
+    pub fn cancel_transition(&mut self) -> bool {
+        self.transition.take().is_some()
     }
 
     pub fn symbol_layout(&self) -> Option<&SymbolLayout> {
@@ -266,6 +360,7 @@ impl CanvasState {
         self.symbols = Some(layout);
         self.neighbors = neighbors;
         self.selected = None;
+        self.transition = None;
         self.viewport = Viewport::default();
         true
     }
@@ -278,6 +373,7 @@ impl CanvasState {
         self.symbols = None;
         self.neighbors.clear();
         self.selected = None;
+        self.transition = None;
         self.viewport = saved.viewport;
         true
     }
@@ -303,10 +399,14 @@ impl CanvasState {
     }
 
     pub fn pan_by(&mut self, dx: f32, dy: f32) {
+        // 手动平移即中断转场：相机停在当前插值位置再叠加拖动。
+        self.cancel_transition();
         self.viewport.pan_by(dx, dy);
     }
 
     pub fn zoom_at(&mut self, anchor: Point, factor: f32) {
+        // 手动缩放即中断转场：相机停在当前插值位置再缩放。
+        self.cancel_transition();
         self.viewport.zoom_at(anchor, factor);
     }
 
