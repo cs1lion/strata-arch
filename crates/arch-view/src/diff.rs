@@ -71,6 +71,50 @@ pub struct DiffModel {
 
 impl DiffModel {
     pub fn from_artifact(artifact: &CommitDiffArtifact) -> Self {
+        let mut rows = Vec::with_capacity(
+            artifact.stats.added + artifact.stats.removed + artifact.stats.modified,
+        );
+        for change in &artifact.added {
+            rows.push(DiffRow {
+                path: change.path.clone(),
+                kind: DiffKind::Added,
+                detail: format!(
+                    "{} 个符号 · {} 条依赖",
+                    change.symbol_count, change.dependency_edges
+                ),
+                rename_hint: change.rename_hint.clone(),
+                z_index: rows.len() as i32,
+            });
+        }
+        for change in &artifact.removed {
+            rows.push(DiffRow {
+                path: change.path.clone(),
+                kind: DiffKind::Removed,
+                detail: format!(
+                    "{} 个符号 · {} 条依赖",
+                    change.symbol_count, change.dependency_edges
+                ),
+                rename_hint: change.rename_hint.clone(),
+                z_index: rows.len() as i32,
+            });
+        }
+        for change in &artifact.modified {
+            rows.push(DiffRow {
+                path: change.path.clone(),
+                kind: DiffKind::Modified,
+                detail: format!(
+                    "符号 {}→{} · 依赖 {}→{} · {}",
+                    change.symbol_count_from,
+                    change.symbol_count_to,
+                    change.dependency_edges_from,
+                    change.dependency_edges_to,
+                    change.reasons.join(", ")
+                ),
+                rename_hint: None,
+                z_index: rows.len() as i32,
+            });
+        }
+
         Self {
             from_commit: artifact.from.commit.clone(),
             to_commit: artifact.to.commit.clone(),
@@ -78,7 +122,7 @@ impl DiffModel {
             removed: artifact.stats.removed,
             modified: artifact.stats.modified,
             renames: artifact.stats.renames,
-            rows: Vec::new(),
+            rows,
         }
     }
 }
@@ -103,8 +147,14 @@ impl DiffFade {
     }
 
     /// `progress` 由 GPUI 动画帧写入；`>= 1.0` 时恒为最终态。
-    pub fn alpha_at(&self, _progress: f32) -> f32 {
-        0.0
+    ///
+    /// 入场用 ease-out：只影响 alpha，不改变底色 RGB；关闭时任意进度直接取最终态。
+    pub fn alpha_at(&self, progress: f32) -> f32 {
+        if !self.enabled || progress >= 1.0 {
+            return 1.0;
+        }
+        let progress = progress.clamp(0.0, 1.0);
+        1.0 - (1.0 - progress) * (1.0 - progress)
     }
 
     /// GPUI `rgba` 的打包格式：`0xRRGGBBAA`。
