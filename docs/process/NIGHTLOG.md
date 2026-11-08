@@ -122,6 +122,13 @@
 - `docs/proposals/n3-evolution-playback.md`：09 时间线之上的播放器，指标只离散切换、复用 07 状态机，受 10 的采样成本约束。
 - 均未拆票、未写代码；验收判据、成本区间、与现有 ticket 关系、现在/以后做的理由写在各自文档。
 
+## N3 演化回放状态更新（2026-11-08）
+
+- 上面「N1/N2/N3，只设计」一节是当时口径，保留不改。
+- 票 18（`e4ae2f1` / `fe57726`）已实现播放核心：播放/暂停、单步前进后退、0.5×/1×/2×、结束停在末帧、退化标记、拖动跟手。
+- 票 19 承接 5 项差距：跳首尾、已采样刻度数、单帧 p95 ≤16.7ms、字节级 JSON 可复现、采样空洞显式提示。
+- `TimelinePlayback` 与 07 `PlaybackState` 的重复实现登记为技术债，票 19 不重构 18 的冻结判据。
+
 ## 状态台账补齐（2026-11-08）
 
 - 01：实现早已提交（`d63fef4` / `bace93e` / `223d0ac`），ticket 仍写 `ready-for-agent`；补验收记录：tiny index exit 0、files 3/modules 3/edges 2/unresolved 0、两次 SHA256 一致 `18BAD8…39DE`、`cli_contract` 7 passed。状态改 done。
