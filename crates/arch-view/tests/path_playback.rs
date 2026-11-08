@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use arch_core::guided_path::{build_path, GuidedPathArtifact, PathStep};
+use arch_core::guided_path::{build_path, EdgeEvidence, GuidedPathArtifact, PathStep};
 use arch_core::RepoInfo;
 use arch_view::layout::Rect;
 use arch_view::playback::{PlaybackState, NON_PATH_OPACITY, PATH_OPACITY};
@@ -248,7 +248,7 @@ fn frame_budget_for_three_and_twenty_step_paths() {
 
 fn synthetic_path(steps: usize) -> GuidedPathArtifact {
     GuidedPathArtifact {
-        schema_version: 1,
+        schema_version: 2,
         tool_version: "0.1.0".to_string(),
         repo: RepoInfo {
             path: "synthetic".to_string(),
@@ -269,6 +269,20 @@ fn synthetic_path(steps: usize) -> GuidedPathArtifact {
                 } else {
                     Some("call".to_string())
                 },
+                evidence: if index == 0 {
+                    None
+                } else {
+                    Some(EdgeEvidence {
+                        file: "m.ts".to_string(),
+                        line: index,
+                        column: 1,
+                    })
+                },
+                layer_from: if index == 0 { None } else { Some("utils") },
+                layer_to: "utils",
+                conditional: false,
+                test_only: false,
+                narrative: format!("step {index}"),
             })
             .collect(),
     }

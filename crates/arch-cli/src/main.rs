@@ -1,5 +1,5 @@
 use arch_core::callgraph::{build_call_graph_with_options, CallGraphOptions};
-use arch_core::guided_path::{build_path, list_entries, PathError};
+use arch_core::guided_path::{build_path, list_entries, render_narrative, PathError};
 use arch_core::history::{build_history, HistoryError, HistoryOptions};
 use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
 use std::env;
@@ -16,7 +16,7 @@ const USAGE: &str = "用法:
       [--max-commits <N>] [--since <日期>] [--until <日期>]
   arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>] --entries
   arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>]
-      --from <入口ID> --to <符号ID>";
+      --from <入口ID> --to <符号ID> [--narrative]";
 
 enum CliError {
     Input(String),
@@ -221,6 +221,7 @@ struct PathCliOptions {
     target: PathBuf,
     out: Option<PathBuf>,
     entries: bool,
+    narrative: bool,
     from: Option<String>,
     to: Option<String>,
 }
@@ -237,6 +238,9 @@ fn run_path(args: impl Iterator<Item = String>) -> Result<(), CliError> {
         let from = options.from.as_deref().unwrap_or_default();
         let to = options.to.as_deref().unwrap_or_default();
         let artifact = build_path(&options.target, version, from, to).map_err(path_error)?;
+        if options.narrative {
+            return emit_text(&render_narrative(&artifact), options.out);
+        }
         serde_json::to_string_pretty(&artifact)
             .map_err(|error| CliError::Internal(format!("序列化产物失败: {error}")))?
     };
@@ -250,6 +254,7 @@ fn parse_path_args(mut args: impl Iterator<Item = String>) -> Result<PathCliOpti
     let mut target: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut entries = false;
+    let mut narrative = false;
     let mut from: Option<String> = None;
     let mut to: Option<String> = None;
 
@@ -271,6 +276,7 @@ fn parse_path_args(mut args: impl Iterator<Item = String>) -> Result<PathCliOpti
                 out = Some(PathBuf::from(value));
             }
             "--entries" => entries = true,
+            "--narrative" => narrative = true,
             "--from" => {
                 let value = args
                     .next()
@@ -298,6 +304,11 @@ fn parse_path_args(mut args: impl Iterator<Item = String>) -> Result<PathCliOpti
     }
 
     let target = target.ok_or_else(usage_missing)?;
+    if entries && narrative {
+        return Err(CliError::Input(
+            "--entries 不能与 --narrative 同时使用".to_string(),
+        ));
+    }
     if entries && (from.is_some() || to.is_some()) {
         return Err(CliError::Input(
             "--entries 不能与 --from/--to 同时使用".to_string(),
@@ -313,6 +324,7 @@ fn parse_path_args(mut args: impl Iterator<Item = String>) -> Result<PathCliOpti
         target,
         out,
         entries,
+        narrative,
         from,
         to,
     })
@@ -386,6 +398,24 @@ fn emit_json(json: &str, out: Option<PathBuf>) -> Result<(), CliError> {
         })?;
     } else {
         println!("{json}");
+    }
+    Ok(())
+}
+
+fn emit_text(text: &str, out: Option<PathBuf>) -> Result<(), CliError> {
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    CliError::Internal(format!("创建输出目录失败 {}: {error}", parent.display()))
+                })?;
+            }
+        }
+        fs::write(&path, text).map_err(|error| {
+            CliError::Internal(format!("写入产物失败 {}: {error}", path.display()))
+        })?;
+    } else {
+        print!("{text}");
     }
     Ok(())
 }

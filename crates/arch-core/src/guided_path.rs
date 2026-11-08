@@ -23,7 +23,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// `path` 产物的 schema 版本。
-pub const PATH_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 在 v1 的步骤上增加 `evidence` / `layerFrom` / `layerTo` / `conditional` / `testOnly` / `narrative`；
+/// v1 字段（`module` / `symbol` / `layer` / `via`）保持不变，属于向后兼容的字段扩展。
+pub const PATH_SCHEMA_VERSION: u32 = 2;
+
+/// `path --entries` 产物的 schema 版本，与路径产物分开演进。
+///
+/// 路径产物 v2 增加的叙述字段与入口候选无关，因此入口产物保持 v1。
+pub const ENTRY_SCHEMA_VERSION: u32 = 1;
 
 const SOURCE_EXTENSIONS: [&str; 6] = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
 const OUTPUT_DIRECTORIES: [&str; 4] = ["dist", "build", "out", "lib"];
@@ -77,6 +85,26 @@ pub struct PathStep {
     pub layer: &'static str,
     /// 进入该步的边种类；首步为 null。
     pub via: Option<String>,
+    /// 进入该步的边证据（上一符号所在文件与边行列）；首步为 null。
+    pub evidence: Option<EdgeEvidence>,
+    /// 上一步的层；首步为 null。
+    pub layer_from: Option<&'static str>,
+    /// 本步的层，与 `layer` 相同，便于叙述模板直接引用。
+    pub layer_to: &'static str,
+    /// 边来自 `dynamic-import` / `require` 时标记为条件执行，不承诺一定发生。
+    pub conditional: bool,
+    /// 路径经过 `tests` 层（任一端）时标记为仅测试。
+    pub test_only: bool,
+    /// 固定模板生成的单步叙述，不引入 LLM。
+    pub narrative: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EdgeEvidence {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug)]
@@ -192,7 +220,7 @@ pub fn list_entries(root: &Path, tool_version: &str) -> Result<EntryCandidatesAr
         .collect();
 
     Ok(EntryCandidatesArtifact {
-        schema_version: PATH_SCHEMA_VERSION,
+        schema_version: ENTRY_SCHEMA_VERSION,
         tool_version: tool_version.to_string(),
         repo: callgraph.repo,
         entries,
@@ -297,16 +325,74 @@ pub fn build_path(
         let symbol = symbols
             .get(symbol_id.as_str())
             .ok_or_else(|| PathError::UnknownSymbol(symbol_id.clone()))?;
-        let via = if index == 0 {
-            None
+        let layer = layer_for(&layer_map, &symbol.module);
+
+        let (via, evidence, layer_from, conditional) = if index == 0 {
+            (None, None, None, false)
         } else {
-            previous.get(symbol_id).map(|edge| edge.kind.clone())
+            let edge = previous
+                .get(symbol_id)
+                .ok_or_else(|| PathError::Unreachable {
+                    from: from.clone(),
+                    to: to.clone(),
+                })?;
+            let predecessor_id = &sequence[index - 1];
+            let predecessor = symbols
+                .get(predecessor_id.as_str())
+                .ok_or_else(|| PathError::UnknownSymbol(predecessor_id.clone()))?;
+            let predecessor_layer = layer_for(&layer_map, &predecessor.module);
+            (
+                Some(edge.kind.clone()),
+                Some(EdgeEvidence {
+                    file: predecessor.path.clone(),
+                    line: edge.line,
+                    column: edge.column,
+                }),
+                Some(predecessor_layer),
+                matches!(edge.kind.as_str(), "dynamic-import" | "require"),
+            )
         };
+        let test_only = layer == "tests" || layer_from == Some("tests");
+
+        let narrative = match (&evidence, &via, layer_from) {
+            (Some(evidence), Some(kind), Some(layer_from)) => {
+                let predecessor = &sequence[index - 1];
+                let mut text = format!(
+                    "{} 通过 {} 到达 {}（{}:{}:{}；层：{} → {}）",
+                    predecessor,
+                    kind,
+                    symbol.id,
+                    evidence.file,
+                    evidence.line,
+                    evidence.column,
+                    layer_from,
+                    layer,
+                );
+                if conditional {
+                    text.push_str("，条件执行");
+                }
+                if test_only {
+                    text.push_str("，仅测试");
+                }
+                text
+            }
+            _ => format!(
+                "{} 是起点（层：{}，模块：{}）",
+                symbol.id, layer, symbol.module
+            ),
+        };
+
         steps.push(PathStep {
             module: symbol.module.clone(),
             symbol: symbol.id.clone(),
-            layer: layer_for(&layer_map, &symbol.module),
+            layer,
             via,
+            evidence,
+            layer_from,
+            layer_to: layer,
+            conditional,
+            test_only,
+            narrative,
         });
     }
 
@@ -320,6 +406,20 @@ pub fn build_path(
         length: steps.len(),
         steps,
     })
+}
+
+/// 把路径产物渲染成固定模板的纯文本，用于 `--narrative`。
+pub fn render_narrative(artifact: &GuidedPathArtifact) -> String {
+    let mut text = format!(
+        "路径 {} → {}：{} 步\n",
+        artifact.from, artifact.to, artifact.length
+    );
+    for step in &artifact.steps {
+        text.push_str("- ");
+        text.push_str(&step.narrative);
+        text.push('\n');
+    }
+    text
 }
 
 fn layer_map(layers: &crate::layers::LayersArtifact) -> BTreeMap<String, &'static str> {
