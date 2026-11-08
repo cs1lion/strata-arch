@@ -55,3 +55,64 @@
 - **超限只有文件数维度**：现有拒绝基于 `DEFAULT_MAX_FILES = 5000`；`>20k 符号` 维度没有独立门禁（文件数门禁先行覆盖）。
 - **冷启动口径**：`index` 墙钟包含进程启动，但样本仓较小，启动开销占比不可忽略；未单独拆分。
 - **硬件基线未确认**：读数来自本机，是否作为 CI 基线待用户确认。
+
+## 硬化第二件：四条用户可见路径端到端读数（2026-11-09）
+
+### C 档预算（在改动前固定）
+
+| 路径 | 口径 | 预算（median） | p95 预算 |
+| --- | --- | --- | --- |
+| `index`（纯 core，CLI） | 进程墙钟 | ≤500ms | ≤800ms |
+| `map` 首屏 | `main:start → frame:presented`（窗口内首帧） | ≤1200ms | ≤2000ms |
+| `map` 内容 | `main:start → content:presented` | ≤3000ms | ≤4000ms |
+| `timeline` 首屏 | `main:start → frame:presented`（加载态首帧） | ≤1500ms | ≤2500ms |
+| `timeline` 内容 | `main:start → content:presented` | ≤3000ms | ≤4000ms |
+| `diff` 首屏 | `main:start → frame:presented`（加载态首帧） | ≤1500ms | ≤2500ms |
+| `diff` 内容 | `main:start → content:presented` | ≤12000ms（本轮不做算法优化） | ≤16000ms |
+| 取消 | 点击「取消准备」到进程退出 | ≤一个阶段收尾（当前最长单阶段 <2s） | — |
+
+- 测量工具：`eval/path-timing.ps1`（release、默认 3 次、逐次读数 + median/min/max/p95；硬件与命令写入 `out/path-timing-*.json`）。
+- 统一口径：时间戳由外部进程记录 `phase:` 行到达时间；视图源码不读墙钟。`index` 只测 CLI 进程墙钟，UI 路径测窗口内标记。
+- 跨票比较限制：本表全部为 **release**。票 17 的 `10589ms` 是 debug `cargo test` 的单次读数，不能与本表 release 读数混算。
+
+### 读数（实测，release，3 次取中位数）
+
+硬件：`AMD Ryzen 7 8845H`，16 逻辑 CPU，`Windows NT 10.0.26300.0`，PowerShell 7.6.9；工具 0.1.0。
+样本：`tests/corpus/excalidraw`（1328 文件）；timeline 用 `$env:TEMP\tsx-hist`（617 first-parent 提交真实克隆）。
+
+| 路径 | 命令 | 逐次读数 → median / p95 | 预算结论 |
+| --- | --- | --- | --- |
+| index（最终热批次） | `arch-cli index tests/corpus/excalidraw` | 320 / 267 / 301 → 301ms / 320ms | 通过 |
+| index（release 构建后冷批次，保留） | 同上 | 984 / 863 / 306 → 863ms / 984ms | **FAILED**（见下） |
+| index（冷批次后 5 次热跑） | 同上 | 292 / 293 / 316 / 305 / 343 → 305ms | 通过（环境噪声对照） |
+| map 首屏 | `arch-view map tests/corpus/excalidraw --auto-close-ms 4000` | 622 / 446 / 644 → 622ms / 644ms | 通过 |
+| map 内容 | 同上 | 1664 / 1399 / 1595 → 1595ms / 1664ms | 通过 |
+| timeline 首屏 | `arch-view timeline $env:TEMP\tsx-hist --auto-close-ms 6000` | 778 / 509 / 457 → 509ms / 778ms | 通过 |
+| timeline 内容 | 同上 | 1735 / 1331 / 1277 → 1331ms / 1735ms | 通过 |
+| diff 首屏 | `arch-view diff $env:TEMP\excalidraw-diff --from HEAD~1 --to HEAD --auto-close-ms 12000` | 529 / 550 / 383 → 529ms / 550ms | 通过 |
+| diff 内容 | 同上 | 6978 / 6890 / 6769 → 6890ms / 6978ms | 通过（预算内） |
+
+- 表中 map/timeline/diff/index 为**同一最终构建**的连续批次；各路径仍是独立进程，不跨样本混算。
+- **index 冷批次失败如实保留**：release 构建后立刻跑 3 次，前两次 984/863ms、第三次 306ms，median 863ms > 500ms、p95 984ms > 800ms，`-EnforceBudget` exit 1。随后 5 次热跑 292–343ms。判为文件系统/杀软冷缓存噪声，不是索引结构性变慢；**不因此调高预算**。自动化门禁目前会把这种冷启动判红，这是预期的保守行为。
+- `-EnforceBudget` 对最终批次的 index/map/timeline/diff 均 exit 0；冷批次原始读数仍保留。
+
+### 超 2 秒路径与性质判断
+
+- **`diff` 内容 6.9s**：结构性慢。分项证据：单快照 `index` 301ms + `callgraph` 683ms ≈ 0.98s，两个快照约 1.97s；其余约 4.9s 是两次完整 tree 导出（`ls-tree` + `cat-file` + 1328 文件写盘 ×2）。规模对照：95 文件的 `tsx-hist` 双 commit diff 中位数 2108ms，1328 文件的 excalidraw 本轮 6890ms，随文件数增长。首轮冷缓存可到 16.2s，但改动前第 2/3 轮稳定在 9.4–9.6s，不是「首次开销」单独造成。
+- **`map` 内容 1.6s（改动前首帧 2.85s）**：混合。固定 GPUI 启动/开窗约 0.4–0.62s（3 文件 fixture 内容首帧 484ms 对照）；其余是 excalidraw 的 layers+callgraph 结构成本（callgraph 568–622ms、small fixture 16ms）。改动前 >2s 的首帧主要是「准备完才建窗」，现在首帧 0.62s，内容 1.6s 已在 3s 预算内。
+- **`timeline` 内容 1.33s**：617 刻度采样阶段约 504ms，结构随刻度数增长；加载态首帧 0.51s，用户不会面对静止画面。
+
+- **结论**：改动后唯一仍 >2s 的路径是 `diff` 内容（6.9s）；`map`/`timeline` 内容均已降到 2s 以下。`diff` 的结构性成本保留，本轮先用加载态 + 可取消兜住用户可见体验。
+
+### 产品反馈修复（优先于算法优化）
+
+- 改动前：`map` 在数据准备完成前不建窗，首帧 2.85s；`diff` 在 `diff_commits` 完成前不建窗，首帧 10.39s，期间用户看到的是**没有窗口**，不是加载态。判定为产品缺陷。
+- 改动后：`map`/`diff` 都先开窗并显示 `LoadingShell`（标题 + 当前阶段 + 「可随时取消」+ 取消按钮），数据就绪后自动切到内容视图；本轮首帧分别 0.62s / 0.53s。
+- 可取消：`diff_commits_cancellable` 在阶段边界与每 32 个导出文件检查取消标志；命中后返回 `CommitDiffError::Cancelled` 并正常清理临时快照。测试 `diff_honours_cancel_flag_before_work` 通过；`diff_reports_progress_stages_in_order` 锁定阶段顺序。
+- 像素证据：`out/pixel-evidence/diff-loading.png`、`map-loading.png`（加载文案与取消按钮）；`diff-content.png`、`map-content.png`（切换到内容视图）。
+
+### 未做 / 未验证
+
+- 本轮未做 diff 算法优化。候选方案与预期收益（先立项再动手）：按 `git diff --name-status` 只导出变化文件，未变化文件复用上一快照事实或持久化 facts 缓存；预期热 diff 从 6.9s 降到 1–2s，冷 diff 仍需事实构建。收益未实测，不写成结论。
+- 取消按钮的鼠标点击未做自动化像素/交互测试；当前证据是模型测试 + 代码路径 + 关闭窗口即退出的行为。跨平台（Linux/macOS）四条路径未测。
+
