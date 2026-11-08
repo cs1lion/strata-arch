@@ -4,6 +4,7 @@
 //! GPUI 只把模型画出来并转发事件，不参与状态判断。
 
 use crate::layout::{MapLayout, Point, Rect};
+use crate::playback::{EdgeRole, PlaybackState};
 use arch_core::callgraph::CallGraphArtifact;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,6 +12,50 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 4.0;
 pub const LABEL_ZOOM_THRESHOLD: f32 = 0.6;
+
+/// 画布底色；标签淡化对比度以此为背景实测。
+pub const CANVAS_BACKGROUND: u32 = 0x0d1117;
+/// 节点标签颜色。
+pub const NODE_LABEL: u32 = 0xe6edf3;
+
+/// 符号种类底色。关闭态与淡出态共用同一张表。
+pub fn symbol_kind_palette(kind: &str) -> u32 {
+    match kind {
+        "function" => 0x244a66,
+        "component" => 0x4a3768,
+        "class" => 0x5f4524,
+        "method" => 0x23543d,
+        _ => 0x2a3440,
+    }
+}
+
+/// 模块层底色。
+pub fn layer_palette(layer: &str, is_unclassified: bool) -> u32 {
+    if is_unclassified {
+        return 0x3a2f22;
+    }
+    match layer {
+        "cli" => 0x244a66,
+        "commands" => 0x23543d,
+        "components" => 0x4a3768,
+        "server" => 0x5f4524,
+        "utils" => 0x2f4652,
+        "tests" => 0x53303c,
+        "external" => 0x243b3d,
+        _ => 0x2a3440,
+    }
+}
+
+/// 模块节点所在的层带底色；模块节点的淡化叠加在它上面。
+pub fn band_background_palette(is_unclassified: bool, is_external: bool) -> u32 {
+    if is_unclassified {
+        0x1f1a12
+    } else if is_external {
+        0x101d21
+    } else {
+        0x11161c
+    }
+}
 
 pub const SYMBOL_CANVAS_WIDTH: f32 = 1200.0;
 pub const SYMBOL_CANVAS_HEIGHT: f32 = 800.0;
@@ -124,12 +169,14 @@ pub struct PaintedSymbolEdge {
     pub from: Point,
     pub to: Point,
     pub strong: bool,
+    pub opacity: f32,
 }
 
 /// 把符号边映射到屏幕坐标并决定是否强调「当前边」。
 ///
 /// 这是 `main.rs` 符号场景的唯一绘制入口：只有与 `current_edge` 完全一致的边
-/// 才标记 `strong`，其余边保持普通样式。
+/// 才标记 `strong`，其余边保持普通样式。这是关闭开关时的旧路径（回归判据），
+/// 所有边都不淡化。
 pub fn paint_symbol_edges(
     layout: &SymbolLayout,
     viewport: &Viewport,
@@ -146,6 +193,31 @@ pub fn paint_symbol_edges(
             strong: current_edge
                 .map(|(source, target)| source == &edge.source && target == &edge.target)
                 .unwrap_or(false),
+            opacity: crate::playback::PATH_OPACITY,
+        })
+        .collect()
+}
+
+/// 淡出态入口：当前步的 incoming/outgoing 边 `strong`，其余路径边保持可见，
+/// 非路径边按 `CONTEXT_OPACITY` 淡化。
+pub fn paint_symbol_edges_with_roles(
+    layout: &SymbolLayout,
+    viewport: &Viewport,
+    playback: &PlaybackState,
+) -> Vec<PaintedSymbolEdge> {
+    layout
+        .edges
+        .iter()
+        .map(|edge| {
+            let role = playback.edge_role(&edge.source, &edge.target);
+            PaintedSymbolEdge {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                from: viewport.screen_point(edge.from),
+                to: viewport.screen_point(edge.to),
+                strong: role == EdgeRole::Current,
+                opacity: role.opacity(),
+            }
         })
         .collect()
 }
