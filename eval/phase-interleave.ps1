@@ -17,6 +17,7 @@ $labels = @(
     "prep:history",
     "prep:layers",
     "prep:layout",
+    "prep:reported",
     "app:created",
     "app:entry",
     "window:callback",
@@ -24,6 +25,15 @@ $labels = @(
     "window:activated",
     "frame:render",
     "frame:presented",
+    "load:start",
+    "load:stage:git-log",
+    "load:stage:history",
+    "load:stage:layers",
+    "load:stage:layout",
+    "load:done",
+    "load:failed",
+    "content:render",
+    "content:presented",
     "quit:auto",
     "main:end"
 )
@@ -188,6 +198,13 @@ function Show-Summary {
         @{ Name = "activated->first-presented"; Start = "window:activated"; End = "frame:presented" },
         @{ Name = "start->first-presented"; Start = "main:start"; End = "frame:presented" },
         @{ Name = "process->first-presented"; Start = ""; End = "frame:presented" },
+        @{ Name = "start->load-start"; Start = "main:start"; End = "load:start" },
+        @{ Name = "window-callback->load-start"; Start = "window:callback"; End = "load:start" },
+        @{ Name = "load-start->load-done"; Start = "load:start"; End = "load:done" },
+        @{ Name = "load-done->content-presented"; Start = "load:done"; End = "content:presented" },
+        @{ Name = "content-render->content-presented"; Start = "content:render"; End = "content:presented" },
+        @{ Name = "start->content-presented"; Start = "main:start"; End = "content:presented" },
+        @{ Name = "process->content-presented"; Start = ""; End = "content:presented" },
         @{ Name = "quit->exit"; Start = "quit:auto"; End = "process:exit" },
         @{ Name = "first-presented->exit"; Start = "frame:presented"; End = "process:exit" }
     )
