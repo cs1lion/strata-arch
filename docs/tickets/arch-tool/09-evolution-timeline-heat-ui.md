@@ -57,7 +57,10 @@
 **夹具：** `tests/fixtures/history`（6 个 first-parent 提交，HEAD `1de5415`）+ 测试内合成仓库（200 个固定日期提交，用于预算与线性度）。
 
 **命令：**
-`cargo test -p arch-core --test history_prefixes -- --nocapture --test-threads=1`
+`cargo test -p arch-core --test history_prefixes -- --nocapture --test-threads=1 --ignored`
+
+计时测试标 `#[ignore]`：并行 `cargo test --workspace` 会把其他测试的 git 进程算进读数
+（实测中位数被抬到 328.9ms）。阈值、样本、3 次口径均不变，只隔离计时环境。
 
 **硬件：** AMD Ryzen 7 8845H（8 核，3801 MHz），32 GB；Windows；debug 构建。
 
@@ -90,7 +93,7 @@ C 档记录：每个指标 3 次运行，报每次读数、中位数与 p95（3 
 
 ### 自动化状态
 
-已自动化：B4 等价断言、三项反向用例、B1/B2/B3 预算断言（`arch-core/tests/history_prefixes.rs`）。
+已自动化：B4 等价断言、三项反向用例、B1/B2/B3 预算断言（`arch-core/tests/history_prefixes.rs`；预算断言标 `#[ignore]`，按上方固定命令单独跑）。
 
 ### 实现
 
@@ -120,9 +123,11 @@ test result: ok. 4 passed; 0 failed
 
 | 指标 | 旧（逐刻度 git 遍历） | 新（一次遍历 + 内存前缀） | 阈值 | 判定 |
 | --- | --- | --- | --- | --- |
-| B1 6 刻度中位数 | 3570.0 ms | 158.5 ms | ≤ 250 ms | 绿 |
-| B2 200 刻度中位数 | 未测（red 在 B1 已失败） | 179.5 ms | ≤ 1500 ms | 绿 |
-| B3 20/6 刻度比 | 未测 | 1.08 | ≤ 4.0 | 绿 |
+| B1 6 刻度中位数 | 3570.0 ms | 158.5 ms（复跑 233.6 ms） | ≤ 250 ms | 绿 |
+| B2 200 刻度中位数 | 未测（red 在 B1 已失败） | 179.5 ms（复跑 255.1 ms） | ≤ 1500 ms | 绿 |
+| B3 20/6 刻度比 | 未测 | 1.08（复跑 1.19） | ≤ 4.0 | 绿 |
+
+隔离命令复跑（同一天、不同负载）：`B1 [299.6, 233.6, 227.2] median=233.6 p95=299.6; B3 ratio=1.19; B2 [221.8, 262.2, 255.1] median=255.1`。B1 余量只有十几毫秒，读数波动来自本机 git 进程启动（110–150 ms/次），不是采样算法本身。
 
 **B4 SHA256（旧/新逐刻度相等，Green 复跑与 Red 阶段完全一致）：**
 
