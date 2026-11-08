@@ -181,3 +181,14 @@
   `{"kind":"moduleChange","layer":"utils","added":["src/utils/drift-probe.ts"],"removed":[]}`，
   同时 `modules.added` 列出同一 ID——报告能定位到层与模块，而不是只给计数。临时副本已删除。
 - 真实基线与 fixture 基线均单独提交；提交信息写明旧读数、新读数与原因。
+
+### CI 触发语义：首推全零 before 与追加提交（2026-11-08 追加）
+
+- `push` 事件用 `github.event.before` 作为 diff 基线（`pull_request` 用 `origin/<base>`）；`workflow_dispatch` 没有可靠 before，改用默认分支并加 `-ForceFull`。
+- **新分支首推**：`before` 是全零 SHA，`git merge-base` 无法解析，脚本走 `Known=false` 分支，把 `self` 与 `corpus` 都标为 required（保守全跑）。理由是基线不可解析时查不出本次改动是否命中 drift 输入面，宁可多跑，不静默跳过。
+- **同一分支追加提交**：`before` 是可解析的普通提交，脚本走路径判定；只有改动命中 engine / fixture / corpus pin / 语料基线时才 required，未命中时 job 秒退通过，行为与日常 push 一致。
+- 实测（2026-11-08 真比对演练）：首推 `7ab691c` 的 plan 为 `changed=0`、`base=NONE`、`required=true`；同分支追加 `ac6d3ed` 后 plan 为 `changed=1`、`base=7ab691c`，self + tsx + excalidraw 全部真比对通过。
+- 该保守策略只决定「本次要跑哪些门禁」，不改变任何判据、阈值或退出码语义。
+- drift job 末尾用 `actions/upload-artifact@v4` 上传 `out/drift-gate.json` 与 `out/drift-*.json`（保留 14 天）；仅在 `required=true` 时上传，未触发路径不产生产物，行为不变。
+- passed 分支的日志打印每个 target 的 `stats`（files/modules/edges/unresolved）与四类判据的 new/resolved 计数，使日志自身能说明「比对了什么规模」；`stats` 只读 layers 产物，不参与判定。
+
