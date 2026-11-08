@@ -6,12 +6,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arch_core::commit_diff::{
-    diff_commits, diff_commits_cancellable, diff_commits_with_progress, CommitDiffArtifact,
-    CommitDiffError, DiffProgress, RENAME_PATH_THRESHOLD, RENAME_SYMBOL_THRESHOLD,
+    diff_commits, diff_commits_cancellable, diff_commits_with_progress, diff_commits_with_strategy,
+    CommitDiffArtifact, CommitDiffError, DiffProgress, DiffSnapshotStrategy, RENAME_PATH_THRESHOLD,
+    RENAME_SYMBOL_THRESHOLD,
 };
 
 const TOOL_VERSION: &str = "test";
@@ -148,6 +149,29 @@ fn build_fixture_repo() -> FixtureRepo {
 
 fn diff(repo: &Path, from: &str, to: &str) -> CommitDiffArtifact {
     diff_commits(repo, from, to, TOOL_VERSION).expect("commit diff")
+}
+
+fn diff_with(
+    repo: &Path,
+    from: &str,
+    to: &str,
+    strategy: DiffSnapshotStrategy,
+) -> CommitDiffArtifact {
+    diff_commits_with_strategy(repo, from, to, TOOL_VERSION, strategy, None, |_| {})
+        .expect("commit diff with strategy")
+}
+
+/// 等价性判据：优化路径与全量导出参照实现的序列化产物逐字节相等。
+fn assert_strategies_byte_equal(repo: &Path, from: &str, to: &str) -> CommitDiffArtifact {
+    let reuse = diff_with(repo, from, to, DiffSnapshotStrategy::Reuse);
+    let full = diff_with(repo, from, to, DiffSnapshotStrategy::Full);
+    let reuse_json = serde_json::to_string(&reuse).expect("serialize reuse");
+    let full_json = serde_json::to_string(&full).expect("serialize full");
+    assert_eq!(
+        reuse_json, full_json,
+        "复用导出与全量导出的产物必须逐字节相等（from={from} to={to}）"
+    );
+    reuse
 }
 
 #[test]
@@ -345,6 +369,100 @@ fn deleting_a_whole_directory_reports_every_file_removed() {
 }
 
 #[test]
+fn reuse_export_matches_full_export_on_mixed_fixture() {
+    let repo = build_fixture_repo();
+    let artifact = assert_strategies_byte_equal(repo.path(), &repo.base, &repo.head);
+    assert_counts(&artifact, 3, 2, 1);
+    assert_eq!(artifact.stats.renames, 1, "renameHint 判定不得改变");
+}
+
+#[test]
+fn reuse_export_matches_full_export_on_pure_rename() {
+    let temp = TempDir::new("rename-only");
+    let dir = temp.path();
+    init_repo(dir);
+    write(
+        dir,
+        "src/old.ts",
+        "export function legacy() {\n  return 3;\n}\n",
+    );
+    commit(dir, "2026-02-05T12:00:00Z", "base");
+    let base = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    run_git(dir, &["mv", "src/old.ts", "src/legacy.ts"], None);
+    commit(dir, "2026-02-06T12:00:00Z", "rename");
+    let head = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    let artifact = assert_strategies_byte_equal(dir, &base, &head);
+    assert_counts(&artifact, 1, 1, 0);
+    assert_eq!(artifact.renames.len(), 1, "纯重命名必须仍产生 renameHint");
+    assert_eq!(artifact.renames[0].from, "src/old.ts");
+    assert_eq!(artifact.renames[0].to, "src/legacy.ts");
+}
+
+#[test]
+fn reuse_export_matches_full_export_on_pure_delete() {
+    let temp = TempDir::new("delete-only");
+    let dir = temp.path();
+    init_repo(dir);
+    write(dir, "src/keep.ts", "export function keep() {}\n");
+    write(dir, "src/gone.ts", "export function gone() {}\n");
+    commit(dir, "2026-02-07T12:00:00Z", "base");
+    let base = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    fs::remove_file(dir.join("src/gone.ts")).expect("remove gone.ts");
+    commit(dir, "2026-02-08T12:00:00Z", "delete");
+    let head = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    let artifact = assert_strategies_byte_equal(dir, &base, &head);
+    assert_counts(&artifact, 0, 1, 0);
+    assert_eq!(artifact.removed[0].path, "src/gone.ts");
+}
+
+#[test]
+fn reuse_export_matches_full_export_on_pure_add() {
+    let temp = TempDir::new("add-only");
+    let dir = temp.path();
+    init_repo(dir);
+    write(dir, "src/keep.ts", "export function keep() {}\n");
+    commit(dir, "2026-02-09T12:00:00Z", "base");
+    let base = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    write(dir, "src/fresh.ts", "export function fresh() {}\n");
+    commit(dir, "2026-02-10T12:00:00Z", "add");
+    let head = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    let artifact = assert_strategies_byte_equal(dir, &base, &head);
+    assert_counts(&artifact, 1, 0, 0);
+    assert_eq!(artifact.added[0].path, "src/fresh.ts");
+}
+
+#[test]
+fn reuse_and_full_export_cancel_at_same_stage_boundary() {
+    let repo = build_fixture_repo();
+    for strategy in [DiffSnapshotStrategy::Reuse, DiffSnapshotStrategy::Full] {
+        let cancel = AtomicBool::new(false);
+        let result = diff_commits_with_strategy(
+            repo.path(),
+            &repo.base,
+            &repo.head,
+            TOOL_VERSION,
+            strategy,
+            Some(&cancel),
+            |stage| {
+                if stage == DiffProgress::MaterializingTo {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+            },
+        );
+        assert!(
+            matches!(result, Err(CommitDiffError::Cancelled)),
+            "{strategy:?} 必须在同一阶段边界返回 Cancelled"
+        );
+    }
+}
+
+#[test]
 fn diff_is_read_only_and_deterministic() {
     let repo = build_fixture_repo();
     let before_head = run_git(repo.path(), &["rev-parse", "HEAD"], None);
@@ -385,6 +503,13 @@ fn repository_history_pair_has_expected_counts() {
         "repo pair: {} -> {}",
         artifact.from.commit, artifact.to.commit
     );
+}
+
+#[test]
+fn workspace_history_pair_matches_full_export() {
+    let root = workspace_root();
+    let artifact = assert_strategies_byte_equal(&root, "2b66deb", "29f8e27");
+    assert_counts(&artifact, 25, 0, 0);
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -432,4 +557,61 @@ fn large_corpus_commit_diff_wall_clock() {
         artifact.stats.renames
     );
     assert_counts(&artifact, 1, 0, 0);
+}
+
+/// excalidraw 语料的等价性对照（手工跑）：`cargo test -p arch-core --test commit_diff -- --ignored large_corpus`。
+#[test]
+#[ignore]
+fn large_corpus_reuse_matches_full_export() {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/excalidraw");
+    let temp = TempDir::new("large-eq");
+    let dir = temp.path();
+    copy_tree(&corpus, dir);
+    init_repo(dir);
+    commit(dir, "2026-02-01T12:00:00Z", "base");
+    let base = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    write(
+        dir,
+        "perf-probe.ts",
+        "export function perfProbe() {\n  return 1;\n}\n",
+    );
+    commit(dir, "2026-02-02T12:00:00Z", "probe");
+    let head = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    let mut reuse = None;
+    let mut full = None;
+    for round in 1..=3 {
+        let (artifact, stages) = timed_diff(dir, &base, &head, DiffSnapshotStrategy::Reuse);
+        println!("reuse round {round} (ms): {stages:?}");
+        reuse = Some(artifact);
+        let (artifact, stages) = timed_diff(dir, &base, &head, DiffSnapshotStrategy::Full);
+        println!("full  round {round} (ms): {stages:?}");
+        full = Some(artifact);
+    }
+
+    let reuse = reuse.expect("reuse artifact");
+    let full = full.expect("full artifact");
+    let reuse_json = serde_json::to_string(&reuse).expect("serialize reuse");
+    let full_json = serde_json::to_string(&full).expect("serialize full");
+    assert_eq!(reuse_json, full_json, "复用导出与全量导出必须逐字节相等");
+    assert_counts(&reuse, 1, 0, 0);
+}
+
+/// 记录每个阶段开始时相对起点的毫秒数；最后一档是函数返回时刻。
+fn timed_diff(
+    repo: &Path,
+    from: &str,
+    to: &str,
+    strategy: DiffSnapshotStrategy,
+) -> (CommitDiffArtifact, Vec<(String, u128)>) {
+    let started = Instant::now();
+    let mut stages = Vec::new();
+    let artifact =
+        diff_commits_with_strategy(repo, from, to, TOOL_VERSION, strategy, None, |stage| {
+            stages.push((format!("{stage:?}"), started.elapsed().as_millis()))
+        })
+        .expect("timed diff");
+    stages.push(("end".to_string(), started.elapsed().as_millis()));
+    (artifact, stages)
 }

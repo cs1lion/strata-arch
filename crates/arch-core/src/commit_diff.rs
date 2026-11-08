@@ -132,6 +132,16 @@ pub enum DiffProgress {
     Comparing,
 }
 
+/// 快照导出策略。`Full` 是优化前的全量导出参照实现，只供等价性测试对照使用。
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSnapshotStrategy {
+    /// 默认路径：`to` 树复用 `from` 快照中未变化的文件内容。
+    Reuse,
+    /// 参照路径：两棵树各自从 git 全量导出。
+    Full,
+}
+
 impl DiffProgress {
     pub fn label(self) -> &'static str {
         match self {
@@ -180,7 +190,15 @@ pub fn diff_commits_with_progress<F>(
 where
     F: FnMut(DiffProgress),
 {
-    diff_commits_impl(root, from, to, tool_version, None, &mut report)
+    diff_commits_impl(
+        root,
+        from,
+        to,
+        tool_version,
+        DiffSnapshotStrategy::Reuse,
+        None,
+        &mut report,
+    )
 }
 
 /// 与 [`diff_commits_with_progress`] 相同，并在每个可中断的边界检查 `cancelled`。
@@ -196,7 +214,40 @@ pub fn diff_commits_cancellable<F>(
 where
     F: FnMut(DiffProgress),
 {
-    diff_commits_impl(root, from, to, tool_version, Some(cancelled), &mut report)
+    diff_commits_impl(
+        root,
+        from,
+        to,
+        tool_version,
+        DiffSnapshotStrategy::Reuse,
+        Some(cancelled),
+        &mut report,
+    )
+}
+
+/// 等价性测试专用入口：可直接选择复用导出或全量导出参照实现。
+#[doc(hidden)]
+pub fn diff_commits_with_strategy<F>(
+    root: &Path,
+    from: &str,
+    to: &str,
+    tool_version: &str,
+    strategy: DiffSnapshotStrategy,
+    cancelled: Option<&AtomicBool>,
+    mut report: F,
+) -> Result<CommitDiffArtifact, CommitDiffError>
+where
+    F: FnMut(DiffProgress),
+{
+    diff_commits_impl(
+        root,
+        from,
+        to,
+        tool_version,
+        strategy,
+        cancelled,
+        &mut report,
+    )
 }
 
 fn check_cancelled(cancelled: Option<&AtomicBool>) -> Result<(), CommitDiffError> {
@@ -211,6 +262,7 @@ fn diff_commits_impl<F>(
     from: &str,
     to: &str,
     tool_version: &str,
+    strategy: DiffSnapshotStrategy,
     cancelled: Option<&AtomicBool>,
     report: &mut F,
 ) -> Result<CommitDiffArtifact, CommitDiffError>
@@ -247,10 +299,22 @@ where
     let to_snapshot = SnapshotDir::new("to")?;
     report(DiffProgress::MaterializingFrom);
     check_cancelled(cancelled)?;
-    materialize_tree(&toplevel, &from_commit, from_snapshot.path(), cancelled)?;
+    let from_entries = materialize_tree(&toplevel, &from_commit, from_snapshot.path(), cancelled)?;
     report(DiffProgress::MaterializingTo);
     check_cancelled(cancelled)?;
-    materialize_tree(&toplevel, &to_commit, to_snapshot.path(), cancelled)?;
+    match strategy {
+        DiffSnapshotStrategy::Reuse => materialize_tree_reusing(
+            &toplevel,
+            &to_commit,
+            from_snapshot.path(),
+            to_snapshot.path(),
+            &from_entries,
+            cancelled,
+        )?,
+        DiffSnapshotStrategy::Full => {
+            materialize_tree(&toplevel, &to_commit, to_snapshot.path(), cancelled)?;
+        }
+    }
     report(DiffProgress::FactsFrom);
     check_cancelled(cancelled)?;
     let from_facts = snapshot_facts(from_snapshot.path(), tool_version)?;
@@ -377,16 +441,92 @@ impl Drop for SnapshotDir {
     }
 }
 
-/// 把 commit 的 blob 落到 `destination`；只写临时目录。
+/// 需要落到快照目录的一个条目；`object` 是 git blob oid。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MaterializedEntry {
+    path: String,
+    mode: String,
+    object: String,
+}
+
+/// 把 commit 的 blob 落到 `destination`；只写临时目录。返回已写入的条目。
 fn materialize_tree(
     repo: &Path,
     commit: &str,
     destination: &Path,
     cancelled: Option<&AtomicBool>,
+) -> Result<Vec<MaterializedEntry>, CommitDiffError> {
+    check_cancelled(cancelled)?;
+    let entries = list_materialized_entries(repo, commit)?;
+    if entries.is_empty() {
+        return Ok(entries);
+    }
+    write_blobs(repo, &entries, destination, cancelled)?;
+    Ok(entries)
+}
+
+/// 导出 `to` 树，但复用 `from` 快照里「同 path、同 mode、同 blob oid」的文件内容。
+///
+/// 复用只发生在文件内容层：两侧仍各自运行 index / callgraph，路径与层归属不变。
+fn materialize_tree_reusing(
+    repo: &Path,
+    commit: &str,
+    from_directory: &Path,
+    to_directory: &Path,
+    from_entries: &[MaterializedEntry],
+    cancelled: Option<&AtomicBool>,
 ) -> Result<(), CommitDiffError> {
     check_cancelled(cancelled)?;
+    let entries = list_materialized_entries(repo, commit)?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let from_index = from_entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let mut to_fetch = Vec::new();
+
+    for (index, entry) in entries.iter().enumerate() {
+        if index % 32 == 0 {
+            check_cancelled(cancelled)?;
+        }
+        let unchanged = from_index
+            .get(entry.path.as_str())
+            .is_some_and(|existing| existing.mode == entry.mode && existing.object == entry.object);
+        if !unchanged {
+            to_fetch.push(entry.clone());
+            continue;
+        }
+
+        let source = from_directory.join(&entry.path);
+        let target = to_directory.join(&entry.path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| CommitDiffError::Io(format!("{}（{error}）", parent.display())))?;
+        }
+        if fs::hard_link(&source, &target).is_err() {
+            // 跨卷 / 文件系统不支持硬链接时，从已导出的 from 快照复制同内容文件；
+            // 两者都失败才报错，不会退回 git 全量读取。
+            fs::copy(&source, &target)
+                .map_err(|error| CommitDiffError::Io(format!("{}（{error}）", target.display())))?;
+        }
+    }
+
+    if !to_fetch.is_empty() {
+        write_blobs(repo, &to_fetch, to_directory, cancelled)?;
+    }
+    Ok(())
+}
+
+/// 列出需要落盘的文件条目；跳过子模块、符号链接、非源文件与非解析配置。
+fn list_materialized_entries(
+    repo: &Path,
+    commit: &str,
+) -> Result<Vec<MaterializedEntry>, CommitDiffError> {
     let listing = git(repo, &["ls-tree", "-r", "-z", "--full-tree", commit])?;
-    let mut entries = Vec::<(String, String)>::new();
+    let mut entries = Vec::new();
 
     for record in listing.split('\0') {
         if record.is_empty() {
@@ -407,14 +547,24 @@ fn materialize_tree(
         if !is_materialized_path(path) {
             continue;
         }
-        entries.push((path.to_string(), object.to_string()));
+        entries.push(MaterializedEntry {
+            path: path.to_string(),
+            mode: mode.to_string(),
+            object: object.to_string(),
+        });
     }
 
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
-    if entries.is_empty() {
-        return Ok(());
-    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(entries)
+}
 
+/// 用 `git cat-file --batch` 把条目内容写入 `destination`。
+fn write_blobs(
+    repo: &Path,
+    entries: &[MaterializedEntry],
+    destination: &Path,
+    cancelled: Option<&AtomicBool>,
+) -> Result<(), CommitDiffError> {
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -426,8 +576,9 @@ fn materialize_tree(
         .map_err(|error| CommitDiffError::Git(error.to_string()))?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        for (_, object) in &entries {
-            writeln!(stdin, "{object}").map_err(|error| CommitDiffError::Io(error.to_string()))?;
+        for entry in entries {
+            writeln!(stdin, "{}", entry.object)
+                .map_err(|error| CommitDiffError::Io(error.to_string()))?;
         }
     }
 
@@ -437,7 +588,7 @@ fn materialize_tree(
         .ok_or_else(|| CommitDiffError::Git("cat-file 缺少 stdout".to_string()))?;
     let mut reader = BufReader::new(stdout);
 
-    for (index, (path, _)) in entries.iter().enumerate() {
+    for (index, entry) in entries.iter().enumerate() {
         if index % 32 == 0 {
             check_cancelled(cancelled)?;
         }
@@ -477,7 +628,7 @@ fn materialize_tree(
             .read_exact(&mut newline)
             .map_err(|error| CommitDiffError::Io(error.to_string()))?;
 
-        let target = destination.join(path);
+        let target = destination.join(&entry.path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| CommitDiffError::Io(format!("{}（{error}）", parent.display())))?;
