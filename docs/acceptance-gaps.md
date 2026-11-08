@@ -140,6 +140,44 @@ while (-not $p.HasExited) {
 
 边界：软件渲染不代表真实 GPU 表现；只证明「能开窗、能出帧、能干净退出」，不证明画面正确，不替代 2.2.1 的像素证据。CI 门禁为 exit 0 + `smoke: frame rendered`，未使用 `|| true` / `continue-on-error` / 放宽断言。
 
+### 2.2.3 macOS 窗口冒烟：GitHub runner 实测通过（2026-11-09 追加，已进 CI）
+
+目标：把 macOS 从「仅编译验证」升级为「运行验证」，且不新造判据——复用 `STRATA_PHASE_MARKERS`、`phase: content:presented` 与「exit 0 + 标记命中」。
+
+步骤（`build (macos-latest)` job 内，`runner.os == 'macOS'`）：直接跑 `./target/debug/arch-view map tests/fixtures/layers --auto-close-ms 5000 --no-reveal`，输出落 `out/macos-window-smoke.log`；bash 看门狗 90s（macOS runner 无 GNU `timeout`），超时判 124。
+
+**结果：PASS。** CI run `42535306096`，job `build (macos-latest)`，步骤耗时 **7s**（23:31:50 → 23:31:57）；该 job 总时长 3m33s（上一次 run `42534669345`）→ 3m50s，增量约 +17s（步骤本身 7s，其余为排队/波动）。
+
+关键日志原文（`out/macos-window-smoke.log`，已去掉时间戳前缀）：
+
+```
+phase: main:start
+phase: app:created
+phase: app:entry
+phase: window:callback
+phase: frame:render
+phase: window:created
+phase: window:activated
+phase: frame:presented
+phase: map:prep:start
+phase: map:prep:layers
+phase: map:prep:callgraph
+phase: map:prep:layout
+phase: map:prep:done
+phase: content:render
+phase: content:presented
+phase: quit:auto
+== macos smoke: PASS (exit 0, content:presented) ==
+```
+
+环境：`macos-26-arm64`（macOS 26.7.2，runner image 20261102.0473.1）。
+
+过程中唯一失败是 workflow YAML 解析错误（run `42535250496`：`run:` 块内嵌 Python heredoc 顶格，YAML 非法，job 数为 0），与本项目代码无关；改成纯 bash 看门狗后一次通过。
+
+**边界**：只证明「能开窗、能出帧、干净退出」，不证明画面正确，也没有 macOS 像素证据（`pixel-evidence.ps1` 依赖 Windows `PrintWindow`）；不代表真实 Mac 的 GPU/显示器体验。ramp/颜色/DPI 差异仍未覆盖。
+
+**判定**：这是 runner 上可复现的运行验证，不是环境限制；未出现「无 Aqua 会话 / 窗口创建失败 / `on_next_frame` 不回调」。
+
 ### 2.3 「本轮接受风险」的边界
 
 只在以下范围默认放过：
