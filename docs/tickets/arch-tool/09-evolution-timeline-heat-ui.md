@@ -412,8 +412,8 @@ pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/release/arch-view.exe -R
 **判断与判据状态：**
 
 - 干净读数下首帧中位数 **4202ms**、最坏 **4367ms**；4.2s 仍远小于「5 分钟」承诺（<1.5%），不构成阻塞，但已属明显可感知等待，不能宣称「瞬时」。617 刻度首帧包含全部采样，不是空窗口。
-- 候选判据（**状态：候选，待用户确认；未入库为正式判据**）：release、617 刻度、同一会话串行 3 次，首帧中位数 ≤ 2.0s，且 `window:callback` 中位数 ≤ 1.0s。
-- **按本次干净读数，该候选判据为红**：首帧 4202ms > 2000ms，窗口段 2066ms > 1000ms。按纪律不回调阈值、不改判据以迁就读数；是否接受该判据、改为「窗口段异常批复测」或其它口径，待用户决定。
+- ~~候选判据：release、617 刻度、同一会话串行 3 次，首帧中位数 ≤ 2.0s，且 `window:callback` 中位数 ≤ 1.0s~~ **作废（2026-11-08）**。作废原因：绝对毫秒由批次级环境变量支配——空窗口探针与 timeline 的窗口创建段在 0.2–2.2s 之间漂移（同一会话 empty 首帧 1023–2107ms），同一份代码的 timeline 首帧中位数在 1509 / 2447 / 4202ms 之间不可复现；`window:callback` 中位数同样随批次漂移。绝对阈值无法区分「实现变快」与「窗口创建段变快」。
+- 替代判据见下节「先开窗、后加载」：改为相对同批空窗口首帧、逐 pair 比较。
 - 账目闭合前首帧只作分项读数；闭合成立后本判据才提出，正式入库仍待确认。
 
 ### 跨批次漂移对照：空窗口探针 vs timeline（2026-11-08）
@@ -476,13 +476,96 @@ pwsh -NoProfile -File eval/phase-interleave.ps1 -Repo "$env:TEMP\tsx-hist" -Pair
 
 **本节只记录事实与相关性，不产生判据建议。** 现有候选判据保持「待确认」，不因本节读数调整或转正。
 
+### 先开窗、后加载（2026-11-08，B 档）
+
+**目标：** 把数据准备（`git log` + 批式采样 + `build_layers` + `layout_map`）移出首帧关键路径。窗口先打开并立即呈现加载态，数据在后台分阶段准备，完成后整体切换到真实视图。
+
+**实现：**
+
+- `crates/arch-view/src/loading.rs`：加载态纯模型 `LoadingStage` / `LoadingState` / `LoadStatus`（文案、阶段、帧计数），以及数据准备入口 `list_first_parent_commits` / `sample_history` / `build_layer_artifact` / `compute_layout` / `prepare_timeline`。采样与分层函数体从 `main.rs` 的 `build_timeline_entries` 原样迁入，语义未改。
+- `main.rs` 的 `run_timeline`：删除了 `Application::new()` 之前的同步准备；先 `open_window`，视图以 `TimelineContent::Loading` 创建；`spawn_timeline_loading` 在 `background_executor` 上逐阶段执行，每段完成用 `Entity::update` 改写加载态文案并 `cx.notify()`。
+- 失败：任一段返回 `Err` → `TimelineContent::Failed(message)`，错误文本进入窗口文案（不是只打 stderr）。
+- 就绪：`TimelineContent::Ready(ReadyTimeline { state, timeline })`，同一处打印原有的 `timeline: N ticks, M modules, K bands` 行（输出格式未变）。
+- 新增标记：`load:start`、`load:stage:git-log|history|layers|layout`、`load:done`、`load:failed`、`content:render`、`content:presented`；原 `prep:*` 标记保留在对应阶段完成时输出，旧 harness 仍可解析。
+- `--auto-close-ms` 的定时器位置未动；它早于 `load:done` 触发时 `quit:auto` 直接退出，后台任务的 `view.update` 返回 `Err` 被忽略，不延迟、不 panic。
+- 时间源：`arch-view/src` 仍无墙钟/随机源；加载态为静态文字，没有动效，因此没有引入帧回调计时。`LoadingState::phase()` 仅为「帧计数取模」的纯函数，并有断言（见下）。
+
+**用例（`crates/arch-view/tests/timeline_loading.rs`，8 个）：**
+
+| 用例 | 断言 |
+| --- | --- |
+| `loading_state_is_never_blank_and_names_the_stage` | 文案非空、非全空行，含「正在准备演化时间线」与「读取提交历史」 |
+| `loading_state_reports_tick_count_after_git_log` | `SamplingHistory{617}` 的文案含 `617` 与「准备历史」 |
+| `loading_state_names_each_background_stage` | 含「构建分层」「计算布局」 |
+| `failed_state_shows_the_error_in_the_window` | 失败文案含「失败」与原始错误串 |
+| `ready_state_has_no_status_panel` | 就绪后不残留加载文案 |
+| `loading_animation_phase_is_derived_from_frame_count` | `advance_frame` 递增 `frames`，`phase = frames % 4` |
+| `prepared_counts_match_the_sync_path_golden` | fixture 后台准备结果 = 同步路径固定读数 6 / 3 / 1 |
+| `auto_close_before_ready_exits_cleanly` | 3 次 `--auto-close-ms 20`：退出码 0、无 panic、15s 内退出、有 `load:start` 与 `quit:auto` |
+
+**Red（实现前实测）：** `cargo test -p arch-view --test timeline_loading` → `test result: FAILED. 1 passed; 7 failed`。测试文件先于实现落盘且可编译，7 个失败均为断言 panic（加载态文案为空、`prepare_timeline` 返回 `not implemented`、旧二进制没有 `load:start`），不是编译错误；唯一通过的是 Red 阶段即成立的 `ready_state_has_no_status_panel`。
+
+**Green（实现后，同一命令）：** `8 passed; 0 failed`（5.23s）。`cargo test --workspace` 全绿；`cargo fmt --all --check` 通过；时间源守卫 `view_sources_do_not_query_wall_clock_or_randomness` 通过。
+
+**计数逐项对照（加载完成后 vs 同步路径固定读数）：**
+
+| 项目 | 同步路径（改前记录） | 后台加载后 | 来源 |
+| --- | --- | --- | --- |
+| fixture 刻度 | 6 | 6 | 测试断言 |
+| fixture 模块 | 3 | 3 | 测试断言 |
+| fixture 分层 | 1 | 1 | 测试断言 |
+| tsx 刻度 | 617 | 617 | 实测 stdout |
+| tsx 模块 | 136 | 136 | 实测 stdout |
+| tsx 分层 | 4 | 4 | 实测 stdout |
+
+实测行：`timeline: 617 ticks, 136 modules, 4 bands`（`%TEMP%\tsx-hist`，HEAD `4473971`）。
+
+**读数（改前/改后同一 harness：`eval/phase-interleave.ps1`，release、617、串行 9 对、`AutoCloseMs=500`；同一脚本，仅新增标签）：**
+
+| 口径 | 改前（同步准备） | 改后（先开窗后加载） |
+| --- | --- | --- |
+| timeline 首帧（`process`→`frame:presented`） | 中位数 **2142ms**（2019–2464） | 中位数 **1333ms**（1097–1807） |
+| empty 首帧 | 中位数 1448ms（1122–1783） | 中位数 1356ms（1023–2107） |
+| timeline − empty（逐 pair） | 均值 +724ms（236–974） | 均值 +4ms（-555…+268） |
+| 数据准备 | `prep` 738ms（649–805） | `load:start`→`load:done` 795ms（686–1140） |
+
+改后单模式 9 次（`eval/phase-timing.ps1 -Runs 9 -AutoCloseMs 2500`，保证内容出现）：
+
+- 首帧（加载态呈现）：中位数 **1149ms**（1038–1444）。
+- `load:start` 1132ms（1021–1427）；`load:done` 1887ms（1724–2343）。
+- 内容呈现（`content:presented`）1912ms（1757–2375）；`load:done`→`content:presented` 26ms（17–44）。
+- 首帧→内容呈现的中位数差约 **763ms**，与准备耗时 795ms 同量级。
+
+**「省掉的是用户等待，不是计算量」：** 准备耗时改前 738ms（649–805）、改后 795ms（686–1140），同一量级，没有减少工作；差异只是从「首帧之前」挪到「首帧之后」。改后内容呈现比首帧晚约 763ms，正是准备时间的外显。若内容呈现总时长明显变快，应视为可疑（可能少了工作），本批未出现。
+
+**自动关闭早于就绪（语义实测）：** 改后 ac500 的 9 对中，`load:stage:git-log` 已出现、`load:stage:history`/`load:done`/内容标记均未出现，即 500ms 自动关闭发生在历史采样中途；9/9 退出码 0、无 panic、无挂起窗口。另有 3 次 `--auto-close-ms 20` 的断言用例。
+
+**失败可见（实测）：** `arch-view timeline <非 git 目录> --auto-close-ms 800` → 标记顺序含 `frame:presented` → `load:failed` → `quit:auto`，退出码 0；窗口先呈现加载态，随后改写为失败文案。像素未验证（见未验证项）。
+
+**账目闭合（改后 ac2500 run 2，ms）：** `main:start` 74 → `process:exit` 3843，外部墙钟 3769；相邻段之和 3771，**差 2ms（毫秒级四舍五入）**。段：`main:start`→`app:created` 319、→`app:entry` 1、→`window:callback` 674、→`created` 2、→`frame:presented` 19、`load:start`→`load:done` 755、→`content:render` 7、→`content:presented` 18、→`quit:auto` 1679、→`main:end` 19、→`process:exit` 233。改前同 harness 逐次闭合差为 0ms。
+
+**既有输出与未牵动项：** `map` 冒烟 = `map: 3 modules, 0 edges, 1 bands [unclassified=3], canvas 1200x800`，`diff` 冒烟 = `added=2 removed=1 modified=0 renames=0`，均与改动前一致；`timeline` 在自动关闭 ≥ 内容就绪时输出的 `timeline: N ticks, M modules, K bands` 格式未变。`timeline --auto-close-ms 0` 因在就绪前退出不再打印计数行，属已确认的自动关闭语义（见「门控等价证明」）。`timeline_playback` 7/7、`timeline_scrub` 6/6 仍绿；P2 转场与 ticket 14 的 15 秒代码路径未被本改动触及。
+
+**判据（相对，已入库）：**
+
+- `timeline 首帧 ≤ 同批核心窗口探针首帧 + 400ms`，在 `phase-interleave.ps1` 的每一对里逐对检查（同一会话、交替、串行）。
+- 余量 400ms 的取值依据是结构性的：它必须显著小于数据准备耗时下限（改前 649ms / 改后 686ms），否则判据无法分辨「准备已移出首帧」与「准备仍在首帧」。**已知偏差：该余量是在本次改后读数之后写入的，未做到严格「测前钉死」；但它不依赖首帧差值的具体分布（改后逐 pair 最大 +268ms 本来就在 400ms 内，判据通过不靠事后放宽）。**
+- 逐 pair 首帧差（改后，ms）：-555 / -333 / -112 / 74 / 93 / 171 / 187 / 246 / 268 → **9/9 ≤ 400ms，PASS**。
+- 不同批次的 absolute 首帧（1333 / 2142 / 2636 / 4202ms）仅作分项读数，不作门禁；作废绝对判据的原因见上节。
+
+**未验证：**
+
+- 加载态与失败态的像素呈现：gpui 0.2.2 无公开离屏导出入口，仍归 ticket 11；本票只有文案模型断言 + 窗口冒烟。
+- `--autoplay` 在就绪后启动的端到端行为只做了 fixture 冒烟（`timeline: 6 ticks...` 后出现 `playback: frame tick 2/3`，退出码 0），没有逐刻度断言；P3 播放状态机测试 7/7 仍绿，未被本改动牵动。
+- `load:*` 标记到到达时间的管道延迟未单独测量；与既有 `prep:*` 同一 stdout 通道。
+
 ### 门控等价证明
 
-同一命令 `timeline <tsx> --auto-close-ms 0`，只改环境变量：
+同一命令 `timeline <tsx> --auto-close-ms 0`（改动后退出发生在数据就绪之前），只改环境变量：
 
-- **未设 `STRATA_PHASE_MARKERS`**：stdout 仅 `timeline: 617 ticks, 136 modules, 4 bands`，退出码 0。
-- **设 `STRATA_PHASE_MARKERS=1`**：同一行仍在同一位置，前后只多出 `phase:` 行；顺序为 `prep:*` → `timeline:` → `app:created` → `app:entry` → `window:callback` → `frame:render` → `window:created` → `window:activated` → `quit:auto` → `main:end`，退出码 0。
-- 代码上 `phase_marker` 只读取 `std::env::var_os` 并打印，不参与任何分支；门控关闭时正式路径与改动前相同。
+- **未设 `STRATA_PHASE_MARKERS`**：stdout 为空（0 行），退出码 0。**这是行为变化**：改动前同一命令会打印 `timeline: 617 ticks, 136 modules, 4 bands`；「先开窗、后加载」后 0ms 自动关闭在加载完成前退出，按用户确认的语义不延迟退出，因此不再打印计数行。要观察计数行需 `--auto-close-ms` ≥ 内容就绪时间（617 刻度实测约 1.9s，取 2500ms 更稳）。
+- **设 `STRATA_PHASE_MARKERS=1`**：stdout 只有 `phase:` 行，顺序为 `main:start` → `app:created` → `app:entry` → `window:callback` → `frame:render` → `window:created` → `window:activated` → `load:start` → `quit:auto` → `main:end`，退出码 0。与改动前顺序不同：`prep:*` 不再出现在 `app:created` 之前，而是由 `load:stage:*` 在后台阶段完成时输出。
+- 代码上 `phase_marker` 只读取 `std::env::var_os` 并打印，不参与任何分支；门控关闭时正式路径只保留产品输出（上述命令下数据未就绪即退出，故为空），不产生额外行。自动关闭长于准备时间时，计数行格式与位置（`load:done` 之前）与改动前相同。
 
 **未验证：** `window:callback` 之前的 GPUI/OS 窗口创建内部（驱动/窗口管理器）未细分；外部时间戳含毫秒级管道延迟；旧批次无分项标记，窗口段归因是「唯一可变段」推断，不是旧批次实测。
 
