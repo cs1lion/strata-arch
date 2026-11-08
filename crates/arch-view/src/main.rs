@@ -15,7 +15,7 @@ use std::sync::Arc;
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::commit_diff::diff_commits;
 use arch_core::guided_path::build_path;
-use arch_core::history::{build_history, HistoryOptions};
+use arch_core::history::{build_history_prefixes, HistoryOptions};
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, DIFF_LABEL, FADE_DURATION_MS};
 use arch_view::layout::{
@@ -477,7 +477,7 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
         ));
     }
 
-    let mut entries = Vec::new();
+    let mut commits = Vec::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let mut parts = line.splitn(3, '\t');
         let hash = parts.next().unwrap_or_default().to_string();
@@ -487,15 +487,21 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
             .parse::<u64>()
             .map_err(|_| format!("无法解析提交时间: {line}"))?;
         let subject = parts.next().unwrap_or_default().to_string();
-        let artifact = build_history(
-            repo,
-            env!("CARGO_PKG_VERSION"),
-            HistoryOptions {
-                until: Some(format!("@{}", time + 1)),
-                ..Default::default()
-            },
-        )
-        .map_err(|error| format!("构建历史产物失败: {error}"))?;
+        commits.push((hash, time, subject));
+    }
+
+    // 一次 git 遍历生成所有刻度前缀，替代逐刻度重跑 build_history 的 O(刻度×遍历) 采样。
+    let tick_times = commits.iter().map(|(_, time, _)| *time).collect::<Vec<_>>();
+    let artifacts = build_history_prefixes(
+        repo,
+        env!("CARGO_PKG_VERSION"),
+        HistoryOptions::default(),
+        &tick_times,
+    )
+    .map_err(|error| format!("构建历史产物失败: {error}"))?;
+
+    let mut entries = Vec::new();
+    for ((hash, time, subject), artifact) in commits.into_iter().zip(artifacts) {
         entries.push(TimelineEntry {
             hash,
             time,
