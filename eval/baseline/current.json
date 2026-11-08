@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-08T07:58:06.3015547+08:00",
+  "gitSha": "592c69580ab13009d45a9e1189c95768ad4ed1e0",
+  "toolVersion": "0.1.0",
+  "profile": "release",
+  "runs": 3,
+  "hardware": {
+    "cpu": "AMD Ryzen 7 8845H w/ Radeon 780M Graphics",
+    "logicalProcessors": 16,
+    "os": "Microsoft Windows NT 10.0.26300.0",
+    "powershell": "7.6.9"
+  },
+  "budgets": {
+    "tsxIndexMs": 2000,
+    "excalidrawIndexMs": 10000,
+    "excalidrawHistoryMs": 10000,
+    "peakRssMb": 512,
+    "medianFluctuationPercent": 20,
+    "hardwareBaselineConfirmed": false,
+    "memoryCapConfirmed": false
+  },
+  "cases": {
+    "tsx": {
+      "task": "index",
+      "commit": "4473971f4b3261de253209b148d8fdc43269fcc4",
+      "wallMs": [93.6, 69.4, 54.7],
+      "medianMs": 69.4,
+      "maxMs": 93.6,
+      "peakWorkingSetMb": 5.7,
+      "batch2": {"wallMs": [101.4, 69.5, 66.5], "medianMs": 69.5, "maxMs": 101.4, "peakWorkingSetMb": 6.7},
+      "status": "measured"
+    },
+    "excalidraw": {
+      "task": "index",
+      "commit": "701b901a0f1ba3d0b390d9cdf63d112e25abac4b",
+      "wallMs": [278.3, 288.8, 277.9],
+      "medianMs": 278.3,
+      "maxMs": 288.8,
+      "peakWorkingSetMb": 5.9,
+      "batch2": {"wallMs": [337.9, 293.4, 289.8], "medianMs": 293.4, "maxMs": 337.9, "peakWorkingSetMb": 6.0},
+      "status": "measured"
+    },
+    "excalidrawHistory": {
+      "task": "history --max-commits 500",
+      "commit": "701b901a0f1ba3d0b390d9cdf63d112e25abac4b",
+      "status": "unverified",
+      "reason": "tests/corpus 是归档副本，没有 .git；无法复现 first-parent 历史窗口读数，需真实克隆"
+    },
+    "oversizeRepo": {
+      "task": "index（合成 5001 个 .ts 文件）",
+      "exitCode": 2,
+      "stdoutEmpty": true,
+      "stderr": "错误: 目标仓库源文件数 5001 超过上限 5000，已拒绝索引",
+      "status": "measured"
+    }
+  },
+  "notes": [
+    "Windows 峰值内存为进程 WorkingSet 代理口径（同时记录 OS PeakWorkingSet64），置信度低；未在 Linux 用 /usr/bin/time -v 复核。",
+    "512MB 硬上限与推荐硬件基线仍待用户确认；当前未实现内存超限拒绝。",
+    "历史窗口预算未取得读数，不得按通过计。",
+    "完整原始读数在 out/perf.json（不入库）。"
+  ]
+}
