@@ -107,4 +107,12 @@
   - 超限：合成 5001 个 `.ts` → exit 2、stdout 空、stderr「源文件数 5001 超过上限 5000，已拒绝索引」。
 - 偏差/未验证：excalidraw 历史窗口无法测（缓存无 `.git`），不按通过计；512MB 内存硬上限未实现、未确认，读数只是 Windows 代理口径；`>20k 符号` 维度无独立门禁；硬件基线是否进 CI 待用户确认。
 
+## 11 跨平台构建与 GPUI 启动冒烟
+
+- 档位：B（启动行为断言）。先写 `crates/arch-view/tests/smoke.rs`（4 条清单 + 2 测试）。
+- Red（实现前实测）：`cargo test -p arch-view --test smoke` → 1 failed / 1 passed；失败为 exit 2 且 stderr 只有 map/timeline 用法，缺 `smoke: frame rendered`。
+- 完成：`smoke` 子命令与 `SmokeView`（`Window::on_next_frame` 在首帧渲染后打印标记并 `cx.quit()`；2.5s 兜底；未渲染则 exit 2）；`.github/workflows/ci.yml`（三平台 `cargo build --locked --workspace` + Windows 冒烟）。
+- 读数：`cargo test -p arch-view --test smoke` 2 passed / 0 failed（1.81s）；二进制 smoke `tests/fixtures/tiny` exit 0、墙钟 828ms、stdout `smoke: layout 3 modules, 2 edges, 1 bands` + `smoke: frame rendered`、stderr 空；`cargo build --locked --workspace` exit 0；全量 117 passed / 0 failed；fmt OK。
+- 偏差/未验证：CI 只在本地落盘、未实际执行（`--locked` 失败路径未实测）；mac/Linux 无 runner、gpui 系统依赖未知；截图开放项 (a)/(b)/(c)/(d) 仍未选定，本票不以截图通过；3 秒按已构建二进制计，不含 cargo 冷编译。
+
 （后续每票在此追加）

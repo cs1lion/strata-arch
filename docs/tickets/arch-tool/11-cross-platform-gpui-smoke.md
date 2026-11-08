@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（分层地图，提供可渲染的最静态视图）
 
-**Status:** ready-for-agent
+**Status:** partial（Windows 冒烟实测通过；mac/Linux 与 CI 执行未验证；截图开放项未选定）
 
 **固定样本：** `tests/fixtures/tiny`；启动冒烟使用 `--smoke` 模式。
 
@@ -14,13 +14,42 @@
 
 ## 验收项
 
-- [ ] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。
-- [ ] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。
-- [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵待用户确认**：推荐 Windows 主验收，mac/Linux 编译 + 启动冒烟）。
-- [ ] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。
-- [ ] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
+- [x] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。本地 `cargo build --locked --workspace` exit 0；CI 配置已加，**CI 实际执行未验证**。
+- [x] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。实测二进制墙钟 828ms，stdout `smoke: layout 3 modules, 2 edges, 1 bands` 与 `smoke: frame rendered`。
+- [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵待用户确认**：推荐 Windows 主验收，mac/Linux 编译 + 启动冒烟）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
+- [x] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。仓库无 `.github/dependabot.yml` / `renovate.json`；`Cargo.lock` 已跟踪。
+- [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
 - [ ] 截图能力：**当前未验证，不得记为通过**；路径选定后另加验收项（见下节）。
-- [ ] 自动化状态：构建与 Windows 启动冒烟自动化；mac/Linux 运行依赖可用 runner（**待用户确认**）；截图与视觉回归能力当前不可用（见 `docs/acceptance-gaps.md`）。
+- [x] 自动化状态：构建与 Windows 启动冒烟自动化；mac/Linux 运行依赖可用 runner（**待用户确认**）；截图与视觉回归能力当前不可用（见 `docs/acceptance-gaps.md`）。
+
+## 验收记录（2026-11-08，B 档）
+
+### 断言先于实现
+
+- 先写 `crates/arch-view/tests/smoke.rs`（4 条清单 + 2 个测试），再实现 `smoke` 子命令。
+- Red（实现前实测）：`cargo test -p arch-view --test smoke` → 1 failed / 1 passed；失败原因为退出码 `2` 与 stderr 只有 `map` / `timeline` 用法，缺少 `smoke: frame rendered`。
+- Green：实现 `run_smoke` 与 `SmokeView` 后 2 passed / 0 failed。
+
+### 实现要点
+
+- `arch-view smoke <repo>`：构建层产物与布局，打开 1200×800 窗口；`Render` 首次调用时用 `Window::on_next_frame` 注册「本帧渲染完成后」回调，回调打印 `smoke: frame rendered` 并 `cx.quit()`。
+- 2.5s 兜底定时器：未渲染则打印 `smoke: timeout waiting for first frame` 并退出；`Application::run` 返回后检查 `AtomicBool`，未渲染则进程 exit 2。
+- 缺仓库参数或多余参数退出码 `2`，stderr 给用法。
+
+### 读数（实测）
+
+- `cargo test -p arch-view --test smoke`：2 passed / 0 failed（1.81s）。
+- 二进制：`target/debug/arch-view.exe smoke tests/fixtures/tiny` → exit 0，墙钟 828ms，stdout 两行（布局读数 + 帧标记），stderr 空。
+- `cargo build --locked --workspace`：exit 0。
+- `cargo test --workspace`：117 passed / 0 failed；`cargo fmt --all --check` 通过。
+- 依赖控制：`gpui = "=0.2.2"`；`Cargo.lock` 已跟踪；无 dependabot/renovate 配置。
+
+### 已知偏差与未验证
+
+- **CI 未实际执行**：`.github/workflows/ci.yml` 只在本地落盘，没有远端运行记录；「锁文件不一致即失败」依赖 CI 的 `--locked`，未经实测。
+- **mac/Linux 未验证**：没有可用 runner；gpui 在 Linux 需要系统图形依赖，能否在 `ubuntu-latest` 直接构建未知。
+- **截图开放项未选定**：下方 (a)/(b)/(c)/(d) 仍需用户决策；本票不以截图作为通过条件，「渲染一帧」只由帧后回调标记证明，不代表像素正确。
+- **`cargo run` 计时口径**：3 秒预算按已构建二进制的墙钟计；`cargo run` 的冷编译时间不计入。
 
 ## 截图能力重新定义（2026-11-07，开放项）
 
