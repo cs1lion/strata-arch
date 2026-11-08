@@ -15,6 +15,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `arch-cli` 的 history 测试要求完整历史；默认浅克隆会让该测试以退出码 5 判红。
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: install gpu window deps (Linux)
         if: runner.os == 'Linux'
