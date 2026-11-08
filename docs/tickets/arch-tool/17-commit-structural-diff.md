@@ -106,9 +106,11 @@
   - `cargo run -p arch-cli -- drift tests/corpus/tsx --base eval/baseline/drift-tsx.json` → exit 0，四类 `newCount = resolvedCount = 0`。
   - `cargo run -p arch-cli -- drift tests/corpus/excalidraw --base eval/baseline/drift-excalidraw.json` → exit 0，四类全 0。
 - 未触碰 ticket 14/15/16 的既有判据与截图基线。
+- `arch-view diff . --from 2b66deb --to 29f8e27 --auto-close-ms 1200`：窗口启动、渲染入口淡入、自动关闭，exit 0；stdout
+  `added=25 removed=0 modified=0 renames=0`。
 
 ## 做到 / 没做到 / 未验证
 
-- **做到的**：上述计数、疑似重命名命中/漏报、同 commit 零变化、整目录删除、空文件、只读与确定性、三色块、淡入最终态恒定、关闭态逐位一致、时间源 0 命中、全量回归与 drift CI 均实测通过。
-- **没做到的**：未从真实帧缓冲采样最终色值（`gpui 0.2.2` 无公开离屏导出）；`arch-view diff` 窗口本轮未实际打开，只验证模型与编译；未提供 headless JSON 子命令。
-- **未验证的**：大仓库双 commit 快照的耗时与内存未测（本轮样本最大为 802 模块的 excalidraw 基线，但 P4 未对其跑 diff）；三色块的实际屏幕对比度未测；改名规则在真实仓库中的误报率只有合成样本的漏报对照。
+- **做到的**：上述计数、疑似重命名命中/漏报、同 commit 零变化、整目录删除、空文件、只读与确定性、三色块、淡入最终态恒定、关闭态逐位一致、时间源 0 命中、全量回归、drift CI、`arch-view diff` 窗口启动与干净退出均实测通过。
+- **没做到的**：未从真实帧缓冲采样最终色值（`gpui 0.2.2` 无公开离屏导出）；未提供 headless JSON 子命令（读数由测试与视图窗口 stdout 给出）。
+- **未验证的**：大仓库双 commit 快照的耗时与内存未测（本轮样本最大为 802 模块的 excalidraw 基线，但 P4 未对其跑 diff）；三色块的实际屏幕对比度未测；改名规则在真实仓库中的误报率只有合成样本的漏报对照；`with_animation` 的实际帧数与时长未打点。
