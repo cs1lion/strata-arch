@@ -110,6 +110,8 @@ while (-not $p.HasExited) {
 
 **限制与事实边界（不当自动化包装）：**
 
+- **揭示默认开启后的抓帧口径（2026-11-09）**：`map` 默认播放 16 帧静态预算的分层揭示，任何在 `content:presented` 抓取的截图都会落到动画中途。证据链统一等 `phase: reveal:done`（`map-pixel-compare.ps1` 默认），`capture-window.ps1` 默认加 `--no-reveal`。需要中途帧或精确栅格时显式用 `--no-reveal`，或等待明确的阶段标记；`pixel-evidence.ps1` 的 map 抓帧都是路径播放态，播放时揭示本就关闭。
+
 - **需要可见桌面会话**：无头 CI 不可用；整条链路登记为人工项，不进 CI 门禁。
 - **抓屏进程必须 DPI-aware**：PowerShell 默认 DPI-unaware 时 `GetWindowRect` 返回虚拟尺寸（1212×835），而 `PrintWindow` 按物理像素渲染（2728×1879），截图右下被裁切，底部播放面板与居中状态文案全部丢失。脚本启动时调用 `SetProcessDpiAwarenessContext(-4)`（per-monitor v2）后才完整。这是脚本前置条件，不是可选项。
 - **`PrintWindow` 动画首帧可能是空白帧**：实测开启动画后首帧只有标题栏可见、客户区全空，整帧平均亮度约 8.5（正常内容帧 24–30）。脚本用平均亮度 15 作为有效帧门限，跳过空白帧并在 `report.json` 的 `blankFrames` 记录编号，不把空白帧当作证据；本次复跑未出现空白帧，历史抓取曾出现 1 帧。替代方案：`capture-window.ps1 -Method screen` 走 `CopyFromScreen` 绕过 Direct3D 表面，或增大 `WarmupMs` 让后续帧稳定后再采。

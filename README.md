@@ -58,7 +58,7 @@ cargo run --release -p arch-cli -- path tests/fixtures/path --entries
 - **diff 在大仓上约 10 秒**：excalidraw（802 模块）热 diff 实测 median 约 9.8s、p95 约 10.2s。窗口先显示加载态与当前阶段，可随时关闭窗口或点「取消」立即退出；读数与预算见 [ticket 10](docs/tickets/arch-tool/10-performance-memory-baseline.md)。
 - **Linux 只在软件渲染下验证过**：CI 用 `xvfb` + `openbox` + Mesa lavapipe 跑窗口冒烟，只证明能开窗、出帧、干净退出，不代表真实 GPU 表现，也不代表画面正确；视觉判据见 [acceptance-gaps 2.2.1/2.2.2](docs/acceptance-gaps.md)。
 - **macOS 仅编译验证**：CI 构建通过，未在真机运行；依据见 ticket 11 与 CI run 42475740482。
-- **首屏揭示动画默认开启**：`--no-reveal` 关闭（与 `--reveal` 同时出现时以 `--no-reveal` 为准）。默认路径（视口裁剪 + 边批处理）在 excalidraw 语料上实测 6 层 80 帧约 2.5s；任意交互可立即跳到最终态。需要精确的静态截图或中途帧时用 `--no-reveal`。
+- **首屏揭示动画默认开启**：`--no-reveal` 关闭（与 `--reveal` 同时出现时以 `--no-reveal` 为准）。总帧数固定预算 16 帧（按层带均分，层间不留空档）；excalidraw 6 层带共 12 帧，本机实测约 0.33–0.35s，软件渲染（lavapipe 单核）最坏约 1.7–1.9s，按最慢观测帧间隔 272–278ms 折算上限约 3.3–3.8s。任意交互可立即跳到最终态。需要精确的静态截图或中途帧时用 `--no-reveal`。
 - **timeline / diff 需要真实历史**：无 `.git` 的归档副本（如 `tests/corpus/excalidraw`）不能用于 `timeline`；浅克隆会失败或找不到 `--from/--to` 指定的提交。
 - **符号与路径的已知缺口**：顶层 JSX 位于 `root.render(<...>)` 参数内时不产生 `module-toplevel` 的 jsx 边，这类入口无法给出路径（见 [ticket 06](docs/tickets/arch-tool/06-entry-target-guided-path-query.md)）。
 

@@ -439,4 +439,57 @@ B+A 揭示窗口内帧间隔 median 31.82–32.53ms、p95 37.77–40.18ms。
 - B（视口裁剪）本轮已实现并实测：**仅 B** 把中位数从 65.44ms 压到 54.30ms（−17.0%），仍未进 33ms；**B+A** 为 28.59/34.09ms，达到 median ≤33、p95 ≤50。因此 33ms 档的结论是「需要 A+B 同时开启」。
 - A 的视觉差异已按新常态闸门批准（标准场景 0.174% / maxDelta 90，≤0.30% / 100），A 默认开启；几何差异为 0，回落用 `STRATA_EDGE_BATCH=0`。B 在三个位置与平移位逐字节一致，同样默认开启。
 
+## 揭示默认开启与静态帧预算（2026-11-09）
+
+**决策**：`map` 首屏分层揭示默认开启，`--no-reveal` 关闭。`--reveal` 保留为兼容参数；两者同时出现时以 `--no-reveal` 为准，且与参数顺序无关（解析只记录「是否出现关闭」，开不参与决定）。用法与 README 已写明。原 `STRATA_EVIDENCE_REVEAL` 环境变量随默认开启失去意义，已移除。
+
+### 两环境实测（excalidraw，6 层带，`reveal:start → reveal:done`，各 3 次）
+
+| 配置 | 帧数 | Windows 本机（硬件） | lavapipe（多核） | lavapipe + 单核（低端代理） |
+| --- | --- | --- | --- | --- |
+| 改前（固定 10/4） | 80 帧 | 2472.8 / 2293.2 / 2181.8ms | 8140.2 / 7805.3 / 7788.4ms；5373.9 / 5229.5 / 5197.7ms | 15802.3 / 15543.9 / 15595.8ms；10810.1 / 10430.9 / 10683.6ms |
+| 20 帧预算 | 18 帧 | 485.8 / 547.5 / 460.5ms | 2636.3 / 2397.7 / 2395.5ms | 5002.6 / 4731.3 / 4762.6ms（帧间隔 256ms、p95 272ms） |
+| **16 帧预算（最终）** | **12 帧** | **336.8 / 351.7 / 332.5ms** | **957.6 / 845.8 / 829.4ms**（64ms/帧） | **1882.0 / 1786.9 / 1706.4ms**（144ms/帧、p95 147ms） |
+
+- 软件渲染两列来自 `workflow_dispatch` 的 `reveal budget (software rendering)` job（run `42525175834`/`42526697531`/`42528560449`/`42530878813`）；同一 job 内用 `taskset -c 0` 作单核低端代理。不同 runner 的帧间隔有约 2× 波动（96↔64、192↔128、256↔144ms），表内按轮次原样列出。
+- 小场景诊断（`tests/fixtures/layers`，8 层带）：108 帧时多核 3485.8ms、单核 6858.1ms；16 帧预算（16 帧）时多核 542.2ms、单核 1064.7ms。
+- 按最慢一轮观测到的帧间隔 272–278ms 折算，16 帧预算最坏约 3.3–3.8s，守住 5s。
+
+### 规则：静态总帧预算（推翻「模块数分档」）
+
+原设想是按模块数分档缩放帧数。实测推翻了它：**帧成本是「整窗光栅化的固定开销 + 与场景规模弱相关」**，不是按模块数线性增长。
+
+| 场景 | 模块数 | lavapipe 多核帧间隔 | lavapipe 单核帧间隔 |
+| --- | --- | --- | --- |
+| `tests/fixtures/layers` | 26 | 32–48ms | 64–112ms |
+| excalidraw | 802 | 64–128ms | 144–256ms |
+
+固定开销占单核帧间隔的约 44–50%，且跨 runner 波动约 2×；按模块数给不同预算时，「小场景 + 慢 runner」反而更难守住 5s。因此改为统一上限：
+
+- `REVEAL_FRAME_BUDGET = 16`：单层淡入帧数 `fade = clamp(16 / 层带数, 1, 10)`，层间不留空档（`REVEAL_GAP_FRAMES = 0`），总帧 = 层带数 × fade。
+- excalidraw 6 层带 → 2 帧/层、12 帧；`layers` 8 层带 → 2 帧/层、16 帧；层带超过 16 时退化为每层 1 帧。
+- 只读层带数这个静态量，不读墙钟；断言 `crates/arch-view/tests/first_screen_reveal.rs::total_frames_stay_within_static_budget` 守住上限。
+
+**代价**：本机 6 层带的揭示从 2.3–2.5s 缩到 0.33–0.35s，视觉上是一次快速分层级联而非慢速淡入；这是「最坏环境 ≤5s」与「不用墙钟自适应」两条约束下的必然取舍。
+
+### 抓帧口径同步（默认开启后必须等揭示结束）
+
+默认开启后，`content:presented` 落到动画中途；任何在该标记抓图的链路都会拿到中间帧。改动清单：
+
+| 脚本/测试 | 改动 | 说明 |
+| --- | --- | --- |
+| `eval/map-pixel-compare.ps1` | 默认等 `phase: reveal:done`；新增 `-NoReveal`（走 `content:presented`） | 本地重跑最终态读数不变：`base vs A` 0.174% / 90，`base vs B`、`A vs BA` 0/0 |
+| `eval/capture-window.ps1` | 默认 `map <Repo> --no-reveal` | 单帧默认抓最终布局，避免 1.5s 预热落在动画中途 |
+| `eval/frame-timing.ps1` | pan/idle/ab 显式 `--no-reveal`；reveal 模式保留 `--reveal`，自动退出上限参数化为 `-RevealAutoCloseMs` | 稳态帧率不把 80/16 帧动画算进去 |
+| `eval/path-timing.ps1` | `map` 分支加 `--no-reveal` | 加载时序保持历史口径 |
+| `eval/pixel-evidence.ps1` | 未改 | map 仅路径播放态；播放时 `reveal_allowed` 已关闭揭示 |
+| `crates/arch-view/tests/scene_snapshot.rs` | 未改 | 只导出 IR（`arch-view scene`），不启动窗口 |
+| `eval/release-check.ps1` | 未改 | 只断言启动退出码、自动关闭兜底；默认揭示会让该步多约 0.35s |
+
+文档约定（也是给后续脚本的规则）：**默认开启后，截图必须等 `reveal:done`；需要中途帧或精确栅格时显式用 `--no-reveal`，或等待明确的阶段标记。** 已写入 `README.md` 与 `docs/acceptance-gaps.md` 2.2.1。
+
+CI：`reveal budget` 为 `workflow_dispatch` 专属取证 job（不参与 push 门禁），产物 `reveal-budget` 保留 14 天；run `42530878813` 的 ubuntu/windows build、drift gate 与该 job 均绿，macOS 的 `smoke_renders_one_frame_and_exits_cleanly` 偶发 12s 内无首帧（exit 2、stderr 为空），已单独 rerun。
+
+未验证：真实低端硬件（非 CI 代理）的帧间隔；>16 层带场景的退化表现；揭示中途帧的跨进程像素对照（时序无法对齐，仍只覆盖最终态与不变式）。
+
 
