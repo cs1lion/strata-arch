@@ -51,28 +51,29 @@ jobs:
       - name: macos window smoke (map)
         # 平台矩阵最后一块空白：macOS 目前只有编译验证。这里复用同一套阶段标记
         # （STRATA_PHASE_MARKERS + `phase: content:presented`）与「exit 0 + 标记命中」判据，
-        # 不新造判定。--auto-close-ms 保证窗口自己退出；外层 python 计时器只防挂死。
+        # 不新造判定。--auto-close-ms 保证窗口自己退出；外层 bash 看门狗只防挂死。
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -uo pipefail
           mkdir -p out
           export STRATA_PHASE_MARKERS=1
-          set +e
-          python3 -c '
-import subprocess, sys
-log = open("out/macos-window-smoke.log", "w")
-cmd = ["./target/debug/arch-view", "map", "tests/fixtures/layers",
-       "--auto-close-ms", "5000", "--no-reveal"]
-try:
-    proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=90)
-except subprocess.TimeoutExpired:
-    log.write("macos smoke: timeout waiting for auto-close\n")
-    log.flush()
-    sys.exit(124)
-sys.exit(proc.returncode)
-'
-          status=$?
+          ./target/debug/arch-view map tests/fixtures/layers \
+            --auto-close-ms 5000 --no-reveal > out/macos-window-smoke.log 2>&1 &
+          pid=$!
+          # 纯 bash 看门狗：macOS runner 没有 GNU timeout，避免挂死拖满 job 上限。
+          for _ in $(seq 1 90); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "macos smoke: timeout waiting for auto-close" >> out/macos-window-smoke.log
+            kill -9 "$pid" 2>/dev/null || true
+            status=124
+          else
+            wait "$pid"
+            status=$?
+          fi
           set -e
           cat out/macos-window-smoke.log
           if [ "$status" -eq 0 ] && grep -q "phase: content:presented" out/macos-window-smoke.log; then
