@@ -15,6 +15,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arch_core::history::{
@@ -28,12 +29,16 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
+        // 并发用例可能在同一时钟刻度上取到相同 nanos，目录撞名会互相删除对方仓库
+        // （macOS CI 上表现为 git add 找不到目录），用进程内序号兜底。
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "arch-timeline-{tag}-{}-{nanos}",
+            "arch-timeline-{tag}-{}-{nanos}-{seq}",
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("create temp dir");
