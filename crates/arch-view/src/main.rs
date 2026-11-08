@@ -18,9 +18,7 @@ use arch_view::layout::{
 };
 use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
 use arch_view::timeline::{TimelineEntry, TimelineState};
-use arch_view::view::{
-    paint_symbol_edges, CanvasState, Level, SymbolLayout, Viewport,
-};
+use arch_view::view::{paint_symbol_edges, CanvasState, Level, SymbolLayout, Viewport};
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
     IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
