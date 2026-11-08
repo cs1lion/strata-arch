@@ -6,7 +6,7 @@
 
 **Blocked by:** 04（符号与调用图）、02（模块依赖边）、15/16（动画开关与帧回调接线，不修改其机制）。
 
-**Status:** in progress（判据先于实现固定；读数在实现后按同口径补充）。
+**Status:** done（判据先于实现固定；读数在实现后按同口径补充；2026-11-08 补大仓耗时并收口）。
 
 **固定样本/commit：**
 - 合成 fixture：测试内建 `git init` 仓库，两个提交（见 `crates/arch-core/tests/commit_diff.rs`）。
@@ -114,3 +114,11 @@
 - **做到的**：上述计数、疑似重命名命中/漏报、同 commit 零变化、整目录删除、空文件、只读与确定性、三色块、淡入最终态恒定、关闭态逐位一致、时间源 0 命中、全量回归、drift CI、`arch-view diff` 窗口启动与干净退出均实测通过。
 - **没做到的**：未从真实帧缓冲采样最终色值（`gpui 0.2.2` 无公开离屏导出）；未提供 headless JSON 子命令（读数由测试与视图窗口 stdout 给出）。
 - **未验证的**：大仓库双 commit 快照的耗时与内存未测（本轮样本最大为 802 模块的 excalidraw 基线，但 P4 未对其跑 diff）；三色块的实际屏幕对比度未测；改名规则在真实仓库中的误报率只有合成样本的漏报对照；`with_animation` 的实际帧数与时长未打点。
+
+## 大仓耗时（2026-11-08 收口）
+
+- 命令：`cargo test -p arch-core --test commit_diff large_corpus_commit_diff_wall_clock -- --ignored --nocapture --test-threads=1`
+- 固定样本：`tests/corpus/excalidraw`（1328 个文件、54.3MB、802 模块基线）复制到临时目录后 `git init`；base commit 为完整语料，head commit 新增 `perf-probe.ts`（`added=1`）。不使用语料原目录，因为它没有 `.git`。
+- 实测读数：`large corpus commit diff: 10589 ms; added=1 removed=0 modified=0 renames=0`；测试总时长 25.97s（含复制语料与两次 commit，计时区间只包 `diff_commits`）。
+- 口径：耗时包含两次 tree 物化、索引/调用图/依赖边构建与三类比对；不含测试的语料复制与 git commit。票 17 为 A+B 档，未钉性能阈值，本读数只作收口记录，不回调任何判据。
+- 仍未验证：真实帧缓冲色值采样（`gpui 0.2.2` 无公开离屏导出）、屏幕对比度、真实仓库改名误报率、`with_animation` 实际帧数。

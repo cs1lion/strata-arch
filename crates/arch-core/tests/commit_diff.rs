@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arch_core::commit_diff::{
     diff_commits, CommitDiffArtifact, RENAME_PATH_THRESHOLD, RENAME_SYMBOL_THRESHOLD,
@@ -339,4 +339,51 @@ fn repository_history_pair_has_expected_counts() {
         "repo pair: {} -> {}",
         artifact.from.commit, artifact.to.commit
     );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("create dir");
+    for entry in fs::read_dir(from).expect("read dir") {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).expect("copy file");
+        }
+    }
+}
+
+/// ticket 17 收口：大仓（excalidraw 语料）双 commit 快照的墙钟耗时。
+#[test]
+#[ignore]
+fn large_corpus_commit_diff_wall_clock() {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/excalidraw");
+    let temp = TempDir::new("large");
+    let dir = temp.path();
+    copy_tree(&corpus, dir);
+    init_repo(dir);
+    commit(dir, "2026-02-01T12:00:00Z", "base");
+    let base = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    write(
+        dir,
+        "perf-probe.ts",
+        "export function perfProbe() {\n  return 1;\n}\n",
+    );
+    commit(dir, "2026-02-02T12:00:00Z", "probe");
+    let head = run_git(dir, &["rev-parse", "HEAD"], None);
+
+    let started = Instant::now();
+    let artifact = diff(dir, &base, &head);
+    let elapsed = started.elapsed();
+    println!(
+        "large corpus commit diff: {} ms; added={} removed={} modified={} renames={}",
+        elapsed.as_millis(),
+        artifact.stats.added,
+        artifact.stats.removed,
+        artifact.stats.modified,
+        artifact.stats.renames
+    );
+    assert_counts(&artifact, 1, 0, 0);
 }
