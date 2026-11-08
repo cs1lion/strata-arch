@@ -126,7 +126,10 @@ fn transition_passes_through_intermediate_camera_centers() {
 
     let mut line = String::new();
     for (progress, center) in samples.iter().zip(centers.iter()) {
-        line.push_str(&format!("p={progress:.2} ({:.2},{:.2}) ", center.x, center.y));
+        line.push_str(&format!(
+            "p={progress:.2} ({:.2},{:.2}) ",
+            center.x, center.y
+        ));
     }
     eprintln!("transition centers: {line}");
 
@@ -193,7 +196,10 @@ fn transition_off_is_identical_to_instant_fly_to() {
     let target = camera_target(&instant, &path);
 
     let moved = instant.apply_fly_to(Some(target), SIZE);
-    assert!(moved, "the legacy instant path must still move the viewport");
+    assert!(
+        moved,
+        "the legacy instant path must still move the viewport"
+    );
 
     animated.set_transition_enabled(false);
     let started = animated.begin_fly_to(Some(target), SIZE);

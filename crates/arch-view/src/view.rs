@@ -288,10 +288,8 @@ impl CanvasState {
         let progress = progress.clamp(0.0, 1.0);
         transition.progress = progress;
         self.viewport = Viewport {
-            pan_x: transition.from.pan_x
-                + (transition.to.pan_x - transition.from.pan_x) * progress,
-            pan_y: transition.from.pan_y
-                + (transition.to.pan_y - transition.from.pan_y) * progress,
+            pan_x: transition.from.pan_x + (transition.to.pan_x - transition.from.pan_x) * progress,
+            pan_y: transition.from.pan_y + (transition.to.pan_y - transition.from.pan_y) * progress,
             zoom: transition.from.zoom,
         };
         if progress >= 1.0 {
