@@ -2,10 +2,14 @@
 name = "arch-view"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+description = "GPUI desktop view for Strata: layered architecture map, guided path playback and evolution timeline"
+repository = "https://github.com/cs1lion/strata-arch"
+# license 待定：发布前由维护者决定，勿填占位值
+keywords = ["gpui", "visualization", "typescript", "architecture", "gui"]
+categories = ["visualization", "development-tools", "graphics"]
 
 [dependencies]
-arch-core = { path = "../arch-core" }
+arch-core = { path = "../arch-core", version = "0.1.0" }
 gpui = "=0.2.2"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
