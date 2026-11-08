@@ -125,7 +125,7 @@ jobs:
           export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
           for i in 1 2 3; do
             xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
-              "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 150000 -OutJson out/reveal/soft-1cpu-$i.json" \
+              "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/soft-1cpu-$i.json" \
               2>&1 | tee "out/reveal/soft-1cpu-$i.log"
           done
       - name: reveal timing (small scene, lavapipe)
@@ -144,7 +144,7 @@ jobs:
           set -euo pipefail
           export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
           xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
-            "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 150000 -OutJson out/reveal/small-1cpu.json" \
+            "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 30000 -OutJson out/reveal/small-1cpu.json" \
             2>&1 | tee "out/reveal/small-1cpu.log"
       - name: summarize reveal durations
         shell: pwsh

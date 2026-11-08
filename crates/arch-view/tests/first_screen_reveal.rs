@@ -226,7 +226,7 @@ fn reveal_is_mutually_exclusive_with_p1_path_playback() {
 
 #[test]
 fn total_frames_stay_within_static_budget() {
-    // 软件渲染下帧间隔可达 210ms；20 帧 × 210ms ≈ 4.2s，必须守住 5s 上限。
+    // 软件渲染最坏实测帧间隔 272ms；16 帧 × 272ms ≈ 4.35s，守住 5s 上限。
     for stages in 1..=REVEAL_FRAME_BUDGET as usize {
         let reveal = RevealState::new(true, stages);
         assert!(
@@ -239,8 +239,8 @@ fn total_frames_stay_within_static_budget() {
             "{stages} 层时单层淡入不得为 0 帧"
         );
     }
-    // excalidraw 实测 6 层带：20/6 → 3 帧/层，共 18 帧。
-    assert_eq!(RevealState::new(true, 6).total_frames(), 18);
+    // excalidraw 实测 6 层带：16/6 → 2 帧/层，共 12 帧。
+    assert_eq!(RevealState::new(true, 6).total_frames(), 12);
     // 层带很多时退化为每层 1 帧，总帧数等于层数。
     assert_eq!(RevealState::new(true, 30).total_frames(), 30);
 }
