@@ -65,6 +65,14 @@
 - 失败判据：改写或删除原文、未写时间点、把 18 与 19 的工作混成同一结论。
 - 自动化状态：人工检查（纯文档）。
 
+## p95 门禁分层（2026-11-08 追加）
+
+- **严格档（人工确认）**：`model_frame_update_p95_is_within_budget` 仍为 `#[ignore]`，判据仍是 p95 ≤ 16.7ms，不放宽；命令 `cargo test -p arch-view --test timeline_playback model_frame_update_p95_is_within_budget -- --ignored --nocapture --test-threads=1`。本次读数：`[0.0161, 0.0054, 0.0046]ms`，worst=0.0161ms。
+- **默认回归档（长期开着）**：`model_frame_update_p95_does_not_regress_by_an_order_of_magnitude` 进入默认测试集，上限 167ms（严格预算的 10 倍），只抓数量级退化；判据不放宽 16.7ms。本次读数：`[0.0162, 0.0044, 0.0058]ms`，worst=0.0162ms。
+- **为什么分层**：16.7ms 是「单帧模型更新」的精确预算，只在安静机器 + 固定样本上人工确认才有意义；放进共享 CI 会因调度抖动误报。默认档用 10× 上限抓「每刻度重跑 git/采样」这类量级退化，既不误报，也不让门禁变成空档。
+- **10× 阈值的依据**：实测 worst 在 0.0125–0.0162ms，距 167ms 约四个数量级；而一次真正的退化（每刻度重跑 617 刻度的 git 采样）至少是几十毫秒到秒级（票 17 大仓双 commit 单次即 10589ms），所以 167ms 能抓住数量级变化，同时留足 CI 抖动余量。它不是精确预算，不替代严格档。
+- **CI 判断**：不新增执行 ignored 测试的 workflow 步骤。默认回归档已经随 `cargo test --workspace` 在三个 build job 里跑；严格档需要安静机器，放 CI 只会制造噪声。workflow 结构本轮不改。
+
 ## 技术债登记
 
 - `TimelinePlayback` 与 07 `PlaybackState` 是两套状态机，语义有重叠（播放/暂停/单步/结束态）。

@@ -485,24 +485,26 @@ fn missing_tick_jump_shows_explicit_gap_notice() {
     assert_eq!(timeline.gap_notice(), None, "成功拖动后必须清空提示");
 }
 
-/// ticket 19 判据 3（C 档）：模型单帧更新 p95 ≤16.7ms，3 次运行 × 19 步。
-#[test]
-#[ignore]
-fn model_frame_update_p95_is_within_budget() {
-    let repo = fixture_repo();
-    let base = tick_times(&repo);
+/// 严格预算：模型单帧更新 p95 ≤16.7ms（人工确认用，固定硬件/固定样本）。
+const P95_BUDGET_MS: f64 = 16.7;
+/// 默认测试集的回归上限：预算的一个数量级，只抓「每刻度重跑 git/采样」这类量级退化。
+const P95_REGRESSION_CEILING_MS: f64 = P95_BUDGET_MS * 10.0;
+
+fn budget_times(repo: &PathBuf) -> Vec<u64> {
+    let base = tick_times(repo);
     let mut times = base.clone();
     while times.len() < 20 {
         times.push(*base.last().expect("fixture times"));
     }
-    let ids = {
-        let probe = timeline_from(&repo, &times);
-        union_ids(&probe)
-    };
+    times
+}
 
+/// 3 次运行 × 19 步，返回每轮 p95（毫秒）；计时只包模型更新，不包样本准备。
+fn measure_model_frame_p95(repo: &PathBuf, times: &[u64]) -> Vec<f64> {
+    let ids = union_ids(&timeline_from(repo, times));
     let mut run_p95 = Vec::new();
     for run in 0..3 {
-        let mut timeline = timeline_from(&repo, &times);
+        let mut timeline = timeline_from(repo, times);
         let mut playback = TimelinePlayback::new(timeline.ticks());
         playback.on_scrub(0);
         assert!(playback.play());
@@ -536,8 +538,34 @@ fn model_frame_update_p95_is_within_budget() {
         );
         run_p95.push(p95);
     }
+    run_p95
+}
 
+/// ticket 19 判据 3（C 档）：严格 16.7ms 预算，保留 `#[ignore]` 供人工确认。
+#[test]
+#[ignore]
+fn model_frame_update_p95_is_within_budget() {
+    let repo = fixture_repo();
+    let times = budget_times(&repo);
+    let run_p95 = measure_model_frame_p95(&repo, &times);
     let worst = run_p95.iter().copied().fold(0.0, f64::max);
     println!("model frame update p95 per run: {run_p95:?}; worst={worst:.4}ms");
-    assert!(worst <= 16.7, "模型单帧 p95 超预算: {worst:.4}ms > 16.7ms");
+    assert!(
+        worst <= P95_BUDGET_MS,
+        "模型单帧 p95 超预算: {worst:.4}ms > {P95_BUDGET_MS}ms"
+    );
+}
+
+/// 默认回归门禁：上限为预算的 10 倍，只抓数量级退化，不因 CI 抖动误报。
+#[test]
+fn model_frame_update_p95_does_not_regress_by_an_order_of_magnitude() {
+    let repo = fixture_repo();
+    let times = budget_times(&repo);
+    let run_p95 = measure_model_frame_p95(&repo, &times);
+    let worst = run_p95.iter().copied().fold(0.0, f64::max);
+    println!("model frame update regression guard p95 per run: {run_p95:?}; worst={worst:.4}ms");
+    assert!(
+        worst <= P95_REGRESSION_CEILING_MS,
+        "模型单帧 p95 出现数量级退化: {worst:.4}ms > {P95_REGRESSION_CEILING_MS}ms"
+    );
 }
