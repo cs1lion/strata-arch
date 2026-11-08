@@ -6,10 +6,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arch_core::commit_diff::{
-    diff_commits, CommitDiffArtifact, RENAME_PATH_THRESHOLD, RENAME_SYMBOL_THRESHOLD,
+    diff_commits, diff_commits_cancellable, diff_commits_with_progress, CommitDiffArtifact,
+    CommitDiffError, DiffProgress, RENAME_PATH_THRESHOLD, RENAME_SYMBOL_THRESHOLD,
 };
 
 const TOOL_VERSION: &str = "test";
@@ -146,6 +148,50 @@ fn build_fixture_repo() -> FixtureRepo {
 
 fn diff(repo: &Path, from: &str, to: &str) -> CommitDiffArtifact {
     diff_commits(repo, from, to, TOOL_VERSION).expect("commit diff")
+}
+
+#[test]
+fn diff_honours_cancel_flag_before_work() {
+    let repo = build_fixture_repo();
+    let cancel = AtomicBool::new(true);
+    let result = diff_commits_cancellable(
+        repo.path(),
+        &repo.base,
+        &repo.head,
+        TOOL_VERSION,
+        &cancel,
+        |_| {},
+    );
+
+    assert!(
+        matches!(result, Err(CommitDiffError::Cancelled)),
+        "取消标志必须在任何快照导出前生效，实际: {result:?}"
+    );
+}
+
+#[test]
+fn diff_reports_progress_stages_in_order() {
+    let repo = build_fixture_repo();
+    let mut stages = Vec::new();
+    let artifact =
+        diff_commits_with_progress(repo.path(), &repo.base, &repo.head, TOOL_VERSION, |stage| {
+            stages.push(stage)
+        })
+        .expect("commit diff with progress");
+
+    assert_eq!(artifact.stats.added, 3, "进度回调不改变 diff 结果");
+    assert_eq!(
+        stages,
+        vec![
+            DiffProgress::Resolving,
+            DiffProgress::MaterializingFrom,
+            DiffProgress::MaterializingTo,
+            DiffProgress::FactsFrom,
+            DiffProgress::FactsTo,
+            DiffProgress::Comparing,
+        ],
+        "阶段顺序必须覆盖两个快照的导出与事实构建，前后不得跳步"
+    );
 }
 
 fn assert_counts(artifact: &CommitDiffArtifact, added: usize, removed: usize, modified: usize) {

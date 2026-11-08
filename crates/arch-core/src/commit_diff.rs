@@ -20,7 +20,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// 结构 diff 产物的独立 schema 版本，不复用其他产物的版本号。
 pub const COMMIT_DIFF_SCHEMA_VERSION: u32 = 1;
@@ -101,6 +101,7 @@ pub enum CommitDiffError {
     UnknownCommit(String),
     Git(String),
     Io(String),
+    Cancelled,
 }
 
 impl std::fmt::Display for CommitDiffError {
@@ -113,11 +114,36 @@ impl std::fmt::Display for CommitDiffError {
             CommitDiffError::UnknownCommit(commit) => write!(formatter, "未知 commit: {commit}"),
             CommitDiffError::Git(message) => write!(formatter, "git 调用失败: {message}"),
             CommitDiffError::Io(message) => write!(formatter, "读取目标仓库失败: {message}"),
+            CommitDiffError::Cancelled => write!(formatter, "已取消"),
         }
     }
 }
 
 impl std::error::Error for CommitDiffError {}
+
+/// 结构 diff 的阶段，用于在长操作期间向 UI 汇报当前进度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffProgress {
+    Resolving,
+    MaterializingFrom,
+    MaterializingTo,
+    FactsFrom,
+    FactsTo,
+    Comparing,
+}
+
+impl DiffProgress {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Resolving => "解析提交",
+            Self::MaterializingFrom => "导出 from 提交快照",
+            Self::MaterializingTo => "导出 to 提交快照",
+            Self::FactsFrom => "构建 from 索引与调用图",
+            Self::FactsTo => "构建 to 索引与调用图",
+            Self::Comparing => "比对结构差异",
+        }
+    }
+}
 
 impl From<ScanError> for CommitDiffError {
     fn from(error: ScanError) -> Self {
@@ -139,6 +165,60 @@ pub fn diff_commits(
     to: &str,
     tool_version: &str,
 ) -> Result<CommitDiffArtifact, CommitDiffError> {
+    diff_commits_with_progress(root, from, to, tool_version, |_| {})
+}
+
+/// 与 [`diff_commits`] 相同，但在每个阶段开始时回调 `report`。
+/// 回调在调用线程上同步执行，调用方若在后台线程运行，可据此转发进度。
+pub fn diff_commits_with_progress<F>(
+    root: &Path,
+    from: &str,
+    to: &str,
+    tool_version: &str,
+    mut report: F,
+) -> Result<CommitDiffArtifact, CommitDiffError>
+where
+    F: FnMut(DiffProgress),
+{
+    diff_commits_impl(root, from, to, tool_version, None, &mut report)
+}
+
+/// 与 [`diff_commits_with_progress`] 相同，并在每个可中断的边界检查 `cancelled`。
+/// 命中后返回 [`CommitDiffError::Cancelled`]，已创建的临时快照会照常清理。
+pub fn diff_commits_cancellable<F>(
+    root: &Path,
+    from: &str,
+    to: &str,
+    tool_version: &str,
+    cancelled: &AtomicBool,
+    mut report: F,
+) -> Result<CommitDiffArtifact, CommitDiffError>
+where
+    F: FnMut(DiffProgress),
+{
+    diff_commits_impl(root, from, to, tool_version, Some(cancelled), &mut report)
+}
+
+fn check_cancelled(cancelled: Option<&AtomicBool>) -> Result<(), CommitDiffError> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+        return Err(CommitDiffError::Cancelled);
+    }
+    Ok(())
+}
+
+fn diff_commits_impl<F>(
+    root: &Path,
+    from: &str,
+    to: &str,
+    tool_version: &str,
+    cancelled: Option<&AtomicBool>,
+    report: &mut F,
+) -> Result<CommitDiffArtifact, CommitDiffError>
+where
+    F: FnMut(DiffProgress),
+{
+    report(DiffProgress::Resolving);
+    check_cancelled(cancelled)?;
     let requested = PathBuf::from(root);
     if !requested.is_dir() {
         return Err(CommitDiffError::NotDirectory(display_path(&requested)));
@@ -165,11 +245,21 @@ pub fn diff_commits(
 
     let from_snapshot = SnapshotDir::new("from")?;
     let to_snapshot = SnapshotDir::new("to")?;
-    materialize_tree(&toplevel, &from_commit, from_snapshot.path())?;
-    materialize_tree(&toplevel, &to_commit, to_snapshot.path())?;
+    report(DiffProgress::MaterializingFrom);
+    check_cancelled(cancelled)?;
+    materialize_tree(&toplevel, &from_commit, from_snapshot.path(), cancelled)?;
+    report(DiffProgress::MaterializingTo);
+    check_cancelled(cancelled)?;
+    materialize_tree(&toplevel, &to_commit, to_snapshot.path(), cancelled)?;
+    report(DiffProgress::FactsFrom);
+    check_cancelled(cancelled)?;
     let from_facts = snapshot_facts(from_snapshot.path(), tool_version)?;
+    check_cancelled(cancelled)?;
+    report(DiffProgress::FactsTo);
     let to_facts = snapshot_facts(to_snapshot.path(), tool_version)?;
+    check_cancelled(cancelled)?;
 
+    report(DiffProgress::Comparing);
     Ok(build_artifact(
         from_facts,
         to_facts,
@@ -288,7 +378,13 @@ impl Drop for SnapshotDir {
 }
 
 /// 把 commit 的 blob 落到 `destination`；只写临时目录。
-fn materialize_tree(repo: &Path, commit: &str, destination: &Path) -> Result<(), CommitDiffError> {
+fn materialize_tree(
+    repo: &Path,
+    commit: &str,
+    destination: &Path,
+    cancelled: Option<&AtomicBool>,
+) -> Result<(), CommitDiffError> {
+    check_cancelled(cancelled)?;
     let listing = git(repo, &["ls-tree", "-r", "-z", "--full-tree", commit])?;
     let mut entries = Vec::<(String, String)>::new();
 
@@ -341,7 +437,10 @@ fn materialize_tree(repo: &Path, commit: &str, destination: &Path) -> Result<(),
         .ok_or_else(|| CommitDiffError::Git("cat-file 缺少 stdout".to_string()))?;
     let mut reader = BufReader::new(stdout);
 
-    for (path, _) in &entries {
+    for (index, (path, _)) in entries.iter().enumerate() {
+        if index % 32 == 0 {
+            check_cancelled(cancelled)?;
+        }
         let mut header = String::new();
         reader
             .read_line(&mut header)
