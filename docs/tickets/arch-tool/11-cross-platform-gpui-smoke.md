@@ -16,7 +16,7 @@
 
 - [x] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。本地 `cargo build --locked --workspace` exit 0；CI 配置已加，**CI 实际执行未验证**。
 - [x] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。实测二进制墙钟 828ms，stdout `smoke: layout 3 modules, 2 edges, 1 bands` 与 `smoke: frame rendered`。
-- [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵待用户确认**：推荐 Windows 主验收，mac/Linux 编译 + 启动冒烟）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
+- [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵已裁决 2026-11-08：Windows 主验收；macOS/Linux 仅编译未验证，无 runner 实际执行**）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
 - [x] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。仓库无 `.github/dependabot.yml` / `renovate.json`；`Cargo.lock` 已跟踪。
 - [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
 - [x] 截图能力：按 2026-11-08 裁决执行为「IR 快照进 CI + Windows OS 捕获人工证据」。IR 快照 `arch-view scene` 输出节点/边/层带/z-order/命中框，同输入两次字节一致；`eval/capture-window.ps1` 为手动脚本，不参与 CI。**mac/Linux 截图不做，未验证。**
