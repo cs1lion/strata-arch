@@ -37,6 +37,7 @@
 #   pwsh eval/drift-gate.ps1 -CorpusRoot D:\project\1107\tests\corpus
 #   pwsh eval/drift-gate.ps1 -CorpusUnavailable                # CI pin 校验失败时强制视为缺失
 #   pwsh eval/drift-gate.ps1 -PlanOnly                         # 只输出计划，不跑检测
+#   pwsh eval/drift-gate.ps1 -ForceFull                        # 保守全跑（workflow_dispatch 用）
 #   pwsh eval/drift-gate.ps1 -RequireCorpus                    # 评估环境：语料缺失即失败
 
 [CmdletBinding()]
@@ -48,6 +49,7 @@ param(
     [string]$CorpusManifest = "eval/corpus.toml",
     [string]$OutJson = "out/drift-gate.json",
     [switch]$PlanOnly,
+    [switch]$ForceFull,
     [switch]$RequireCorpus,
     [switch]$CorpusUnavailable
 )
@@ -144,6 +146,13 @@ if (-not $change.Known) {
         if (Test-AnyPattern $file $corpusPatterns) { $corpusRequired = $true }
         if (Test-AnyPattern $file $baselinePatterns) { $baselineTouched = $true }
     }
+}
+
+# 手动触发没有可靠的 before/base 事件字段；CI 用 origin/<默认分支> 作为 diff 基线
+# 以便仍能识别基线改动，同时用 -ForceFull 保持「dispatch 保守全跑」语义。
+if ($ForceFull) {
+    $selfRequired = $true
+    $corpusRequired = $true
 }
 
 $corpusRepos = Get-CorpusRepos -Manifest $CorpusManifest

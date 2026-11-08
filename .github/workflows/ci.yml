@@ -42,20 +42,33 @@ jobs:
         id: plan
         shell: pwsh
         run: |
+          $event = "${{ github.event_name }}"
           $base = "${{ github.base_ref }}"
           if ($base) {
             $base = "origin/$base"
           } else {
             $base = "${{ github.event.before }}"
           }
-          if (-not $base -or $base -match '^0+$') { $base = 'NONE' }
-          $plan = @(pwsh -NoProfile -File eval/drift-gate.ps1 -PlanOnly -BaseRef $base)
+          $forceFull = $event -eq 'workflow_dispatch'
+          if (-not $base -or $base -match '^0+$') {
+            # dispatch 没有 before；用默认分支做 diff 基线，仍能识别基线改动，
+            # 同时靠 -ForceFull 保持保守全跑。
+            if ($forceFull) {
+              $base = 'origin/${{ github.event.repository.default_branch }}'
+            } else {
+              $base = 'NONE'
+            }
+          }
+          $planArgs = @('-NoProfile', '-File', 'eval/drift-gate.ps1', '-PlanOnly', '-BaseRef', $base)
+          if ($forceFull) { $planArgs += '-ForceFull' }
+          $plan = @(& pwsh @planArgs)
           $plan | Write-Output
           $required = if ($plan -contains 'required=true') { 'true' } else { 'false' }
           $corpusRequired = if ($plan -contains 'corpus_required=true') { 'true' } else { 'false' }
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "required=$required"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "corpus_required=$corpusRequired"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "base=$base"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "force_full=$($forceFull.ToString().ToLower())"
       - name: restore corpus cache
         id: corpus-cache
         if: steps.plan.outputs.required == 'true' && steps.plan.outputs.corpus_required == 'true'
@@ -97,6 +110,9 @@ jobs:
           CORPUS_VERIFIED: ${{ steps.corpus-verify.outputs.verified }}
         run: |
           $argv = @('-NoProfile', '-File', 'eval/drift-gate.ps1', '-BaseRef', '${{ steps.plan.outputs.base }}')
+          if ('${{ steps.plan.outputs.force_full }}' -eq 'true') {
+            $argv += '-ForceFull'
+          }
           if ($env:PLAN_CORPUS_REQUIRED -eq 'true' -and $env:CORPUS_VERIFIED -ne 'true') {
             $argv += '-CorpusUnavailable'
           }
