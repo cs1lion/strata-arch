@@ -1,4 +1,5 @@
 use arch_core::callgraph::{build_call_graph_with_options, CallGraphOptions};
+use arch_core::drift::{build_drift, record_baseline, DriftBaseline, DRIFT_SCHEMA_VERSION};
 use arch_core::guided_path::{build_path, list_entries, render_narrative, PathError};
 use arch_core::history::{build_history, HistoryError, HistoryOptions};
 use arch_core::{build_index, layers::build_layers, ScanError, SCHEMA_VERSION};
@@ -16,7 +17,9 @@ const USAGE: &str = "用法:
       [--max-commits <N>] [--since <日期>] [--until <日期>]
   arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>] --entries
   arch-cli path [<目标仓库>|--repo <目标仓库>] [--out <产物文件>]
-      --from <入口ID> --to <符号ID> [--narrative]";
+      --from <入口ID> --to <符号ID> [--narrative]
+  arch-cli drift <目标仓库> --record --out <基线文件>
+  arch-cli drift <目标仓库> --base <基线文件> [--out <报告文件>]";
 
 enum CliError {
     Input(String),
@@ -24,6 +27,8 @@ enum CliError {
     History(String),
     /// 调用图中不存在从入口到目标的路径。
     Unreachable(String),
+    /// 漂移门禁未通过（报告已完整输出，退出码 1）。
+    DriftDetected(String),
     Internal(String),
 }
 
@@ -41,6 +46,10 @@ fn main() -> ExitCode {
         Err(CliError::Unreachable(message)) => {
             eprintln!("错误: {message}");
             ExitCode::from(4)
+        }
+        Err(CliError::DriftDetected(message)) => {
+            eprintln!("错误: {message}");
+            ExitCode::from(1)
         }
         Err(CliError::Internal(message)) => {
             eprintln!("内部错误: {message}");
@@ -68,6 +77,7 @@ fn run() -> Result<(), CliError> {
         "callgraph" => run_callgraph(args),
         "history" => run_history(args),
         "path" => run_path(args),
+        "drift" => run_drift(args),
         other => Err(CliError::Input(format!("未知子命令: {other}\n{USAGE}"))),
     }
 }
@@ -342,6 +352,126 @@ fn path_error(error: PathError) -> CliError {
         }
         PathError::Io(message) => CliError::Internal(message),
     }
+}
+
+struct DriftCliOptions {
+    target: PathBuf,
+    base: Option<PathBuf>,
+    record: bool,
+    out: Option<PathBuf>,
+}
+
+fn run_drift(args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let options = parse_drift_args(args)?;
+    let version = env!("CARGO_PKG_VERSION");
+
+    if options.record {
+        let layers = build_layers(&options.target, version).map_err(scan_error)?;
+        let baseline = record_baseline(&layers, version);
+        let json = serde_json::to_string_pretty(&baseline)
+            .map_err(|error| CliError::Internal(format!("序列化基线失败: {error}")))?;
+        return emit_json(&json, options.out);
+    }
+
+    let base_path = options
+        .base
+        .expect("parse_drift_args requires --base when --record is absent");
+    let text = fs::read_to_string(&base_path).map_err(|error| {
+        CliError::Input(format!("读取基线失败 {}: {error}", base_path.display()))
+    })?;
+    let baseline: DriftBaseline = serde_json::from_str(&text).map_err(|error| {
+        CliError::Input(format!(
+            "基线 JSON 解析失败 {}: {error}",
+            base_path.display()
+        ))
+    })?;
+    if baseline.schema_version != DRIFT_SCHEMA_VERSION {
+        return Err(CliError::Input(format!(
+            "基线 schemaVersion 不匹配: 期望 {DRIFT_SCHEMA_VERSION}，实际 {}",
+            baseline.schema_version
+        )));
+    }
+
+    let artifact = build_drift(&options.target, version, &baseline).map_err(scan_error)?;
+    let json = serde_json::to_string_pretty(&artifact)
+        .map_err(|error| CliError::Internal(format!("序列化报告失败: {error}")))?;
+    emit_json(&json, options.out)?;
+
+    if !artifact.gate.passed {
+        return Err(CliError::DriftDetected(format!(
+            "漂移门禁未通过: {} 条新增违规，详见报告 newViolations",
+            artifact.new_violations.len()
+        )));
+    }
+
+    Ok(())
+}
+
+fn parse_drift_args(mut args: impl Iterator<Item = String>) -> Result<DriftCliOptions, CliError> {
+    let usage_missing = || CliError::Input(format!("drift 缺少目标仓库路径\n{USAGE}"));
+
+    let mut target: Option<PathBuf> = None;
+    let mut base: Option<PathBuf> = None;
+    let mut record = false;
+    let mut out: Option<PathBuf> = None;
+
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--repo" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--repo 缺少目标仓库路径".to_string()))?;
+                if target.is_some() {
+                    return Err(CliError::Input("drift 只接受一个目标仓库路径".to_string()));
+                }
+                target = Some(PathBuf::from(value));
+            }
+            "--base" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--base 缺少基线文件路径".to_string()))?;
+                base = Some(PathBuf::from(value));
+            }
+            "--record" => record = true,
+            "--out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Input("--out 缺少文件路径".to_string()))?;
+                out = Some(PathBuf::from(value));
+            }
+            other if other.starts_with("--") => {
+                return Err(CliError::Input(format!("未知参数: {other}\n{USAGE}")));
+            }
+            positional => {
+                if target.is_some() {
+                    return Err(CliError::Input(format!(
+                        "drift 只接受一个目标仓库路径，多余参数: {positional}"
+                    )));
+                }
+                target = Some(PathBuf::from(positional));
+            }
+        }
+    }
+
+    let target = target.ok_or_else(usage_missing)?;
+    if record {
+        if base.is_some() {
+            return Err(CliError::Input(
+                "--record 不能与 --base 同时使用".to_string(),
+            ));
+        }
+    } else if base.is_none() {
+        return Err(CliError::Input(format!(
+            "drift 需要 --record 或 --base <基线文件>\n{USAGE}"
+        )));
+    }
+
+    Ok(DriftCliOptions {
+        target,
+        base,
+        record,
+        out,
+    })
 }
 
 fn parse_repo_and_out(

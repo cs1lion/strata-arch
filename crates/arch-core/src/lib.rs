@@ -5,6 +5,7 @@
 
 pub mod callgraph;
 pub(crate) mod config;
+pub mod drift;
 pub mod guided_path;
 pub mod history;
 pub(crate) mod imports;
