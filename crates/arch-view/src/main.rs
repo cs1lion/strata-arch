@@ -13,9 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
+use arch_core::commit_diff::diff_commits;
 use arch_core::guided_path::build_path;
 use arch_core::history::{build_history, HistoryOptions};
 use arch_core::layers::build_layers;
+use arch_view::diff::{DiffFade, DiffModel, DIFF_LABEL, FADE_DURATION_MS};
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
@@ -35,6 +37,7 @@ use gpui::{
 const USAGE: &str = "用法:
   arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
   arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]
+  arch-view diff <目标仓库> --from <commit> --to <commit> [--no-fade] [--auto-close-ms <毫秒>]
   arch-view scene <目标仓库> [--out <场景文件>]
   arch-view smoke <目标仓库>";
 
@@ -49,6 +52,13 @@ fn main() -> ExitCode {
             }
         },
         Some("timeline") => match run_timeline(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                ExitCode::from(2)
+            }
+        },
+        Some("diff") => match run_diff(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("{message}");
@@ -250,6 +260,202 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     });
 
     Ok(())
+}
+
+fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let target = args
+        .next()
+        .ok_or_else(|| format!("diff 缺少目标仓库路径\n{USAGE}"))?;
+    if target.starts_with("--") {
+        return Err(format!("diff 缺少目标仓库路径\n{USAGE}"));
+    }
+
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
+    let mut auto_close_ms: Option<u64> = None;
+    let mut fade_enabled = true;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--from" => {
+                from = Some(
+                    args.next()
+                        .ok_or_else(|| "--from 缺少 commit".to_string())?,
+                );
+            }
+            "--to" => {
+                to = Some(args.next().ok_or_else(|| "--to 缺少 commit".to_string())?);
+            }
+            "--auto-close-ms" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--auto-close-ms 缺少毫秒数".to_string())?;
+                auto_close_ms = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
+                );
+            }
+            "--no-fade" => fade_enabled = false,
+            other => return Err(format!("未知参数: {other}\n{USAGE}")),
+        }
+    }
+
+    let from = from.ok_or_else(|| format!("diff 缺少 --from\n{USAGE}"))?;
+    let to = to.ok_or_else(|| format!("diff 缺少 --to\n{USAGE}"))?;
+    let repo = PathBuf::from(&target);
+    let artifact = diff_commits(&repo, &from, &to, env!("CARGO_PKG_VERSION"))
+        .map_err(|error| format!("构建结构 diff 失败: {error}"))?;
+    println!(
+        "diff: from={} to={} added={} removed={} modified={} renames={}",
+        artifact.from.commit,
+        artifact.to.commit,
+        artifact.stats.added,
+        artifact.stats.removed,
+        artifact.stats.modified,
+        artifact.stats.renames
+    );
+    let model = DiffModel::from_artifact(&artifact);
+
+    Application::new().run(move |cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            move |_, cx| {
+                cx.new(|_| DiffView {
+                    model,
+                    fade_enabled,
+                    fade_generation: 0,
+                })
+            },
+        )
+        .expect("open diff window");
+        cx.activate(true);
+
+        if let Some(milliseconds) = auto_close_ms {
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(milliseconds))
+                    .await;
+                let _ = cx.update(|cx| cx.quit());
+            })
+            .detach();
+        }
+    });
+
+    Ok(())
+}
+
+struct DiffView {
+    model: DiffModel,
+    fade_enabled: bool,
+    fade_generation: u64,
+}
+
+impl Render for DiffView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let fade = DiffFade::new(self.fade_enabled);
+        let generation = self.fade_generation;
+        let header = format!(
+            "{} → {} · 新增 {} / 删除 {} / 修改 {} · 疑似重命名 {}",
+            short_commit(&self.model.from_commit),
+            short_commit(&self.model.to_commit),
+            self.model.added,
+            self.model.removed,
+            self.model.modified,
+            self.model.renames
+        );
+
+        let mut root = div()
+            .id("diff-root")
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .size_full()
+            .p(px(14.))
+            .bg(rgb(0x0d1117))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(div().text_sm().text_color(rgb(0xe6edf3)).child(header))
+                    .child(
+                        div()
+                            .id("diff-fade")
+                            .px(px(8.))
+                            .py(px(3.))
+                            .rounded(px(4.))
+                            .bg(rgb(0x1f2937))
+                            .text_xs()
+                            .text_color(rgb(0xe6edf3))
+                            .child(if self.fade_enabled {
+                                "淡入: 开"
+                            } else {
+                                "淡入: 关"
+                            })
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.fade_enabled = !this.fade_enabled;
+                                if this.fade_enabled {
+                                    this.fade_generation += 1;
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            );
+
+        if self.model.rows.is_empty() {
+            root = root.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x8b9bb0))
+                    .child("两个 commit 没有结构变化"),
+            );
+            return root;
+        }
+
+        for row in &self.model.rows {
+            let text = match &row.rename_hint {
+                Some(hint) => format!(
+                    "{} {} · {} · 疑似重命名 ↔ {}",
+                    row.kind.label(),
+                    row.path,
+                    row.detail,
+                    hint
+                ),
+                None => format!("{} {} · {}", row.kind.label(), row.path, row.detail),
+            };
+            let index = row.z_index;
+            let element = div()
+                .id(("diff-row", index as usize))
+                .flex()
+                .items_center()
+                .px(px(10.))
+                .py(px(5.))
+                .rounded(px(4.))
+                .bg(rgb(row.kind.tint()))
+                .text_xs()
+                .text_color(rgb(DIFF_LABEL))
+                .child(text);
+            if self.fade_enabled {
+                root = root.child(element.with_animation(
+                    ("diff-fade-row", (generation << 16) | index as u64),
+                    Animation::new(Duration::from_millis(FADE_DURATION_MS)),
+                    move |element, progress| element.opacity(fade.alpha_at(progress)),
+                ));
+            } else {
+                root = root.child(element);
+            }
+        }
+
+        root
+    }
+}
+
+fn short_commit(commit: &str) -> &str {
+    commit.get(..7).unwrap_or(commit)
 }
 
 fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, String> {
