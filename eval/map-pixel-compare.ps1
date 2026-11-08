@@ -1,15 +1,20 @@
-# A/D 视觉等价证据：同窗口尺寸抓静态最终态，按票 10 先验容差比较像素。
+# A/B 视觉等价证据：同窗口尺寸、同一固定相机位抓静态最终态，按票 10 先验容差比较像素。
 #
-# 容差（票 10「A/D 视觉等价容差」，测量前固定）：
-#   A      base vs A         changed% <= 0.50%，单像素最大通道差 <= 24
-#   D1     A vs AD1          changed% <= 0.01%，单像素最大通道差 <= 2
-#   D2     AD1 vs ADclip     changed% <= 0.50%，单像素最大通道差 <= 24（超出即判可选、默认关）
+# 容差（票 10「B 视口裁剪视觉等价容差」，测量前固定）：
+#   B       base vs B          changed% = 0 且单像素最大通道差 = 0（只剪完全在视口外）
+#   B+A     A vs BA            changed% = 0 且单像素最大通道差 = 0（裁剪叠加在 A 上不新增差异）
+#   A       base vs A          changed% <= 0.50%，单像素最大通道差 <= 24（历史判据，保留读数）
 # 口径：通道差 > 6 记为变化像素；最大通道差取所有像素三通道差的最大值。
+#
+# 位置：默认只测 `default=0,0,1`（与旧读数同口径）；用 `-Positions` 指定多个
+# `名称=panX,panY,zoom`，经 `STRATA_EVIDENCE_VIEWPORT` 把相机固定在抓帧前，保证
+# 跨配置比较的是同一相机位。
 #
 # 用法：
 #   cargo build --release -p arch-view
 #   pwsh -File eval/map-pixel-compare.ps1
 #   pwsh -File eval/map-pixel-compare.ps1 -Repo tests/fixtures/layers -OutDir out/map-pixel-layers
+#   pwsh -File eval/map-pixel-compare.ps1 -Positions "p1=0,0,1;p2=-240,-160,0.4;p3=-100,-400,0.25"
 #
 # 依赖可见桌面会话（Windows）；产物在 out/ 下，已被 .gitignore 排除。
 
@@ -21,12 +26,16 @@ param(
     [int]$ChangeTolerance = 6,
     [double]$EdgeMaxChangedRatio = 0.005,
     [int]$EdgeMaxChannelDelta = 24,
-    [double]$DietMaxChangedRatio = 0.0001,
-    [int]$DietMaxChannelDelta = 2,
+    # B 的判据先写死为逐像素一致，不给后调空间。
+    [double]$CullMaxChangedRatio = 0.0,
+    [int]$CullMaxChannelDelta = 0,
+    [string[]]$Positions = @("default=0,0,1"),
     [int]$WarmupMs = 900,
     [int]$AutoCloseMs = 9000,
-    # 复用 OutDir 里已有的四张 PNG，只重算像素比较（调试用；判据不变）。
+    # 复用 OutDir 里已有的 PNG，只重算像素比较（调试用；判据不变）。
     [switch]$SkipCapture,
+    # 揭示动画最终态：带 --reveal 启动，等 `reveal:done` 再抓帧。
+    [switch]$Reveal,
     # 诊断：四个配置全部用 base 参数重复抓帧，用于量「跨进程重绘噪声」。
     [switch]$RepeatBase
 )
@@ -127,50 +136,79 @@ function Load-Pixels {
 }
 
 $configs = @(
-    @{ Name = "base"; Env = @{ STRATA_EDGE_BATCH = "0"; STRATA_NODE_OPACITY_SKIP = "0"; STRATA_NODE_CLIP = "1" } },
-    @{ Name = "A"; Env = @{ STRATA_EDGE_BATCH = "1"; STRATA_NODE_OPACITY_SKIP = "0"; STRATA_NODE_CLIP = "1" } },
-    @{ Name = "AD1"; Env = @{ STRATA_EDGE_BATCH = "1"; STRATA_NODE_OPACITY_SKIP = "1"; STRATA_NODE_CLIP = "1" } },
-    @{ Name = "ADclip"; Env = @{ STRATA_EDGE_BATCH = "1"; STRATA_NODE_OPACITY_SKIP = "1"; STRATA_NODE_CLIP = "0" } }
+    @{ Name = "base"; Env = @{ STRATA_EDGE_BATCH = "0"; STRATA_VIEWPORT_CULL = "0" } },
+    @{ Name = "B"; Env = @{ STRATA_EDGE_BATCH = "0"; STRATA_VIEWPORT_CULL = "1" } },
+    @{ Name = "A"; Env = @{ STRATA_EDGE_BATCH = "1"; STRATA_VIEWPORT_CULL = "0" } },
+    @{ Name = "BA"; Env = @{ STRATA_EDGE_BATCH = "1"; STRATA_VIEWPORT_CULL = "1" } }
 )
+
+$cameras = @()
+foreach ($spec in $Positions) {
+    # `pwsh -File` 不会把逗号分隔的多值绑定成数组，因此同时接受分号分隔的单个参数。
+    foreach ($item in $spec.Split(";")) {
+        $item = $item.Trim()
+        if (-not $item) { continue }
+        $parts = $item.Split("=", 2)
+        if ($parts.Count -eq 2) {
+            $cameras += @{ Name = $parts[0].Trim(); Camera = $parts[1].Trim() }
+        } else {
+            $cameras += @{ Name = "default"; Camera = $item }
+        }
+    }
+}
+
+$appArgs = @("map", $Repo, "--auto-close-ms", "$AutoCloseMs")
+$marker = "phase: content:presented"
+if ($Reveal) {
+    $appArgs += "--reveal"
+    $marker = "phase: reveal:done"
+}
 
 $captured = @{}
 if ($RepeatBase) {
     foreach ($config in $configs) {
-        $config.Env = @{ STRATA_EDGE_BATCH = "0"; STRATA_NODE_OPACITY_SKIP = "0"; STRATA_NODE_CLIP = "1" }
+        $config.Env = @{ STRATA_EDGE_BATCH = "0"; STRATA_VIEWPORT_CULL = "0" }
     }
 }
 if ($SkipCapture) {
-    foreach ($config in $configs) {
-        $captured[$config.Name] = Join-Path $OutDir ("{0}.png" -f $config.Name)
+    foreach ($camera in $cameras) {
+        foreach ($config in $configs) {
+            $captured["$($camera.Name)/$($config.Name)"] = Join-Path $OutDir ("{0}-{1}.png" -f $config.Name, $camera.Name)
+        }
     }
 } else {
 # 需要阶段打点才能等到「内容已呈现」再抓帧；打点本身不影响绘制。
 Set-Item -Path "env:STRATA_PHASE_MARKERS" -Value "1"
-foreach ($config in $configs) {
-    foreach ($key in $config.Env.Keys) { Set-Item -Path "env:$key" -Value $config.Env[$key] }
-    $png = Join-Path $OutDir ("{0}.png" -f $config.Name)
-    $envText = (($config.Env.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join " ")
-    Write-Output ("capture {0}: {1}" -f $config.Name, $envText)
-    # 直接在同进程调用：`pwsh -File` 会把数组参数展开成多个命令行 token，
-    # `--auto-close-ms` 会被当成 capture-window 的参数名而报错。
-    & $capture -AppArgs @("map", $Repo, "--auto-close-ms", "$AutoCloseMs") `
-        -Marker "phase: content:presented" -WarmupMs $WarmupMs -Frames 1 -SettleMs 200 `
-        -Method print -OutPng $png -StdoutFile (Join-Path $OutDir ("{0}.stdout.txt" -f $config.Name)) | Out-Null
-    $captured[$config.Name] = $png
-    foreach ($key in $config.Env.Keys) { Remove-Item -Path "env:$key" -ErrorAction SilentlyContinue }
+foreach ($camera in $cameras) {
+    Set-Item -Path "env:STRATA_EVIDENCE_VIEWPORT" -Value $camera.Camera
+    foreach ($config in $configs) {
+        foreach ($key in $config.Env.Keys) { Set-Item -Path "env:$key" -Value $config.Env[$key] }
+        $png = Join-Path $OutDir ("{0}-{1}.png" -f $config.Name, $camera.Name)
+        $envText = (($config.Env.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join " ")
+        Write-Output ("capture {0}/{1} @ {2}: {3}" -f $camera.Name, $config.Name, $camera.Camera, $envText)
+        # 直接在同进程调用：`pwsh -File` 会把数组参数展开成多个命令行 token，
+        # `--auto-close-ms` 会被当成 capture-window 的参数名而报错。
+        & $capture -AppArgs $appArgs `
+            -Marker $marker -WarmupMs $WarmupMs -Frames 1 -SettleMs 200 `
+            -Method print -OutPng $png -StdoutFile (Join-Path $OutDir ("{0}-{1}.stdout.txt" -f $config.Name, $camera.Name)) | Out-Null
+        $captured["$($camera.Name)/$($config.Name)"] = $png
+        foreach ($key in $config.Env.Keys) { Remove-Item -Path "env:$key" -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -Path "env:STRATA_EVIDENCE_VIEWPORT" -ErrorAction SilentlyContinue
 }
 }
 
 $comparisons = @(
-    @{ Name = "A"; Left = "base"; Right = "A"; MaxRatio = $EdgeMaxChangedRatio; MaxDelta = $EdgeMaxChannelDelta },
-    @{ Name = "D1"; Left = "A"; Right = "AD1"; MaxRatio = $DietMaxChangedRatio; MaxDelta = $DietMaxChannelDelta },
-    @{ Name = "D2"; Left = "AD1"; Right = "ADclip"; MaxRatio = $EdgeMaxChangedRatio; MaxDelta = $EdgeMaxChannelDelta }
+    @{ Name = "B"; Left = "base"; Right = "B"; MaxRatio = $CullMaxChangedRatio; MaxDelta = $CullMaxChannelDelta },
+    @{ Name = "B+A"; Left = "A"; Right = "BA"; MaxRatio = $CullMaxChangedRatio; MaxDelta = $CullMaxChannelDelta },
+    @{ Name = "A"; Left = "base"; Right = "A"; MaxRatio = $EdgeMaxChangedRatio; MaxDelta = $EdgeMaxChannelDelta }
 )
 
 $rows = @()
+foreach ($camera in $cameras) {
 foreach ($comparison in $comparisons) {
-    $left = $captured[$comparison.Left]
-    $right = $captured[$comparison.Right]
+    $left = $captured["$($camera.Name)/$($comparison.Left)"]
+    $right = $captured["$($camera.Name)/$($comparison.Right)"]
     if (-not (Test-Path $left) -or -not (Test-Path $right)) { throw "缺少抓帧：$left / $right" }
     $leftImage = Load-Pixels $left
     $rightImage = Load-Pixels $right
@@ -180,7 +218,8 @@ foreach ($comparison in $comparisons) {
         $ChangeTolerance, $comparison.MaxDelta)
     $passed = ($diff.ChangedRatio -le $comparison.MaxRatio) -and ($diff.MaxChannelDelta -le $comparison.MaxDelta)
     $rows += [pscustomobject]@{
-        Pair = "$($comparison.Left) vs $($comparison.Right)"
+        Position = $camera.Name
+        Pair = "$($camera.Name): $($comparison.Left) vs $($comparison.Right)"
         ChangedPixels = $diff.Changed
         TotalPixels = $diff.Total
         ChangedPercent = [math]::Round($diff.ChangedRatio * 100, 4)
@@ -193,11 +232,13 @@ foreach ($comparison in $comparisons) {
         Status = if ($passed) { "PASS" } else { "FAIL" }
     }
 }
+}
 
 $failed = @($rows | Where-Object { $_.Status -ne "PASS" })
 $payload = [pscustomobject]@{
     repo = $Repo
     changeTolerance = $ChangeTolerance
+    positions = @($cameras | ForEach-Object { $_.Name })
     comparisons = $rows
     passed = ($failed.Count -eq 0)
 }

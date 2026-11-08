@@ -18,7 +18,7 @@ param(
     [string]$Mode = "pan",
     [int]$Frames = 120,
     [string]$Skip = "",
-    [string]$AbCycle = "base,A,AD1",
+    [string]$AbCycle = "base,B,BA",
     [int]$AbSegmentFrames = 60,
     [int]$IdleMs = 5000,
     [string]$Exe = "target/release/arch-view.exe",
