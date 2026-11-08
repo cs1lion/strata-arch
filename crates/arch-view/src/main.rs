@@ -678,10 +678,19 @@ fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let rendered = Arc::new(AtomicBool::new(false));
     let rendered_in_view = rendered.clone();
     let rendered_watchdog = rendered.clone();
+    // 看门狗预算默认与 ticket 14 保持一致（12 秒）；`STRATA_SMOKE_TIMEOUT_SECS`
+    // 只用于诊断/软件渲染环境下确认「慢」还是「卡死」，不放宽断言。
+    let timeout = Duration::from_secs(
+        std::env::var("STRATA_SMOKE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(12),
+    );
+    println!("smoke: watchdog {}s", timeout.as_secs());
     // 看门狗必须是独立 OS 线程：窗口创建/首次渲染阻塞时 GPUI 执行器无法运行，
     // 原来的 `cx.spawn` 定时器无法触发（见 ticket 14 取证）。
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(12));
+        std::thread::sleep(timeout);
         if !rendered_watchdog.load(Ordering::SeqCst) {
             println!("smoke: timeout waiting for first frame");
             let _ = std::io::stdout().flush();
@@ -689,24 +698,32 @@ fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         }
     });
 
-    Application::new().run(move |cx: &mut App| {
+    phase_marker("smoke:app:before-new");
+    let application = Application::new();
+    phase_marker("smoke:app:built");
+    application.run(move |cx: &mut App| {
+        phase_marker("smoke:run:enter");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |_, cx| {
-                cx.new(|_| SmokeView {
-                    layout,
-                    rendered: rendered_in_view,
-                    scheduled: false,
-                })
-            },
-        )
-        .expect("open smoke window");
+        let _window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                move |_, cx| {
+                    cx.new(|_| SmokeView {
+                        layout,
+                        rendered: rendered_in_view,
+                        scheduled: false,
+                    })
+                },
+            )
+            .expect("open smoke window");
+        phase_marker("smoke:window:opened");
         cx.activate(true);
+        phase_marker("smoke:activate:done");
     });
+    phase_marker("smoke:run:exited");
 
     if !rendered.load(Ordering::SeqCst) {
         return Err("smoke 失败：窗口未渲染一帧（可能缺少可用图形后端）".to_string());
@@ -722,10 +739,12 @@ struct SmokeView {
 
 impl Render for SmokeView {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        phase_marker("smoke:render:enter");
         if !self.scheduled {
             self.scheduled = true;
             let rendered = self.rendered.clone();
             window.on_next_frame(move |_, cx| {
+                phase_marker("smoke:frame:callback");
                 rendered.store(true, Ordering::SeqCst);
                 println!("smoke: frame rendered");
                 cx.quit();
