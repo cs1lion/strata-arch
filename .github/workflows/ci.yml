@@ -118,3 +118,13 @@ jobs:
           }
           & pwsh @argv
           exit $LASTEXITCODE
+      - name: upload drift artifacts
+        if: always() && steps.plan.outputs.required == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-gate
+          path: |
+            out/drift-gate.json
+            out/drift-*.json
+          if-no-files-found: warn
+          retention-days: 14

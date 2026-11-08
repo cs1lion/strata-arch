@@ -315,9 +315,11 @@ function Invoke-DriftGate {
     }
 
     $checks = $null
+    $stats = $null
     $violations = @()
     if ($null -ne $report) {
         $checks = $report.gate.checks
+        $stats = $report.stats
         $violations = @($report.newViolations)
     }
 
@@ -335,10 +337,31 @@ function Invoke-DriftGate {
         exitCode     = $code
         message      = if ($status -eq "error" -and $null -eq $report) { "arch-cli 退出 $code" } else { "" }
         checks       = $checks
+        stats        = $stats
         newViolations = $violations
         stderr       = ($stderrText.Trim())
         reportPath   = $reportPath
     }
+}
+
+# passed 分支的自证行：把本次实际比较的索引规模与四类判据计数一起打印。
+# `stats` 来自 drift 报告（layers 产物的 files/modules/edges/unresolved），
+# `checks` 是四类判据各自的 new/resolved 计数；两者都不参与门禁判定。
+function Format-DriftPassed {
+    param([pscustomobject]$Result, [string]$Baseline)
+
+    if ($null -eq $Result.stats) {
+        return ("modules=? edges=?；checks=?；基线 {0}" -f $Baseline)
+    }
+    $checks = $Result.checks
+    return ("modules={0} edges={1} files={2} unresolved={3}；checks new/resolved: " +
+        "moduleChanges={4}/{5} reverseEdges={6}/{7} cycles={8}/{9} externalLeaks={10}/{11}；基线 {12}") -f `
+        $Result.stats.modules, $Result.stats.edges, $Result.stats.files, $Result.stats.unresolved,
+        $checks.moduleChanges.newCount, $checks.moduleChanges.resolvedCount,
+        $checks.reverseEdges.newCount, $checks.reverseEdges.resolvedCount,
+        $checks.cycles.newCount, $checks.cycles.resolvedCount,
+        $checks.externalLeaks.newCount, $checks.externalLeaks.resolvedCount,
+        $Baseline
 }
 
 Write-Output ("drift gate: base={0} changed={1} ({2})" -f $BaseRef, $change.Files.Count, $reason)
@@ -349,7 +372,7 @@ if ($selfRequired) {
     $gates += $result
     if ($result.status -eq "passed") {
         $covered += "self"
-        Write-Output ("self: passed（四类 newCount=0；基线 {0}）" -f $selfBaseline)
+        Write-Output ("self: passed（{0}）" -f (Format-DriftPassed -Result $result -Baseline $selfBaseline))
     } elseif ($result.status -eq "failed") {
         $covered += "self"
         Write-Output ("self: FAILED（{0} 条新增违规）" -f $result.newViolations.Count)
@@ -397,7 +420,7 @@ if ($corpusRequired) {
             $gates += $result
             if ($result.status -eq "passed") {
                 $covered += "corpus/$repo"
-                Write-Output ("corpus/{0}: passed（四类 newCount=0）" -f $repo)
+                Write-Output ("corpus/{0}: passed（{1}）" -f $repo, (Format-DriftPassed -Result $result -Baseline $baseline))
             } elseif ($result.status -eq "failed") {
                 $covered += "corpus/$repo"
                 Write-Output ("corpus/{0}: FAILED（{1} 条新增违规）" -f $repo, $result.newViolations.Count)
