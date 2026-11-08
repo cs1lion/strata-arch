@@ -1,0 +1,561 @@
+{
+  "schemaVersion": 2,
+  "toolVersion": "0.1.0",
+  "recordedHead": null,
+  "reverseEdges": [],
+  "cycles": [
+    [
+      "src/esm/api/register.ts",
+      "src/esm/hook/initialize.ts",
+      "src/esm/hook/load.ts",
+      "src/esm/hook/resolve.ts"
+    ]
+  ],
+  "externalLeaks": [],
+  "modules": [
+    {
+      "id": "docs/.vitepress/config.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "docs/.vitepress/theme/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "docs/postcss.config.js",
+      "layer": "unclassified"
+    },
+    {
+      "id": "docs/scripts/hash-class-names.js",
+      "layer": "unclassified"
+    },
+    {
+      "id": "docs/tailwind.config.js",
+      "layer": "unclassified"
+    },
+    {
+      "id": "external:#cjs-loader",
+      "layer": "external"
+    },
+    {
+      "id": "external:@ampproject/remapping",
+      "layer": "external"
+    },
+    {
+      "id": "external:chokidar",
+      "layer": "external"
+    },
+    {
+      "id": "external:cleye",
+      "layer": "external"
+    },
+    {
+      "id": "external:cross-spawn",
+      "layer": "external"
+    },
+    {
+      "id": "external:es-module-lexer",
+      "layer": "external"
+    },
+    {
+      "id": "external:esbuild",
+      "layer": "external"
+    },
+    {
+      "id": "external:execa",
+      "layer": "external"
+    },
+    {
+      "id": "external:fs-fixture",
+      "layer": "external"
+    },
+    {
+      "id": "external:fs-require",
+      "layer": "external"
+    },
+    {
+      "id": "external:get-node",
+      "layer": "external"
+    },
+    {
+      "id": "external:get-option-value",
+      "layer": "external"
+    },
+    {
+      "id": "external:get-tsconfig",
+      "layer": "external"
+    },
+    {
+      "id": "external:is-glob",
+      "layer": "external"
+    },
+    {
+      "id": "external:kolorist",
+      "layer": "external"
+    },
+    {
+      "id": "external:magic-string",
+      "layer": "external"
+    },
+    {
+      "id": "external:manten",
+      "layer": "external"
+    },
+    {
+      "id": "external:memfs",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:child_process",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:crypto",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:events",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:fs",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:module",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:net",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:os",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:path",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:perf_hooks",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:repl",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:stream",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:timers",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:url",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:util",
+      "layer": "external"
+    },
+    {
+      "id": "external:node:worker_threads",
+      "layer": "external"
+    },
+    {
+      "id": "external:outdent",
+      "layer": "external"
+    },
+    {
+      "id": "external:pty-spawn",
+      "layer": "external"
+    },
+    {
+      "id": "external:strip-ansi",
+      "layer": "external"
+    },
+    {
+      "id": "external:tinyspy",
+      "layer": "external"
+    },
+    {
+      "id": "external:type-fest",
+      "layer": "external"
+    },
+    {
+      "id": "external:type-flag",
+      "layer": "external"
+    },
+    {
+      "id": "external:vitepress",
+      "layer": "external"
+    },
+    {
+      "id": "external:vue",
+      "layer": "external"
+    },
+    {
+      "id": "release.config.cjs",
+      "layer": "unclassified"
+    },
+    {
+      "id": "scripts/benchmark/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "scripts/benchmark/utils/dispose-all.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/generate-fixture.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/resolve-node.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/resolve-tsx.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/run.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/scenarios.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "scripts/benchmark/utils/stats.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/@types/es-module-lexer.d.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/@types/module.d.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-extensions.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/interop-cjs-exports.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/is-from-cjs-lexer.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/preserve-query.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/resolve-implicit-extensions.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/module-resolve-filename/resolve-ts-extensions.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/register.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/require.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/api/types.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cjs/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/cli.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/api/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/api/register.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/api/scoped-import.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/api/ts-import.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/initialize.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/load.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/package-json.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/package-subpath.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/resolve.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/hook/utils.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/esm/types.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/loader.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/patch-repl.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/platform/node-capabilities.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/remove-argv-flags.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/repl.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/run.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/source-map.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/types.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/utils/cjs-loader-state.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/debug.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/es-module-lexer.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/extension-resolution.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/ipc/client.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/ipc/get-pipe-path.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/ipc/server.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/is-windows.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/node-features.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/path-utils.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/read-json-file.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/sha1.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/temporary-directory.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/transform/apply-transformers.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/transform/cache.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/transform/get-esbuild-options.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/transform/index.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/transform/transform-dynamic-import.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/tsconfig.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/utils/url-search-params-stringify.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "src/watch/index.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "src/watch/utils.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "tests/fixtures.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/index.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/api-declarations.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/api.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/cli.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/commonjs-mode-contracts.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/esm-hook-resolve.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/loaders.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/node-capabilities.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/process-interact.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/pty-shell.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/repl.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/resolution-priority.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/smoke.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/transform-cache.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/transform.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/tsconfig.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/version-sensitive.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/specs/watch.ts",
+      "layer": "tests"
+    },
+    {
+      "id": "tests/utils/get-node.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "tests/utils/node-versions.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "tests/utils/process-interact.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "tests/utils/pty-shell/index.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "tests/utils/tsx.ts",
+      "layer": "utils"
+    }
+  ]
+}
