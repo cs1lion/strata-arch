@@ -26,7 +26,7 @@
 ## 验收记录（2026-11-08）
 
 - 实现提交：`223d0ac`（导入解析为模块边）、`2b66deb`（CLI 端到端 fixture）、`ca57e25`（tsx/excalidraw golden 基线）、`f3858ab`（评估接入文档）；本票无新增代码。
-- `cargo test -p arch-core --test resolution_golden`：2 passed / 0 failed（1.86s）。
+- `cargo test -p arch-core --test resolution_golden`：2 passed / 0 failed（1.86s；测试运行时长，debug test profile，非性能读数）。
 - golden 读数：
   - tsx：files 95 / modules 136 / edges 379 / unresolved 10；source 95、external-package 41、import 376、dynamic-import 2、require 1；unresolved 为 dynamic-import 5、unsupported-extension 5、relative-missing 0，`alias-missing` 为 0。
   - excalidraw：files 718 / modules 802 / edges 4363 / unresolved 334；source 718、external-package 84、import 4292、dynamic-import 26、require 45；unresolved 为 unsupported-extension 323、dynamic-import 8；`@excalidraw/*` 的 tsconfig 范围内 `alias-missing` 为 0；`external:react` 包级节点存在，模块路径不含 `node_modules`。

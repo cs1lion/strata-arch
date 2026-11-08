@@ -55,7 +55,7 @@
 
 1. **动画对抽象图示的总体收益很小，且有条件。** 两项 meta-analysis 的效应量分别只有 d=0.37 和 g=0.226；抽象表示（图表、图、地图）收益低于图像式表示；优势主要出现在「动画额外传达了微步骤」或「学习者必须动手」时。
 2. **连续运动会带来三类稳定风险。** 变化盲视、注意力被运动捕获、运动被知觉为因果。它们都不是「审美问题」，会直接造成误读。
-3. **本项目的演化播放被成本卡住。** 09 的 6 个刻度墙钟 4435ms，根因是每个刻度重跑前缀 `build_history`（O(n²)）；在缓存/增量采样落地前，P3 不能承诺可用。
+3. **本项目的演化播放被成本卡住。** 09 的 6 个刻度墙钟 4435ms（**debug** 端到端，含窗口启动与 500ms 自动关闭；诊断复核见 09 同节），根因是每个刻度重跑前缀 `build_history`；在缓存/增量采样落地前，P3 不能承诺可用。
 4. **工业界成熟工具大多不做连续动画。** Gource 是演示工具；CodeCharta 用静态 Compare；CodeBoarding 用离散 commit 高亮；dependency-cruiser/madge 输出静态图。Strata 的差异化应落在「路径理解 + 可检查的变更」，不是「把静态图动起来」。
 
 ---
@@ -353,16 +353,16 @@
 
 | 读数 | 值 | 出处 | 口径/限制 |
 |---|---|---|---|
-| 时间线 6 刻度 | 墙钟 **4435ms**（含 500ms 自动关闭） | [09 L42](file:///d:/project/1107/docs/tickets/arch-tool/09-evolution-timeline-heat-ui.md#L42) | fixture `tests/fixtures/history` HEAD `1de5415`，first-parent 6 个；每个刻度各跑一次前缀 `build_history` |
-| 时间线复杂度 | **O(n²)** 前缀采样 | [09 L49](file:///d:/project/1107/docs/tickets/arch-tool/09-evolution-timeline-heat-ui.md#L49)、[n3 L44](file:///d:/project/1107/docs/proposals/n3-evolution-playback.md#L44) | 每刻度重跑 `build_history(until=@time+1)`；大仓不可用 |
-| 路径播放模型单帧（归档） | 中位数 **0.1µs**；p95 **0.2µs**（3 步与 20 步均如此） | [out/frame-timing.json](file:///d:/project/1107/out/frame-timing.json#L1) | `scope: model-update-only`；**不是 GPU 帧** |
-| 路径播放模型单帧（文档文字） | 3 步 p95 **0.3µs**、20 步 p95 **0.2µs** | [07 L40](file:///d:/project/1107/docs/tickets/arch-tool/07-path-playback-stepthrough-ui.md#L40) | 与 `out/frame-timing.json` 的 3 步 0.2µs 不一致；以归档 JSON 为原始读数，文档文字存在漂移 |
+| 时间线 6 刻度 | 墙钟 **4435ms**（含 500ms 自动关闭） | [09 L42](file:///d:/project/1107/docs/tickets/arch-tool/09-evolution-timeline-heat-ui.md#L42) | fixture `tests/fixtures/history` HEAD `1de5415`，first-parent 6 个；每个刻度各跑一次前缀 `build_history`；**构建类型 debug** |
+| 时间线复杂度 | **O(n²)** 前缀采样 | [09 L49](file:///d:/project/1107/docs/tickets/arch-tool/09-evolution-timeline-heat-ui.md#L49)、[n3 L44](file:///d:/project/1107/docs/proposals/n3-evolution-playback.md#L44) | 每刻度重跑 `build_history(until=@time+1)`；**构建类型 debug**；2026-11-08 复核：二次项真实但非主导，见 09 诊断复核 |
+| 路径播放模型单帧（归档） | 中位数 **0.1µs**；p95 **0.2µs**（3 步与 20 步均如此） | [out/frame-timing.json](file:///d:/project/1107/out/frame-timing.json#L1) | `scope: model-update-only`；**不是 GPU 帧**；构建类型 **debug**（test profile） |
+| 路径播放模型单帧（文档文字） | 3 步 p95 **0.3µs**、20 步 p95 **0.2µs** | [07 L40](file:///d:/project/1107/docs/tickets/arch-tool/07-path-playback-stepthrough-ui.md#L40) | 与 `out/frame-timing.json` 的 3 步 0.2µs 不一致；以归档 JSON 为原始读数，文档文字存在漂移；构建类型 **debug** |
 | 5k 合成下钻启动 | 中位数 **127.5ms**、p95 **130.4ms**；下钻 0.1/0.2ms、返回 0.0/0.0ms | [NIGHTLOG L75](file:///d:/project/1107/docs/process/NIGHTLOG.md#L75) | 5k 合成；16 CPU / AMD64 Family 25 Model 117；debug |
-| 窗口 smoke（`fixtures/layers`） | **2116ms**（含 500ms 自动关闭） | [NIGHTLOG L75](file:///d:/project/1107/docs/process/NIGHTLOG.md#L75) | 5k 合成启动读数与这条 smoke 不是同一 fixture；smoke 只证明窗口能起，不是动画帧率 |
-| tsx index | 批次 1 中位数 **69.4ms**；批次 2 **69.5ms** | [10 L11](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L11)、[10 L30-L38](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L30-L38) | 3 次运行中位数；冷启动首轮 93.6/101.4ms 已保留为噪声 |
-| excalidraw index | 批次 1 中位数 **278.3ms**；批次 2 **293.4ms** | [10 L11](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L11)、[10 L30-L38](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L30-L38) | 波动 5.4%，≤20% |
+| 窗口 smoke（`fixtures/layers`） | **2116ms**（含 500ms 自动关闭） | [NIGHTLOG L75](file:///d:/project/1107/docs/process/NIGHTLOG.md#L75) | 5k 合成启动读数与这条 smoke 不是同一 fixture；smoke 只证明窗口能起，不是动画帧率；构建类型 **debug** |
+| tsx index | 批次 1 中位数 **69.4ms**；批次 2 **69.5ms** | [10 L11](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L11)、[10 L30-L38](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L30-L38) | 3 次运行中位数；冷启动首轮 93.6/101.4ms 已保留为噪声；构建类型 **release** |
+| excalidraw index | 批次 1 中位数 **278.3ms**；批次 2 **293.4ms** | [10 L11](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L11)、[10 L30-L38](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L30-L38) | 波动 5.4%，≤20%；构建类型 **release** |
 | 超限仓库 | 5001 文件 → exit 2、stdout 空、stderr 拒绝 | [10 L14](file:///d:/project/1107/docs/tickets/arch-tool/10-performance-memory-baseline.md#L14) | 上限 5000；不是静默降级 |
-| 合成 history | 100 文件 × 500 提交 **0.99s**；本仓 19 提交 0.66s | [NIGHTLOG L37](file:///d:/project/1107/docs/process/NIGHTLOG.md#L37) | excalidraw 完整克隆**未验证**（L2 缓存无 `.git`） |
+| 合成 history | 100 文件 × 500 提交 **0.99s**；本仓 19 提交 0.66s | [NIGHTLOG L37](file:///d:/project/1107/docs/process/NIGHTLOG.md#L37) | excalidraw 完整克隆**未验证**（L2 缓存无 `.git`）；构建类型 **debug**（按 ticket 08 的 `cargo run` 默认 profile 推断，原记录未显式标注） |
 | 离屏导出 | **不可用**：`render_to_image` 0 命中；`Scene` 为 `pub(crate)` | [acceptance-gaps L85-L89](file:///d:/project/1107/docs/acceptance-gaps.md#L85-L89)、[11 L11](file:///d:/project/1107/docs/tickets/arch-tool/11-cross-platform-gpui-smoke.md#L11) | gpui 0.2.2 无公开入口；截图路径待 11 选型 |
 | GPUI 动画 API | `with_animation`、`request_animation_frame`、`Animation` 存在 | [acceptance-gaps L132](file:///d:/project/1107/docs/acceptance-gaps.md#L132) | 按墙钟时间推进；没有 timeline scrub API |
 | 帧预算 | p95 ≤ **16.7ms**（推荐值） | [07 L15](file:///d:/project/1107/docs/tickets/arch-tool/07-path-playback-stepthrough-ui.md#L15)、[07 L50](file:///d:/project/1107/docs/tickets/arch-tool/07-path-playback-stepthrough-ui.md#L50) | **待用户确认**；当前只归档模型更新耗时 |

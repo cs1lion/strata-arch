@@ -37,6 +37,8 @@
 
 ### 读数（实测，直接运行 `target/debug/arch-cli.exe`）
 
+- **构建类型：debug**（本票全部耗时读数；release 对照未做）。
+
 | 样本 | 命令 | 读数 | 用时 |
 | --- | --- | --- | --- |
 | fixture | `path tests/fixtures/path --entries` | 候选含 `src/cli.ts#module-toplevel`（`package.json:bin`）、`src/index.ts#module-toplevel`（`package.json:main`）、`src/utils/helper.ts#function:helper`（`public-export`） | <0.1s |

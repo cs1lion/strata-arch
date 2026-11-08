@@ -36,7 +36,7 @@
 
 - `cargo test -p arch-view --test drilldown`：7 passed / 0 failed。
 - 5k 合成（C 档，3 次）：启动（布局 + 状态初始化）中位数 127.5ms、p95 130.4ms；下钻中位数 0.1ms、p95 0.2ms；返回中位数 0.0ms、p95 0.0ms；均 ≤2s。
-- 硬件：Windows，16 逻辑 CPU，`AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD`（debug 构建）。
+- 硬件：Windows，16 逻辑 CPU，`AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD`（debug 构建；本票全部耗时读数均为 debug）。
 - 窗口 smoke：`target/debug/arch-view.exe map tests/fixtures/layers --auto-close-ms 500` → exit 0，进程墙钟 2116ms（含 500ms 自动关闭等待）。
 - 全量：`cargo test --workspace` 全部测试二进制 0 failed；`cargo fmt --all --check` 通过。
 

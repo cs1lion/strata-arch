@@ -27,6 +27,8 @@
 
 硬件：`AMD Ryzen 7 8845H w/ Radeon 780M Graphics`，16 逻辑 CPU，`Microsoft Windows NT 10.0.26300.0`，PowerShell 7.6.9；debug → release 构建，工具版本 0.1.0。
 
+- **构建类型：release**（本票全部墙钟/内存读数；跨票比较性能时必须对齐 release）。
+
 | 样本 | 批次 | 三次墙钟 (ms) | 中位数 (ms) | 最大值 (ms) | 峰值 WorkingSet (MB) | 预算 |
 | --- | --- | --- | --- | --- | --- | --- |
 | tsx index | 1 | 93.6 / 69.4 / 54.7 | 69.4 | 93.6 | 5.7 | ≤2000 |

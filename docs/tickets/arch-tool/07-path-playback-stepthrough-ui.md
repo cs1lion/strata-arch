@@ -38,7 +38,7 @@
 
 - `cargo test -p arch-view --test path_playback`：8 passed / 0 failed。
 - C 档模型更新（3 次，`out/frame-timing.json`）：3 步 p95 0.3µs、中位数 0.1µs；20 步 p95 0.2µs、中位数 0.1µs，均 ≤16.7ms。
-- 硬件：Windows，16 逻辑 CPU，`AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD`（debug 构建）。
+- 硬件：Windows，16 逻辑 CPU，`AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD`（debug 构建；帧预算读数为 debug test profile 的模型更新时间，不是渲染帧时间）。
 - UI smoke：`map tests/fixtures/path --from src/cli.ts#module-toplevel --to src/utils/helper.ts#function:helper --auto-close-ms 500` → exit 0，路径 3 步。
 - 全量：`cargo test --workspace` 0 failed；`cargo fmt --all --check` 通过。
 

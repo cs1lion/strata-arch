@@ -60,7 +60,7 @@ dwell 帧数（16ms/帧, 1x, 每段到切换为止）: [44, 44, 44, 44, 44]; 热
 关闭播放后索引=5, 静态索引=5, 热力向量一致
 ```
 
-**帧回调冒烟（真实窗口）：**
+**帧回调冒烟（真实窗口）：** 构建类型：**debug**（`target/debug/arch-view.exe`）；`700ms` 是设计常量，不是实测耗时。
 
 `target/debug/arch-view.exe timeline tests/fixtures/history --autoplay --auto-close-ms 5000` → exit 0：
 

@@ -75,7 +75,7 @@ click consistency: click (601.00,221.00) world (366.00,42.00) from-world (601.00
 
 ### UI 帧数与总时长（本机实测）
 
-命令：`cargo run -p arch-view --example animation_probe`（探针只测 GPUI `with_animation(200ms)` 的真实节拍，不驱动相机；`src/` 仍无墙钟）。
+命令：`cargo run -p arch-view --example animation_probe`（探针只测 GPUI `with_animation(200ms)` 的真实节拍，不驱动相机；`src/` 仍无墙钟）。构建类型：**debug**（`cargo run` 默认 profile；非 release 性能基线）。
 
 ```text
 probe frame  1 delta 0.0000 elapsed 11ms

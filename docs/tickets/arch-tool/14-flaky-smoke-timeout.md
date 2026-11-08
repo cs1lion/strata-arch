@@ -58,7 +58,7 @@
 
 ## 取证读数（修前）
 
-测试内耗时为 `cargo test` 输出的 `finished in`；墙钟另含 cargo 启动/构建检查。固定样本与命令见上文。
+测试内耗时为 `cargo test` 输出的 `finished in`；墙钟另含 cargo 启动/构建检查。构建类型：**debug**（`cargo test` 默认 test profile）。固定样本与命令见上文。
 
 | 场景 | 次数 | 失败 | 测试内耗时 min / median / max | 并发进程 | 失败现场 |
 | --- | --- | --- | --- | --- | --- |

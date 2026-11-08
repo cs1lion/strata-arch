@@ -25,6 +25,8 @@
 
 ### 读数（实测，`target/debug/arch-cli.exe` / `arch-view.exe`）
 
+- **构建类型：debug**（本票全部耗时读数；不可与 release 基线混用）。
+
 | 样本 | 模块数 | external | unclassified | 层分布 | 边数 | directionAdjusted |
 | --- | --- | --- | --- | --- | --- | --- |
 | `tests/fixtures/layers` | 26 | 1 | 6（ambiguous 2 / no-rule-match 4） | 8 带：cli 2、commands 1、components 7、server 1、utils 4、tests 4、external 1、unclassified 6 | 19 | 0 |
