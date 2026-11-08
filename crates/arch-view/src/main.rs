@@ -53,6 +53,48 @@ fn phase_marker(label: &str) {
     }
 }
 
+/// 诊断开关：按需跳过部分绘制，用受控实验的差值定位每帧成本来源。
+/// 取值 `bands,edges,nodes,labels` 的逗号子集（`STRATA_RENDER_SKIP`）。
+#[derive(Clone, Copy, Default)]
+struct RenderSkip {
+    bands: bool,
+    edges: bool,
+    nodes: bool,
+    labels: bool,
+}
+
+impl RenderSkip {
+    fn from_env() -> Self {
+        let mut skip = Self::default();
+        let Ok(spec) = std::env::var("STRATA_RENDER_SKIP") else {
+            return skip;
+        };
+        for part in spec.split(',') {
+            match part.trim() {
+                "bands" => skip.bands = true,
+                "edges" => skip.edges = true,
+                "nodes" => skip.nodes = true,
+                "labels" => skip.labels = true,
+                _ => {}
+            }
+        }
+        skip
+    }
+}
+
+/// 诊断用确定性平移帧数：每渲染帧平移 8px 并续订下一帧（`STRATA_AUTOPAN_FRAMES`）。
+fn autopan_frames() -> Option<u32> {
+    std::env::var("STRATA_AUTOPAN_FRAMES")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn frame_trace_enabled() -> bool {
+    std::env::var_os("STRATA_FRAME_TRACE").is_some()
+}
+
 /// 「先开窗、后加载」的通用外壳：窗口先呈现阶段文案，数据就绪后挂上真实子视图。
 ///
 /// 长操作期间窗口必须可见且显示当前阶段；用户可关闭窗口或点「取消」立即退出。
@@ -440,6 +482,9 @@ fn spawn_map_loading(
                 reveal_scheduled: false,
                 reveal_start_marked: false,
                 reveal_mid_marked: false,
+                frame_count: 0,
+                autopan_remaining: autopan_frames(),
+                autopan_scheduled: false,
             })
         });
         let map = match built_view {
@@ -1657,6 +1702,11 @@ struct MapView {
     reveal_scheduled: bool,
     reveal_start_marked: bool,
     reveal_mid_marked: bool,
+    /// 诊断：已渲染帧数（仅用于首帧打印绘制计数）。
+    frame_count: u32,
+    /// 诊断：剩余自动平移帧数（`STRATA_AUTOPAN_FRAMES`）。
+    autopan_remaining: Option<u32>,
+    autopan_scheduled: bool,
 }
 
 impl MapView {
@@ -1758,6 +1808,35 @@ impl MapView {
         }
     }
 
+    /// 诊断：逐帧平移，用于在外部测持续重绘的帧间隔；播完即停。
+    fn schedule_autopan_step(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
+        if view.autopan_scheduled {
+            return;
+        }
+        let Some(remaining) = view.autopan_remaining else {
+            return;
+        };
+        if remaining == 0 {
+            view.autopan_remaining = None;
+            return;
+        }
+        view.autopan_scheduled = true;
+        cx.on_next_frame(window, |view, window, cx| {
+            view.autopan_scheduled = false;
+            view.state.pan_by(8.0, 0.0);
+            phase_marker("pan:frame");
+            let left = view.autopan_remaining.unwrap_or(1).saturating_sub(1);
+            if left == 0 {
+                view.autopan_remaining = None;
+                phase_marker("pan:done");
+            } else {
+                view.autopan_remaining = Some(left);
+                MapView::schedule_autopan_step(view, window, cx);
+            }
+            cx.notify();
+        });
+    }
+
     /// 每个 GPUI 帧回调推进一格；仍在揭示时续订下一帧，播完即停（不回绕）。
     fn schedule_reveal_frame(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
         if !view.reveal.is_active() || view.reveal_scheduled {
@@ -1791,11 +1870,17 @@ static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 impl Render for MapView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let skip = RenderSkip::from_env();
+        let trace = frame_trace_enabled();
+        if trace {
+            phase_marker("frame");
+        }
+        self.frame_count = self.frame_count.saturating_add(1);
         if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
             phase_marker("content:render");
             window.on_next_frame(|_, _cx| phase_marker("content:presented"));
         }
-        let labels = self.state.labels_visible();
+        let labels = self.state.labels_visible() && !skip.labels;
         let selected = self.state.selected().map(ToOwned::to_owned);
         let highlighted = self.state.highlighted();
         let scene = match self.state.symbol_layout() {
@@ -1803,6 +1888,22 @@ impl Render for MapView {
             None => Scene::Modules(self.state.map().clone()),
         };
         let can_go_back = self.state.can_go_back();
+        if trace && self.frame_count == 1 {
+            if let Scene::Modules(map) = &scene {
+                println!(
+                    "frame: nodes={} edges={} bands={} labels={}",
+                    map.nodes.len(),
+                    map.edges.len(),
+                    map.bands.len(),
+                    if labels { map.nodes.len() } else { 0 }
+                );
+                let _ = std::io::stdout().flush();
+            }
+        }
+        // 诊断平移：在取 viewport 前由帧回调推进，保证每帧都有真实位移。
+        if self.autopan_remaining.is_some() {
+            Self::schedule_autopan_step(self, window, cx);
+        }
         let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
         let fade_enabled = self
             .playback
@@ -1925,6 +2026,9 @@ impl Render for MapView {
                     .map(|(index, band)| (band.layer, index))
                     .collect::<std::collections::BTreeMap<&str, usize>>();
                 for (index, band) in map.bands.iter().enumerate() {
+                    if skip.bands {
+                        break;
+                    }
                     root = root.child(band_element(
                         band,
                         viewport,
@@ -1934,61 +2038,65 @@ impl Render for MapView {
                 }
                 let base_opacity =
                     (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
-                let edges = map
-                    .edges
-                    .iter()
-                    .map(|edge| EdgeDraw {
-                        from: viewport.screen_point(edge.from),
-                        to: viewport.screen_point(edge.to),
-                        adjusted: edge.direction_adjusted,
-                        strong: false,
-                        opacity: base_opacity,
-                    })
-                    .collect::<Vec<_>>();
-                root = root.child(edge_canvas(
-                    edges,
-                    map.width * viewport.zoom,
-                    map.height * viewport.zoom,
-                ));
-
-                if let Some(playback) = &self.playback {
-                    let centers = map
-                        .nodes
+                if !skip.edges {
+                    let edges = map
+                        .edges
                         .iter()
-                        .map(|node| (node.id.clone(), node.rect.center()))
-                        .collect::<std::collections::BTreeMap<_, _>>();
-                    let mut path_edges = Vec::new();
-                    for (index, pair) in playback.steps().windows(2).enumerate() {
-                        let (source_module, target_module) = (&pair[0].module, &pair[1].module);
-                        if fade_enabled && source_module == target_module {
-                            continue;
-                        }
-                        let Some(from) = centers.get(source_module) else {
-                            continue;
-                        };
-                        let Some(to) = centers.get(target_module) else {
-                            continue;
-                        };
-                        let (strong, opacity) = if fade_enabled {
-                            let role = playback.module_edge_role(source_module, target_module);
-                            (role.strong(), role.opacity())
-                        } else {
-                            (playback.current() == index + 2, 1.0)
-                        };
-                        let opacity = opacity * reveal_overall;
-                        path_edges.push(EdgeDraw {
-                            from: viewport.screen_point(*from),
-                            to: viewport.screen_point(*to),
-                            adjusted: true,
-                            strong,
-                            opacity,
-                        });
-                    }
+                        .map(|edge| EdgeDraw {
+                            from: viewport.screen_point(edge.from),
+                            to: viewport.screen_point(edge.to),
+                            adjusted: edge.direction_adjusted,
+                            strong: false,
+                            opacity: base_opacity,
+                        })
+                        .collect::<Vec<_>>();
                     root = root.child(edge_canvas(
-                        path_edges,
+                        edges,
                         map.width * viewport.zoom,
                         map.height * viewport.zoom,
                     ));
+                }
+
+                if !skip.edges {
+                    if let Some(playback) = &self.playback {
+                        let centers = map
+                            .nodes
+                            .iter()
+                            .map(|node| (node.id.clone(), node.rect.center()))
+                            .collect::<std::collections::BTreeMap<_, _>>();
+                        let mut path_edges = Vec::new();
+                        for (index, pair) in playback.steps().windows(2).enumerate() {
+                            let (source_module, target_module) = (&pair[0].module, &pair[1].module);
+                            if fade_enabled && source_module == target_module {
+                                continue;
+                            }
+                            let Some(from) = centers.get(source_module) else {
+                                continue;
+                            };
+                            let Some(to) = centers.get(target_module) else {
+                                continue;
+                            };
+                            let (strong, opacity) = if fade_enabled {
+                                let role = playback.module_edge_role(source_module, target_module);
+                                (role.strong(), role.opacity())
+                            } else {
+                                (playback.current() == index + 2, 1.0)
+                            };
+                            let opacity = opacity * reveal_overall;
+                            path_edges.push(EdgeDraw {
+                                from: viewport.screen_point(*from),
+                                to: viewport.screen_point(*to),
+                                adjusted: true,
+                                strong,
+                                opacity,
+                            });
+                        }
+                        root = root.child(edge_canvas(
+                            path_edges,
+                            map.width * viewport.zoom,
+                            map.height * viewport.zoom,
+                        ));
+                    }
                 }
 
                 let focus = overlay
@@ -2010,6 +2118,9 @@ impl Render for MapView {
                     (0..map.nodes.len()).collect::<Vec<_>>()
                 };
                 for index in indices {
+                    if skip.nodes {
+                        break;
+                    }
                     let node = &map.nodes[index];
                     let opacity = match &self.playback {
                         Some(playback) if fade_enabled => playback.module_context_opacity(&node.id),
