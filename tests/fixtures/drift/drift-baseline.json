@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.1.0",
+  "recordedHead": null,
+  "populationTolerance": 0,
+  "layers": [
+    {
+      "layer": "cli",
+      "count": 1
+    },
+    {
+      "layer": "commands",
+      "count": 1
+    },
+    {
+      "layer": "components",
+      "count": 1
+    },
+    {
+      "layer": "external",
+      "count": 1
+    },
+    {
+      "layer": "server",
+      "count": 1
+    },
+    {
+      "layer": "tests",
+      "count": 0
+    },
+    {
+      "layer": "unclassified",
+      "count": 1
+    },
+    {
+      "layer": "utils",
+      "count": 2
+    }
+  ],
+  "reverseEdges": [],
+  "cycles": [],
+  "externalLeaks": [],
+  "modules": [
+    {
+      "id": "cli/main.ts",
+      "layer": "cli"
+    },
+    {
+      "id": "commands/run.ts",
+      "layer": "commands"
+    },
+    {
+      "id": "components/Button.tsx",
+      "layer": "components"
+    },
+    {
+      "id": "external:react",
+      "layer": "external"
+    },
+    {
+      "id": "misc/note.ts",
+      "layer": "unclassified"
+    },
+    {
+      "id": "server/api.ts",
+      "layer": "server"
+    },
+    {
+      "id": "utils/format.ts",
+      "layer": "utils"
+    },
+    {
+      "id": "utils/text.ts",
+      "layer": "utils"
+    }
+  ]
+}
