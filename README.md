@@ -21,6 +21,16 @@
 
 工程纪律与 TDD 规范见 [ENGINEERING-DISCIPLINE.md](docs/process/ENGINEERING-DISCIPLINE.md)，合作规范见 [AGENTS.md](AGENTS.md)。
 
+## 平台支持（实测）
+
+| 平台 | 构建 | 运行 | 状态 |
+| --- | --- | --- | --- |
+| Windows | CI 通过 | 窗口冒烟通过（CI） | 已验证 |
+| macOS | CI 通过 | 未运行 | 仅编译验证 |
+| Linux | CI 通过（需 xcb / xkbcommon 系统库） | 未运行 | 仅编译验证 |
+
+macOS/Linux 目前只承诺可编译，不承诺可运行；依据见 ticket 11 与 CI run 42475740482。
+
 ## 快速开始 (Quick Start)
 
 ### 构建与测试
