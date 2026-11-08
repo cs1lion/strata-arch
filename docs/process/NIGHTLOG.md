@@ -152,4 +152,13 @@
 - 实测依据：`arch-cli index/layers` pretty JSON 大小——tsx index 72KB；excalidraw index 892KB、layers 1.1MB（802 模块 / 4363 边）。
 - 产品级选择（登记待拍板，不自行裁决）：是否采用 B+C、门禁是否只挡「四类违规新增」、基线是否以仓库内 `drift-baseline.json` 显式提交。未拍板前不写代码、不拆票。
 
+## 10 512MB 内存硬上限门禁（2026-11-08）
+
+- 档位：C（预算先行 + 反向用例）。门禁加在现有 `eval/perf-baseline.ps1`，不新造采集。
+- 口径差异：轮询 `WorkingSet64` 是采样下界，实测 tsx 首轮 `polledWsMb=5.5` 而 OS 生命周期峰值 `osPeakWsMb=6.6`；门禁只认 `osPeakWsMb`（`PeakWorkingSet64`），轮询仅在缺失时兜底。
+- Green（实测）：`pwsh -File eval/perf-baseline.ps1 -OutJson out/perf.json -Runs 3` → exit 0，`memory gate: passed (all peaks < 512Mb)`；tsx 6.6MB、excalidraw 4.9MB。
+- Red（实测反向用例）：`pwsh -File eval/perf-baseline.ps1 -MaxPeakMb 1 -OutJson out/perf-gate-red.json -Runs 1` → exit 1，tsx/index 5MB、excalidraw/index 4.8MB 均报超限。
+- 产物：`out/perf.json` 增加 `memoryGate` 段；`eval/baseline/current.json` 增加 `cases.memoryGate`、`memoryCapConfirmed=true`，并改写旧备注（旧：未实现；新：Windows 门禁已实现，Linux/macOS 未复核）。
+- 未验证：Linux `/usr/bin/time -v` 与 macOS 峰值内存；历史窗口读数仍不可得（归档副本无 `.git`）。
+
 
