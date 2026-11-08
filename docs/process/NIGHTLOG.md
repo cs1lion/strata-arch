@@ -186,4 +186,23 @@
 - Backlog（登记不修）：动画开关不影响 ticker、关闭后不冻结为静态完整路径。原因：属独立 ticker 生命周期缺陷，关闭语义（停当前步/末步）是产品级选择；会触碰 09 共用 ticker（本次明令不改）；与本次读数口径不同。已写入 ticket 07「接线修复」。
 - 未验证：GPUI 真实事件与像素；本次读数来自结构函数，不是窗口帧。
 
+## N1 架构漂移检测实现（2026-11-08，A 档）
+
+- 决策落地：用户拍板 B+C；基线为仓库内显式 `tests/fixtures/drift/drift-baseline.json`，不做历史 tree 索引。
+- 四类判据（详见 `crates/arch-core/src/drift.rs` 模块文档）：
+  1. **层人口突变**：每层模块计数相对基线变化；容差由基线 `populationTolerance` 显式记录，取 0；
+  2. **新增反向边**：`directionAdjusted == true` 的 `(source,target,kind)` 不在基线中，带两端所在层；
+  3. **新增循环**：模块级 SCC 成员集合不在基线中，一个 SCC 只报一条，已存在循环不重复计数；
+  4. **external 泄漏**：`external-package` 模块落在非 `external` 层，带模块与被污染层。
+- Red（实现前实测）：`cargo test -p arch-core --test drift` → 编译失败 `E0432 unresolved import arch_core::drift`；`cargo test -p arch-cli --test drift` → 1 passed / 4 failed（`未知子命令: drift`，退出码 2）。
+- Green（实测）：core 10 passed / 0 failed；CLI 5 passed / 0 failed；`cargo test --workspace` 全绿；`cargo fmt --all --check` 通过。
+- 正向基线实测：fixture 8 模块（cli 1 / commands 1 / components 1 / server 1 / utils 2 / external 1 / unclassified 1）、reverseEdges 0、cycles 0、externalLeaks 0；基线自检 exit 0，四类 new/resolved 全 0，added/removed/moved 全 0。
+- 反向用例实测（core）：只加合法正向边 `cli → utils` → 不算漂移；`utils → commands` 新增反向边 → 命中 1 条；`utils` 层内 `format ↔ text` → 只报 1 个 SCC；同层 rename → gate 通过但 added/removed 显式列出；违规消失 → resolved 1 / new 0；两次基线/报告序列化字节一致。
+- 事实边界：实测 `arch-cli layers tests/fixtures/layers` 所有 `external-package` 模块都在 `external`（1/1），当前分类规则不可能产生 external 泄漏；该判据保留为规则退化回归，正向恒空，用合成 `LayersArtifact` 覆盖（交换 react / Button 的层归属并保持层计数不变）。
+- 推翻并保留的原判据：提案验收判据 3（只重命名 added/removed 为空）与 5（`git diff -M` 归并）被用户要求 (d) 推翻——rename 必须显式报 added/removed；显式基线无历史 tree，也不使用 `git diff -M`。原文保留在 proposal。
+- 基线重录纪律：`drift-baseline.json` 任何更新独立提交，提交信息写清旧读数、新读数与原因。
+- CLI 退出码：0 = 无新增违规；1 = 门禁未通过（报告仍完整输出）；2 = 输入错误（缺失/非法基线、schema 不匹配、参数冲突）；3 = 内部错误。
+- 未做/未验证：真实 tsx / excalidraw 基线未录制（不在本次样本集内）；UI 漂移标记未做；rename 归并明确不做；`unclassified` 原因码分布未单列（由层人口覆盖）。
+
+
 

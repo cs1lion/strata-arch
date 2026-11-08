@@ -1,6 +1,6 @@
 # N1: 架构漂移检测
 
-**状态：** 方案待选（2026-11-08 给出基线粒度选项与推荐，未动代码；选择属产品级决策，登记 NIGHTLOG 待用户拍板）。
+**状态：** 已决策并实现（2026-11-08，用户拍板 B+C；实现见文末「决策与实现」）。原文的「待用户拍板」段与验收判据保留作历史对照，不删除。
 
 ## 问题
 
@@ -63,6 +63,8 @@
 
 **待用户拍板：** 是否采用 B+C 组合、门禁默认只挡「四类违规新增」、基线以仓库内显式文件提交。未拍板前不实现。
 
+（2026-11-08 已拍板：采用 B+C，门禁只挡四类违规新增，基线以仓库内显式 `drift-baseline.json` 提交。本段保留作历史记录。）
+
 ## 可执行验收判据
 
 1. fixture 仓库分别构造三类漂移（新增反向边、模块改层、新增循环），`drift.json` 逐条精确列出，顺序稳定（两次运行字节一致）。
@@ -85,3 +87,47 @@
 ## 为什么现在做 / 以后做
 
 现在不做：03/03b 的层集合与原因码刚稳定，08/09 的产物契约还在收尾；漂移检测必须先有可复现的基线产物格式，否则会重复造一套比较逻辑。以后做：等 09 产物格式与 10 的性能口径固定后，用 `--base` 显式基线起步，先 CLI 后 UI。
+
+## 决策与实现（2026-11-08）
+
+### 落地形态
+
+- **门禁（B）**：只比较四类「新增违规」。容差 `0` 显式记录在基线 `populationTolerance` 里，而不是隐含在代码里。
+- **解释（C）**：报告输出 `added` / `removed` / `moved` / `newViolations` / `resolvedViolations`，每条违规带模块 ID 或层名。
+- **基线**：`tests/fixtures/drift/drift-baseline.json`，仓库内显式提交；不读历史 tree，不提供 `--base <commit>`。
+- **schema**：`DRIFT_SCHEMA_VERSION = 1`，独立于 index / layers / callgraph / path / history，不复用任何现有版本号。
+- **CLI**：`arch-cli drift <repo> --record --out <基线>`；`arch-cli drift <repo> --base <基线> [--out <报告>]`。
+
+### 四类判据边界
+
+| 判据 | 会触发 | 不会触发 | 去重 / 解释 |
+| --- | --- | --- | --- |
+| 层人口突变 | 任意一层模块计数 `current - baseline` 的绝对值 > `populationTolerance`（0） | 只新增边、不新增模块 | 违规带层名、旧计数、新计数、delta；不做 resolved（基线记录的是目标计数而非违规集合） |
+| 新增反向边 | 当前 `directionAdjusted == true` 的 `(source,target,kind)` 不在基线 | 合法正向边（高层 → 低层） | 违规带两端所在层；基线里已有的反向边不重复计数，消失的进 `resolvedViolations` |
+| 新增循环 | 模块级 SCC（成员 ≥2 或自环）的成员集合不在基线 | 已存在的循环；同层单向边 | 一个 SCC 只报一条，不按环上的边重复计数 |
+| external 泄漏 | `kind == external-package` 的模块落在 `external` 之外的层 | 外部包正常落在 `external`；业务层新增对 external 的边 | 违规带模块与「被污染层」；基线记录集合，新增与已解决分开 |
+
+**external 泄漏的事实边界（实测）**：`arch-cli layers tests/fixtures/layers` 中所有 `external-package` 模块都在 `external` 层（1/1）。分类规则对 `external-package` 无条件返回 `external`，因此真实仓库当前不可能触发这条判据。保留它作为「规则退化导致外部包漏进业务层」的回归不变量；正向基线恒为空，触发路径由合成 `LayersArtifact` 覆盖（测试交换 react / Button 的层归属并保持层计数不变）。
+
+### 原验收判据逐条对照（原文保留，不删除）
+
+| 原判据 | 现状 | 说明 |
+| --- | --- | --- |
+| 1 三类漂移逐条列出、顺序稳定 | 支持 | 现为四类；`newViolations` 按判据顺序 + 字典序稳定输出，两次运行字节一致 |
+| 2 无漂移时 `newViolations` 为空、退出码 0 | 支持 | fixture 基线自检 exit 0，四类 new/resolved 全 0 |
+| 3 只重命名时 `added`/`removed` 为空 | **推翻** | 用户最新要求：rename 必须显式报 added/removed，不得静默归并为「无变化」。原因：显式基线无历史 tree，`git diff -M` 不可用；且静默归并会隐藏身份变化 |
+| 4 `--base` 缺失或 commit 不存在非 0、stderr 说明、无半成品 JSON | 支持（改为文件基线） | 基线文件缺失 / 非法 / schema 不匹配 → exit 2，stdout 为空 |
+| 5 模块 ID 差异与 `git diff -M` rename 一致 | **推翻** | 同上：不做历史 tree 索引，也不做 rename 归并；rename 以 removed + added 呈现 |
+| 6 `resolvedViolations` 与 `newViolations` 分开计数 | 支持 | 反向边 / 循环 / external 泄漏三类支持；人口突变无 resolved 概念，已在文档写明 |
+
+原判据 3 与 5 的推翻理由同时登记在 NIGHTLOG 与 `crates/arch-core/src/drift.rs` 模块文档；未静默删除原判据。
+
+### 实测读数（2026-11-08）
+
+- 正向基线：fixture 8 模块（cli 1 / commands 1 / components 1 / server 1 / utils 2 / external 1 / unclassified 1），reverseEdges 0、cycles 0、externalLeaks 0；自检 exit 0，`added`/`removed`/`moved` 全 0。
+- 反向用例：合法正向边 `cli → utils` 不报；`utils → commands` 反向边命中 1 条；`utils` 层内 `format ↔ text` 只报 1 个 SCC；同层 rename 门禁通过但 added/removed 显式；违规消失时 resolved 1 / new 0。
+- 自动化：`cargo test -p arch-core --test drift` 10 passed / 0 failed；`cargo test -p arch-cli --test drift` 5 passed / 0 failed；`cargo test --workspace` 全绿；`cargo fmt --all --check` 通过。
+
+### 基线重录纪律
+
+`drift-baseline.json` 的任何更新必须独立提交，提交信息写明旧读数、新读数与变更原因；不得与功能或测试提交混在一起。层人口容差为 0 时，任何合法新增模块也会要求重录基线——这是有意的流程约束，而不是误报。
