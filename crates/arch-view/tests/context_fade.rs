@@ -236,6 +236,8 @@ fn roles_are_numeric_per_step() {
         .iter()
         .map(|edge| (edge.source.as_str(), edge.target.as_str()))
         .collect::<Vec<_>>();
+    let layers = build_layers(&fixture(), "test").expect("layers fixture");
+    let map = layout_map(&layers, LayoutConfig::default());
 
     let caller_pair = pairs(&[(CALLER, ALPHA)]);
     let helper_pair = pairs(&[(ALPHA, HELPER)]);
@@ -327,8 +329,13 @@ fn roles_are_numeric_per_step() {
                 (playback.node_opacity(symbol) - NON_PATH_OPACITY).abs() < f32::EPSILON
             })
             .count();
+        let context_modules = map
+            .nodes
+            .iter()
+            .filter(|node| playback.module_role(&node.id) == VisualRole::Context)
+            .count();
         eprintln!(
-            "step {}/{}: context nodes {}/{} (legacy 0.25 fades {}/{}), context edges {}/{}",
+            "step {}/{}: context nodes {}/{} (legacy 0.25 fades {}/{}), context edges {}/{}, context modules {}/{}",
             playback.current(),
             playback.steps().len(),
             context_nodes,
@@ -336,7 +343,9 @@ fn roles_are_numeric_per_step() {
             legacy_faded,
             symbols.len(),
             context_edges,
-            edges.len()
+            edges.len(),
+            context_modules,
+            map.nodes.len()
         );
     }
 }
