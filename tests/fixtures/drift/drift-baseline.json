@@ -1,42 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "toolVersion": "0.1.0",
   "recordedHead": null,
-  "populationTolerance": 0,
-  "layers": [
-    {
-      "layer": "cli",
-      "count": 1
-    },
-    {
-      "layer": "commands",
-      "count": 1
-    },
-    {
-      "layer": "components",
-      "count": 1
-    },
-    {
-      "layer": "external",
-      "count": 1
-    },
-    {
-      "layer": "server",
-      "count": 1
-    },
-    {
-      "layer": "tests",
-      "count": 0
-    },
-    {
-      "layer": "unclassified",
-      "count": 1
-    },
-    {
-      "layer": "utils",
-      "count": 2
-    }
-  ],
   "reverseEdges": [],
   "cycles": [],
   "externalLeaks": [],
