@@ -25,7 +25,7 @@ use arch_view::loading::{
 };
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
-use arch_view::search::{interpret_key, KeyModifiers, SearchAction, SearchState};
+use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
@@ -2490,6 +2490,10 @@ impl Render for MapView {
         if self.search.is_open() {
             root = root.child(search_panel_element(&self.search));
         }
+        // 聚焦标签与淡出同属一个状态：`Esc` 清除时同一帧一起消失。
+        if let Some(label) = self.search.focus_label() {
+            root = root.child(focus_label_element(&label));
+        }
 
         if let Some(overlay) = &overlay {
             let status = format!(
@@ -2744,6 +2748,23 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
         );
     }
     panel.into_any_element()
+}
+
+/// 聚焦态角落标签：聚焦模块 id + 上游 / 下游一跳计数。
+fn focus_label_element(label: &FocusLabel) -> AnyElement {
+    div()
+        .id("focus-label")
+        .absolute()
+        .right(px(12.))
+        .bottom(px(12.))
+        .px(px(10.))
+        .py(px(6.))
+        .rounded(px(6.))
+        .bg(rgb(0x161b22))
+        .text_xs()
+        .text_color(rgb(0xe6edf3))
+        .child(label.text())
+        .into_any_element()
 }
 
 struct PlaybackOverlay {
