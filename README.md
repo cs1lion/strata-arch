@@ -27,9 +27,11 @@
 | --- | --- | --- | --- |
 | Windows | CI 通过 | 窗口冒烟通过（CI） | 已验证 |
 | macOS | CI 通过 | 未运行 | 仅编译验证 |
-| Linux | CI 通过（需 xcb / xkbcommon 系统库） | 未运行 | 仅编译验证 |
+| Linux | CI 通过（需 xcb / xkbcommon 系统库） | 窗口冒烟通过（CI：xvfb + openbox + 软件渲染） | 运行验证（软件渲染） |
 
-macOS/Linux 目前只承诺可编译，不承诺可运行；依据见 ticket 11 与 CI run 42475740482。
+macOS 目前只承诺可编译，不承诺可运行；依据见 ticket 11 与 CI run 42475740482。
+
+Linux 的运行验证是虚拟显示（`xvfb`）里加窗口管理器（`openbox`）、用 Mesa lavapipe **软件渲染**跑窗口冒烟：只证明「能开窗、能出帧、能干净退出」，**不代表真实 GPU 表现**，也不证明画面正确（视觉判据见 [acceptance-gaps 2.2.1/2.2.2](docs/acceptance-gaps.md)）。
 
 ## 快速开始 (Quick Start)
 
