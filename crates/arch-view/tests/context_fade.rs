@@ -552,8 +552,9 @@ fn paint_order_and_hit_testing_are_preserved() {
     let context_module = map
         .nodes
         .iter()
-        .find(|node| module_playback.module_role(&node.id) == VisualRole::Context)
-        .expect("fixture must contain a context module");
+        .filter(|node| module_playback.module_role(&node.id) == VisualRole::Context)
+        .find(|node| graph.symbols.iter().any(|symbol| symbol.module == node.id))
+        .expect("fixture must contain a drillable context module");
     let hit = modules.select_at(context_module.rect.center());
     assert_eq!(hit.as_deref(), Some(context_module.id.as_str()));
     assert!(
@@ -787,6 +788,9 @@ fn fade_off_keeps_the_legacy_path() {
     );
 
     let (_state, _graph, layout) = drilled(MODULE_A);
+    // 2 步同模块路径：第 2 步的 incoming (beta, alpha) 在 src/a.ts 布局里可见。
+    let mut playback = PlaybackState::new(&two_step_same_module());
+    advance_to(&mut playback, 2);
     let legacy = paint_symbol_edges(
         &layout,
         &Default::default(),
@@ -803,11 +807,9 @@ fn fade_off_keeps_the_legacy_path() {
         .filter(|edge| edge.strong)
         .map(|edge| (edge.source.as_str(), edge.target.as_str()))
         .collect::<Vec<_>>();
-    // 2 步路径在第 2 步只有 incoming (beta, alpha) 被强调。
     assert_eq!(strong, vec![(BETA, ALPHA)]);
 
     // 第 1 步的 outgoing 在旧口径下不强调（playback_wiring 的 step1 strong=0 判据保留）。
-    let mut playback = PlaybackState::new(&two_step_same_module());
     advance_to(&mut playback, 1);
     let legacy = paint_symbol_edges(
         &layout,
