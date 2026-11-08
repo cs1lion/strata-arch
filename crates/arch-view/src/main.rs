@@ -27,9 +27,10 @@ use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NO
 use arch_view::reveal::{reveal_allowed, RevealState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
-    band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
-    rect_fully_outside, segment_fully_outside, symbol_kind_palette, CanvasState, Level,
-    SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM, MIN_ZOOM,
+    band_background_palette, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
+    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, symbol_kind_palette,
+    CanvasState, EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM,
+    MIN_ZOOM,
 };
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
@@ -132,9 +133,9 @@ fn env_flag(name: &str, default: bool) -> bool {
 impl RenderTuning {
     fn from_env() -> Self {
         Self {
-            // 实测 A（边批处理）超视觉等价容差（票 10），默认关闭；需显式
-            // `STRATA_EDGE_BATCH=1` 才启用。
-            batch_edges: env_flag("STRATA_EDGE_BATCH", false),
+            // A（边批处理）已按票 10 批准默认开启；`STRATA_EDGE_BATCH=0` 可恢复逐边绘制，
+            // 用于需要精确栅格（逐条 dash 相位/绘制顺序）的场合。
+            batch_edges: env_flag("STRATA_EDGE_BATCH", true),
             // B（视口裁剪）：只剪完全在视口外的元素，静止帧逐像素一致，默认开启。
             cull_viewport: env_flag("STRATA_VIEWPORT_CULL", true),
         }
@@ -2613,14 +2614,6 @@ impl PlaybackOverlay {
     }
 }
 
-struct EdgeDraw {
-    from: LayoutPoint,
-    to: LayoutPoint,
-    adjusted: bool,
-    strong: bool,
-    opacity: f32,
-}
-
 fn edge_color_at(base: u32, opacity: f32) -> gpui::Rgba {
     if opacity >= 1.0 {
         rgb(base)
@@ -2656,38 +2649,13 @@ fn edge_canvas(
             move |bounds, _, window, _| {
                 // A：按原始顺序合并「连续且同风格」的边为一个 path；风格/透明度变化即 flush。
                 // 虚线边逐条绘制：同一 path 内多个子路径的 dash 相位与单独绘制不一致（实测会改像素）。
-                let mut current: Option<(PathBuilder, bool, bool, f32)> = None;
-                let flush = |current: &mut Option<(PathBuilder, bool, bool, f32)>,
-                             window: &mut Window| {
-                    if let Some((builder, strong, adjusted, opacity)) = current.take() {
-                        if let Ok(path) = builder.build() {
-                            window.paint_path(
-                                path,
-                                edge_color_at(edge_base_color(strong, adjusted), opacity),
-                            );
-                        }
+                for run in group_edges(&edges, batch_edges) {
+                    let mut builder = PathBuilder::stroke(if run.strong { px(2.) } else { px(1.) });
+                    if run.adjusted {
+                        builder = builder.dash_array(&[px(4.), px(2.)]);
                     }
-                };
-                for edge in &edges {
-                    let matching = current
-                        .as_ref()
-                        .map(|(_, strong, adjusted, opacity)| {
-                            *strong == edge.strong
-                                && *adjusted == edge.adjusted
-                                && (*opacity - edge.opacity).abs() <= f32::EPSILON
-                        })
-                        .unwrap_or(false);
-                    let mergeable = batch_edges && !edge.adjusted;
-                    if !matching || !mergeable {
-                        flush(&mut current, window);
-                        let mut builder =
-                            PathBuilder::stroke(if edge.strong { px(2.) } else { px(1.) });
-                        if edge.adjusted {
-                            builder = builder.dash_array(&[px(4.), px(2.)]);
-                        }
-                        current = Some((builder, edge.strong, edge.adjusted, edge.opacity));
-                    }
-                    if let Some((builder, _, _, _)) = current.as_mut() {
+                    for index in run.edges {
+                        let edge = &edges[index];
                         builder.move_to(point(
                             bounds.origin.x + px(edge.from.x),
                             bounds.origin.y + px(edge.from.y),
@@ -2697,11 +2665,13 @@ fn edge_canvas(
                             bounds.origin.y + px(edge.to.y),
                         ));
                     }
-                    if !mergeable {
-                        flush(&mut current, window);
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(
+                            path,
+                            edge_color_at(edge_base_color(run.strong, run.adjusted), run.opacity),
+                        );
                     }
                 }
-                flush(&mut current, window);
             },
         ))
 }
@@ -2774,7 +2744,8 @@ fn node_element(
     focus: Option<&str>,
     offset_y: f32,
 ) -> impl IntoElement {
-    let rect = scaled_rect(node.rect, viewport);
+    let visual = node_visual_geometry(node, &viewport);
+    let rect = visual.rect;
     let background = layer_color(node.layer, node.is_unclassified);
     let border = if node.is_unclassified {
         rgb(0xd98a3d)
@@ -2806,7 +2777,7 @@ fn node_element(
             div()
                 .text_xs()
                 .text_color(rgb(0xe6edf3))
-                .child(node.id.clone()),
+                .child(visual.label),
         );
     }
 

@@ -3,7 +3,7 @@
 //! 平移、缩放、命中测试、下钻与返回、邻居高亮、LOD 阈值都在此模型上计算并断言；
 //! GPUI 只把模型画出来并转发事件，不参与状态判断。
 
-use crate::layout::{MapLayout, Point, Rect};
+use crate::layout::{MapLayout, NodeLayout, Point, Rect};
 use crate::playback::{EdgeRole, PlaybackState};
 use arch_core::callgraph::CallGraphArtifact;
 use serde::Serialize;
@@ -265,6 +265,120 @@ pub fn paint_symbol_edges_with_roles(
             }
         })
         .collect()
+}
+
+/// 单条边的绘制几何与样式。A（批量绘制）只改变分组，不改变这里。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeVisual {
+    pub from: Point,
+    pub to: Point,
+    pub adjusted: bool,
+    pub strong: bool,
+    pub opacity: f32,
+}
+
+/// 一次 flush 的边分组；`edges` 是原始序列下标。
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeRun {
+    pub strong: bool,
+    pub adjusted: bool,
+    pub opacity: f32,
+    pub edges: Vec<usize>,
+}
+
+/// 按原始顺序把连续同风格边分组。`batch_edges=false` 时每条边自成一组（逐边绘制）。
+///
+/// 几何等价判据：把任何分组模式展开后，必须与输入序列逐项相同。
+pub fn group_edges(edges: &[EdgeVisual], batch_edges: bool) -> Vec<EdgeRun> {
+    let mut runs: Vec<EdgeRun> = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        let mergeable = batch_edges && !edge.adjusted;
+        let merge_into = mergeable
+            && runs
+                .last()
+                .map(|run| {
+                    run.strong == edge.strong
+                        && run.adjusted == edge.adjusted
+                        && (run.opacity - edge.opacity).abs() <= f32::EPSILON
+                })
+                .unwrap_or(false);
+        if merge_into {
+            if let Some(run) = runs.last_mut() {
+                run.edges.push(index);
+            }
+        } else {
+            runs.push(EdgeRun {
+                strong: edge.strong,
+                adjusted: edge.adjusted,
+                opacity: edge.opacity,
+                edges: vec![index],
+            });
+        }
+    }
+    runs
+}
+
+/// 节点的屏幕几何与标签排版锚点；base 与 A 共用同一计算。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeVisualGeometry {
+    pub rect: Rect,
+    pub center: Point,
+    pub size: (f32, f32),
+    pub label: String,
+    /// 标签排版锚点：节点左内边距 6px、垂直居中。
+    pub label_anchor: Point,
+}
+
+pub fn node_visual_geometry(node: &NodeLayout, viewport: &Viewport) -> NodeVisualGeometry {
+    let rect = viewport.screen_rect(node.rect);
+    NodeVisualGeometry {
+        rect,
+        center: Point {
+            x: rect.x + rect.width / 2.0,
+            y: rect.y + rect.height / 2.0,
+        },
+        size: (rect.width, rect.height),
+        label: node.id.clone(),
+        label_anchor: Point {
+            x: rect.x + 6.0,
+            y: rect.y + rect.height / 2.0,
+        },
+    }
+}
+
+/// 一帧的几何：节点/标签按绘制顺序，边按分组展开后的原始顺序。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameGeometry {
+    pub nodes: Vec<NodeVisualGeometry>,
+    pub edges: Vec<EdgeVisual>,
+}
+
+/// 生成可比较的帧几何；`batch_edges` 只影响边的分组，展开后必须与全量序列一致。
+pub fn frame_geometry(map: &MapLayout, viewport: &Viewport, batch_edges: bool) -> FrameGeometry {
+    let nodes = map
+        .nodes
+        .iter()
+        .map(|node| node_visual_geometry(node, viewport))
+        .collect();
+    let edges = map
+        .edges
+        .iter()
+        .map(|edge| EdgeVisual {
+            from: viewport.screen_point(edge.from),
+            to: viewport.screen_point(edge.to),
+            adjusted: edge.direction_adjusted,
+            strong: false,
+            opacity: 1.0,
+        })
+        .collect::<Vec<_>>();
+    let flattened = group_edges(&edges, batch_edges)
+        .into_iter()
+        .flat_map(|run| run.edges.into_iter().map(|index| edges[index]))
+        .collect();
+    FrameGeometry {
+        nodes,
+        edges: flattened,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
