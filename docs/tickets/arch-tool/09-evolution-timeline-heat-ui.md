@@ -526,7 +526,7 @@ pwsh -NoProfile -File eval/phase-interleave.ps1 -Repo "$env:TEMP\tsx-hist" -Pair
 | --- | --- | --- |
 | timeline 首帧（`process`→`frame:presented`） | 中位数 **2142ms**（2019–2464） | 中位数 **1333ms**（1097–1807） |
 | empty 首帧 | 中位数 1448ms（1122–1783） | 中位数 1356ms（1023–2107） |
-| timeline − empty（逐 pair） | 均值 +724ms（236–974） | 均值 +4ms（-555…+268） |
+| timeline − empty（逐 pair） | 均值 +724ms、中位数 **+759ms**（236–974） | 均值 +4ms、中位数 **+93ms**（-555…+268） |
 | 数据准备 | `prep` 738ms（649–805） | `load:start`→`load:done` 795ms（686–1140） |
 
 改后单模式 9 次（`eval/phase-timing.ps1 -Runs 9 -AutoCloseMs 2500`，保证内容出现）：
@@ -546,11 +546,26 @@ pwsh -NoProfile -File eval/phase-interleave.ps1 -Repo "$env:TEMP\tsx-hist" -Pair
 
 **既有输出与未牵动项：** `map` 冒烟 = `map: 3 modules, 0 edges, 1 bands [unclassified=3], canvas 1200x800`，`diff` 冒烟 = `added=2 removed=1 modified=0 renames=0`，均与改动前一致；`timeline` 在自动关闭 ≥ 内容就绪时输出的 `timeline: N ticks, M modules, K bands` 格式未变。`timeline --auto-close-ms 0` 因在就绪前退出不再打印计数行，属已确认的自动关闭语义（见「门控等价证明」）。`timeline_playback` 7/7、`timeline_scrub` 6/6 仍绿；P2 转场与 ticket 14 的 15 秒代码路径未被本改动触及。
 
-**判据（相对，已入库）：**
+**`--auto-close-ms 0` 行为变化的影响清单（全仓排查）：**
 
-- `timeline 首帧 ≤ 同批核心窗口探针首帧 + 400ms`，在 `phase-interleave.ps1` 的每一对里逐对检查（同一会话、交替、串行）。
-- 余量 400ms 的取值依据是结构性的：它必须显著小于数据准备耗时下限（改前 649ms / 改后 686ms），否则判据无法分辨「准备已移出首帧」与「准备仍在首帧」。**已知偏差：该余量是在本次改后读数之后写入的，未做到严格「测前钉死」；但它不依赖首帧差值的具体分布（改后逐 pair 最大 +268ms 本来就在 400ms 内，判据通过不靠事后放宽）。**
-- 逐 pair 首帧差（改后，ms）：-555 / -333 / -112 / 74 / 93 / 171 / 187 / 246 / 268 → **9/9 ≤ 400ms，PASS**。
+| 位置 | 是否依赖 `timeline:` 计数行 | 影响与处理 |
+| --- | --- | --- |
+| `README.md` | 否（只演示 `smoke`） | 新增「启动行为」说明：窗口先出现加载态，计数行在内容就绪时打印；自动关闭早于就绪时可能没有该行。 |
+| `docs/research/usability/README.md` §3.5 | 是（操作者以 stdout 出现 `timeline: 617 ticks ...` 作为就绪信号） | 该流程不带 `--auto-close-ms`，计数行仍会打印；已改写为「窗口先出现并显示加载态是正常的，等到 stdout 计数行或窗口出现 617/617 再开始」。 |
+| `eval/phase-timing.ps1` / `eval/phase-interleave.ps1` | 是（`timeline:` → `prep:reported`） | ac500 且 617 刻度时改后可能没有 `prep:reported`（实测 9/9 无）；脚本对缺失标记输出空值、不报错；内容就绪读数改用 ac2500 单模式测量。不属于测试门禁。 |
+| `.github/workflows/ci.yml` | 否 | 只有 `cargo build` 与 Windows `smoke`，不运行 `timeline`；本次改动不改变 CI 的失败 step。 |
+| `crates/arch-view/tests/*` | 否 | `timeline_loading` 通过 `prepare_timeline` API 断言计数；`smoke.rs` 只断言 `smoke: frame rendered`；没有测试解析 `timeline:` 行。 |
+| `docs/tickets/arch-tool/18-*.md` 等历史读数 | 是（ac5000 / ac500 记录） | ac5000（5s）大于内容就绪时间，行仍会打印；历史记录保留原读数与命令，不回改。 |
+
+**判据（相对，中位数口径，已入库）：**
+
+- 判据：**9 对的 `timeline 首帧 − 同批空窗口首帧` 中位数 ≤ 400ms**。用中位数判定，不要求逐 pair 全过；样本为同一会话交替、串行 9 对（`eval/phase-interleave.ps1`）。
+- **本机测量在约 600ms 尺度上不可分辨，低于该值的单次差异不构成证据。** 改后逐 pair 差为 -555…+268ms，其中负值在因果上不可能（timeline 至少包含空窗口要做的事），说明单次差值已被批次噪声（窗口创建段 0.2–2.2s）淹没；因此判据只取 9 对中位数，不把单次正负或大小当作结论。
+- 区分力（为什么旧实现红、新实现绿）：
+  - 旧实现（数据准备在 `Application::new()` 之前）：逐 pair 差 236–974ms，**中位数 +759ms**（均值 +724ms），> 400ms → **红**。
+  - 新实现（准备移出首帧）：逐 pair 差 -555…+268ms，**中位数 +93ms**（均值 +4ms），≤ 400ms → **绿**。
+  - 两者中位数相差约 666ms，大于约 600ms 的噪声尺度，因此判据能分辨「准备在首帧前」与「准备在首帧后」。
+- 余量 400ms 的结构性依据：必须显著小于数据准备耗时下限（改前 649ms / 改后 686ms），否则判据无法区分两种实现。**已知偏差：余量在本轮读数之后写入，未做到严格「测前钉死」；但 400ms 既不落在约 600ms 的噪声带内，也与旧实现中位数 759ms 拉开距离，通过与否不依赖事后微调。**
 - 不同批次的 absolute 首帧（1333 / 2142 / 2636 / 4202ms）仅作分项读数，不作门禁；作废绝对判据的原因见上节。
 
 **未验证：**

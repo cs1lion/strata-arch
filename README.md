@@ -50,3 +50,11 @@ cargo run -p arch-cli -- index tests/fixtures/tiny
 cargo run -p arch-view -- smoke tests/fixtures/tiny
 cargo test -p arch-view --test scene_snapshot
 ```
+
+### 时间线启动行为
+
+`arch-view timeline <repo>` 采用「先开窗、后加载」：窗口先出现并显示加载态（当前阶段，例如「准备历史：共 617 个刻度」「构建分层」），数据就绪后自动切换到时间线并打印 `timeline: N ticks, M modules, K bands`。
+
+- 窗口先出现、暂时只有加载文案是正常行为，不是卡死；计数行出现或时间线视图切换完成才算就绪。
+- 若 `--auto-close-ms` 小于数据准备时间，进程会在计数行打印之前干净退出（退出码 0，stderr 无 panic），此时 stdout 可能没有 `timeline:` 行。
+- 数据准备失败时，错误显示在窗口内，不只写 stderr。
