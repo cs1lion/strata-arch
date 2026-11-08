@@ -1,8 +1,10 @@
+use std::cell::Cell;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::Duration;
 
 use std::collections::BTreeSet;
@@ -21,9 +23,10 @@ use arch_view::playback::{PlaybackState, NON_PATH_OPACITY};
 use arch_view::timeline::{TimelineEntry, TimelineState};
 use arch_view::view::{paint_symbol_edges, CanvasState, Level, SymbolLayout, Viewport};
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, ClickEvent, Context,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
-    ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt, App, Application,
+    Bounds, ClickEvent, Context, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PathBuilder, Render, ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds,
+    WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -155,6 +158,8 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     press_origin: None,
                     drag_last: None,
                     dragged: false,
+                    transition_generation: 0,
+                    transition_delta: Rc::new(Cell::new(0.0)),
                 })
             },
         )
@@ -623,12 +628,21 @@ struct MapView {
     press_origin: Option<LayoutPoint>,
     drag_last: Option<LayoutPoint>,
     dragged: bool,
+    /// 转场代际：每次启动新转场 +1，让 `with_animation` 的元素 id 重新计时。
+    transition_generation: u64,
+    /// 当前帧的转场进度，由 `with_animation` 的 animator 写入、帧回调读取。
+    transition_delta: Rc<Cell<f32>>,
 }
 
 impl MapView {
     /// fly-to 接线：只在启用且当前步骤变化时把相机移到当前节点；
     /// 关闭时清空锚点，避免再次打开时沿用旧状态。
-    fn apply_fly_to_if_needed(&mut self, scene: &Scene, window: &Window) -> Viewport {
+    fn apply_fly_to_if_needed(
+        &mut self,
+        scene: &Scene,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Viewport {
         if let Some(playback) = &self.playback {
             let anchor = playback
                 .steps()
@@ -657,15 +671,40 @@ impl MapView {
                     f32::from(window.viewport_size().width),
                     f32::from(window.viewport_size().height),
                 );
-                self.state.apply_fly_to(target, viewport_size);
+                if self.state.begin_fly_to(target, viewport_size) {
+                    self.transition_generation += 1;
+                    self.transition_delta = Rc::new(Cell::new(0.0));
+                    Self::schedule_transition_step(self, window, cx);
+                }
                 self.fly_to_anchor = anchor;
             } else if !playback.fly_to_enabled() {
                 self.fly_to_anchor = None;
+                self.state.cancel_transition();
             }
         } else {
             self.fly_to_anchor = None;
+            self.state.cancel_transition();
         }
         self.state.viewport()
+    }
+
+    /// 每个 GPUI 动画帧把 `with_animation` 给出的进度写入相机；转场未结束时续订下一帧。
+    fn schedule_transition_step(
+        view: &mut MapView,
+        window: &mut Window,
+        cx: &mut Context<MapView>,
+    ) {
+        if view.state.transition().is_none() {
+            return;
+        }
+        cx.on_next_frame(window, |view, window, cx| {
+            view.state
+                .set_transition_progress(view.transition_delta.get());
+            if view.state.transition().is_some() {
+                MapView::schedule_transition_step(view, window, cx);
+            }
+            cx.notify();
+        });
     }
 
     fn screen_position(position: gpui::Point<gpui::Pixels>) -> LayoutPoint {
@@ -699,7 +738,8 @@ impl Render for MapView {
         };
         let can_go_back = self.state.can_go_back();
         let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
-        let viewport = self.apply_fly_to_if_needed(&scene, window);
+        let transition_enabled = self.state.transition_enabled();
+        let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
 
         let mut root = div()
             .id("canvas")
@@ -1038,6 +1078,23 @@ impl Render for MapView {
             );
             panel = panel.child(
                 div()
+                    .id("pb-transition")
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child(if transition_enabled {
+                        "转场: 开"
+                    } else {
+                        "转场: 关"
+                    })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        let enabled = this.state.transition_enabled();
+                        this.state.set_transition_enabled(!enabled);
+                        cx.notify();
+                    })),
+            );
+            panel = panel.child(
+                div()
                     .id("pb-exit")
                     .px(px(6.))
                     .rounded(px(4.))
@@ -1052,7 +1109,21 @@ impl Render for MapView {
             root = root.child(panel);
         }
 
-        root
+        if self.state.transition().is_some() {
+            let delta = self.transition_delta.clone();
+            let generation = self.transition_generation;
+            return root
+                .with_animation(
+                    ("camera-transition", generation),
+                    Animation::new(Duration::from_millis(200)),
+                    move |element, progress| {
+                        delta.set(progress);
+                        element
+                    },
+                )
+                .into_any_element();
+        }
+        root.into_any_element()
     }
 }
 
