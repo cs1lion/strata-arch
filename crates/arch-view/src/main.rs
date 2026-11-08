@@ -24,6 +24,7 @@ use arch_view::loading::{
     LoadingStage, LoadingState,
 };
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
+use arch_view::reveal::{reveal_allowed, RevealState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
@@ -37,7 +38,7 @@ use gpui::{
 };
 
 const USAGE: &str = "用法:
-  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
+  arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--reveal] [--from <入口ID> --to <符号ID>]
   arch-view timeline <目标仓库> [--auto-close-ms <毫秒>] [--autoplay]
   arch-view diff <目标仓库> --from <commit> --to <commit> [--no-fade] [--auto-close-ms <毫秒>]
   arch-view scene <目标仓库> [--out <场景文件>]
@@ -109,6 +110,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let mut auto_close_ms: Option<u64> = None;
     let mut from: Option<String> = None;
     let mut to: Option<String> = None;
+    let mut reveal_requested = false;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--auto-close-ms" => {
@@ -121,6 +123,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                         .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
                 );
             }
+            "--reveal" => reveal_requested = true,
             "--from" => {
                 from = Some(
                     args.next()
@@ -172,6 +175,20 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         layout.height
     );
 
+    let reveal_requested =
+        reveal_requested || std::env::var_os("STRATA_EVIDENCE_REVEAL").is_some();
+    let reveal_enabled = reveal_allowed(reveal_requested, playback.is_some());
+    let mut reveal = RevealState::new(reveal_enabled, layout.bands.len());
+    // 层带/模块在这里之前已全部构建完成，所以 P5 在数据就绪后才启动；
+    // map 路径没有加载态面板，揭示不会与加载态抢同一帧。
+    reveal.start();
+    println!(
+        "map: reveal={} layers={} frames={}",
+        if reveal.is_enabled() { "on" } else { "off" },
+        layout.bands.len(),
+        reveal.total_frames()
+    );
+
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         cx.open_window(
@@ -191,6 +208,10 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     dragged: false,
                     transition_generation: 0,
                     transition_delta: Rc::new(Cell::new(0.0)),
+                    reveal,
+                    reveal_scheduled: false,
+                    reveal_start_marked: false,
+                    reveal_mid_marked: false,
                 })
             },
         )
@@ -717,7 +738,7 @@ impl Render for SmokeView {
             .overflow_hidden()
             .bg(rgb(0x0d1117));
         for band in &self.layout.bands {
-            root = root.child(band_element(band, Viewport::default()));
+            root = root.child(band_element(band, Viewport::default(), 1.0, 0.0));
         }
         for node in &self.layout.nodes {
             root = root.child(
@@ -938,7 +959,7 @@ impl Render for TimelineView {
             .bg(rgb(0x0d1117));
 
         for band in &layout.bands {
-            root = root.child(band_element(band, Viewport::default()));
+            root = root.child(band_element(band, Viewport::default(), 1.0, 0.0));
         }
 
         for (index, node) in layout.nodes.iter().enumerate() {
@@ -1254,6 +1275,11 @@ struct MapView {
     transition_generation: u64,
     /// 当前帧的转场进度，由 `with_animation` 的 animator 写入、帧回调读取。
     transition_delta: Rc<Cell<f32>>,
+    /// P5 首屏分层揭示：一次性、帧驱动、可打断。
+    reveal: RevealState,
+    reveal_scheduled: bool,
+    reveal_start_marked: bool,
+    reveal_mid_marked: bool,
 }
 
 impl MapView {
@@ -1347,6 +1373,47 @@ impl MapView {
             }
         }
     }
+
+    /// 用户任何交互都立即结束揭示并落到最终态；已结束/默认关时无操作。
+    fn interrupt_reveal(&mut self) {
+        if self.reveal.skip() {
+            phase_marker("reveal:skip");
+        }
+    }
+
+    /// 每个 GPUI 帧回调推进一格；仍在揭示时续订下一帧，播完即停（不回绕）。
+    fn schedule_reveal_frame(
+        view: &mut MapView,
+        window: &mut Window,
+        cx: &mut Context<MapView>,
+    ) {
+        if !view.reveal.is_active() || view.reveal_scheduled {
+            return;
+        }
+        if !view.reveal_start_marked {
+            view.reveal_start_marked = true;
+            phase_marker("reveal:start");
+        }
+        view.reveal_scheduled = true;
+        cx.on_next_frame(window, |view, window, cx| {
+            view.reveal_scheduled = false;
+            let was_active = view.reveal.is_active();
+            view.reveal.advance_frame();
+            if was_active && view.reveal.is_finished() {
+                phase_marker("reveal:done");
+            } else if was_active
+                && !view.reveal_mid_marked
+                && view.reveal.overall_progress() >= 0.5
+            {
+                view.reveal_mid_marked = true;
+                phase_marker("reveal:mid");
+            }
+            if view.reveal.is_active() {
+                MapView::schedule_reveal_frame(view, window, cx);
+            }
+            cx.notify();
+        });
+    }
 }
 
 impl Render for MapView {
@@ -1367,6 +1434,10 @@ impl Render for MapView {
             .unwrap_or(false);
         let transition_enabled = self.state.transition_enabled();
         let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
+        if self.reveal.is_active() {
+            Self::schedule_reveal_frame(self, window, cx);
+        }
+        let reveal_overall = self.reveal.overall_progress();
 
         let mut root = div()
             .id("canvas")
@@ -1377,6 +1448,7 @@ impl Render for MapView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
+                    this.interrupt_reveal();
                     let position = Self::screen_position(event.position);
                     this.press_origin = Some(position);
                     this.drag_last = Some(position);
@@ -1387,6 +1459,7 @@ impl Render for MapView {
                 if !event.dragging() {
                     return;
                 }
+                this.interrupt_reveal();
                 let position = Self::screen_position(event.position);
                 if let Some(last) = this.drag_last {
                     let dx = position.x - last.x;
@@ -1412,6 +1485,7 @@ impl Render for MapView {
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+                this.interrupt_reveal();
                 let anchor = Self::screen_position(event.position);
                 let delta = match event.delta {
                     ScrollDelta::Pixels(delta) => f32::from(delta.y),
@@ -1423,6 +1497,23 @@ impl Render for MapView {
                     cx.notify();
                 }
             }));
+
+        if self.reveal.is_active() {
+            root = root.child(
+                div()
+                    .id("reveal-hint")
+                    .absolute()
+                    .right(px(12.))
+                    .top(px(12.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x161b22))
+                    .text_xs()
+                    .text_color(rgb(0x8b9bb0))
+                    .child("层归属为推断结果 · 点击/拖动立即跳过揭示"),
+            );
+        }
 
         if can_go_back {
             root = root.child(
@@ -1439,6 +1530,7 @@ impl Render for MapView {
                     .text_color(rgb(0xe6edf3))
                     .child("← 返回地图")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
                         this.state.go_back();
                         this.press_origin = None;
                         this.drag_last = None;
@@ -1449,10 +1541,22 @@ impl Render for MapView {
 
         match scene {
             Scene::Modules(map) => {
-                for band in &map.bands {
-                    root = root.child(band_element(band, viewport));
+                let stage_of_layer = map
+                    .bands
+                    .iter()
+                    .enumerate()
+                    .map(|(index, band)| (band.layer, index))
+                    .collect::<std::collections::BTreeMap<&str, usize>>();
+                for (index, band) in map.bands.iter().enumerate() {
+                    root = root.child(band_element(
+                        band,
+                        viewport,
+                        self.reveal.opacity_for_stage(index),
+                        self.reveal.offset_for_stage(index),
+                    ));
                 }
-                let base_opacity = if fade_enabled { CONTEXT_OPACITY } else { 1.0 };
+                let base_opacity =
+                    (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
                 let edges = map
                     .edges
                     .iter()
@@ -1494,6 +1598,7 @@ impl Render for MapView {
                         } else {
                             (playback.current() == index + 2, 1.0)
                         };
+                        let opacity = opacity * reveal_overall;
                         path_edges.push(EdgeDraw {
                             from: viewport.screen_point(*from),
                             to: viewport.screen_point(*to),
@@ -1543,6 +1648,9 @@ impl Render for MapView {
                             .unwrap_or(1.0),
                         None => 1.0,
                     };
+                    let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
+                    let opacity = opacity * self.reveal.opacity_for_stage(stage);
+                    let offset_y = self.reveal.offset_for_stage(stage);
                     root = root.child(node_element(
                         node,
                         viewport,
@@ -1551,6 +1659,7 @@ impl Render for MapView {
                         &highlighted,
                         opacity,
                         focus,
+                        offset_y,
                     ));
                 }
             }
@@ -1571,7 +1680,7 @@ impl Render for MapView {
                         to: edge.to,
                         adjusted: false,
                         strong: edge.strong,
-                        opacity: edge.opacity,
+                        opacity: edge.opacity * reveal_overall,
                     })
                     .collect::<Vec<_>>();
                 root = root.child(edge_canvas(
@@ -1605,6 +1714,7 @@ impl Render for MapView {
                         Some(playback) => playback.node_opacity(&node.id),
                         None => 1.0,
                     };
+                    let opacity = opacity * reveal_overall;
                     root = root.child(symbol_node_element(
                         node,
                         opacity,
@@ -1932,7 +2042,12 @@ fn selection_border(
     }
 }
 
-fn band_element(band: &BandLayout, viewport: Viewport) -> impl IntoElement {
+fn band_element(
+    band: &BandLayout,
+    viewport: Viewport,
+    opacity: f32,
+    offset_y: f32,
+) -> impl IntoElement {
     let rect = scaled_rect(band.rect, viewport);
     let background = rgb(band_background_palette(
         band.is_unclassified,
@@ -1948,9 +2063,10 @@ fn band_element(band: &BandLayout, viewport: Viewport) -> impl IntoElement {
     div()
         .absolute()
         .left(px(rect.x))
-        .top(px(rect.y))
+        .top(px(rect.y + offset_y))
         .w(px(rect.width))
         .h(px(rect.height))
+        .opacity(opacity)
         .bg(background)
         .border_b_1()
         .border_color(border)
@@ -1972,6 +2088,7 @@ fn node_element(
     highlighted: &std::collections::BTreeSet<String>,
     opacity: f32,
     focus: Option<&str>,
+    offset_y: f32,
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
     let background = layer_color(node.layer, node.is_unclassified);
@@ -1987,7 +2104,7 @@ fn node_element(
     let mut element = div()
         .absolute()
         .left(px(rect.x))
-        .top(px(rect.y))
+        .top(px(rect.y + offset_y))
         .w(px(rect.width))
         .h(px(rect.height))
         .overflow_hidden()
