@@ -2,12 +2,15 @@
 #
 # 口径：
 #   - 只测 release 构建的 arch-cli；默认 3 次运行，记录每次墙钟与峰值 WorkingSet64。
-#   - Windows 的 WorkingSet64 是峰值内存代理指标，置信度低（见 docs/acceptance-gaps.md）。
+#   - 内存门禁用 OS 生命周期峰值 `PeakWorkingSet64`（`osPeakWsMb`），代表进程驻留集（RSS）峰值；
+#     轮询 `WorkingSet64`（`polledWsMb`）只是采样下界，可能漏掉短峰，不用于门禁。
+#   - 门禁：`index` 与 `history` 每次运行的峰值必须 < `-MaxPeakMb`（默认 512MB），超限退出 1。
 #   - 结果写入 out/perf.json（不入库）；仓内只更新 eval/baseline/current.json 摘要。
 #
 # 用法：
 #   pwsh -File eval/perf-baseline.ps1
 #   pwsh -File eval/perf-baseline.ps1 -Runs 3 -Exe target/release/arch-cli.exe
+#   pwsh -File eval/perf-baseline.ps1 -MaxPeakMb 1   # 反向用例：门禁必须判红
 
 [CmdletBinding()]
 param(
@@ -15,7 +18,8 @@ param(
     [string]$OutJson = "out/perf.json",
     [int]$Runs = 3,
     [string]$CorpusRoot = "tests/corpus",
-    [string]$CorpusManifest = "eval/corpus.toml"
+    [string]$CorpusManifest = "eval/corpus.toml",
+    [int]$MaxPeakMb = 512
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,6 +161,38 @@ if (Test-Path (Join-Path $historyPath ".git")) {
     }
 }
 
+$gateViolations = @()
+$gateChecked = @{}
+foreach ($name in $summary.Keys) {
+    $value = $summary[$name]
+    $peak = $value.peakWsMb
+    $metric = "osPeakWsMb"
+    if ($null -eq $peak) {
+        $peak = $value.polledPeakWsMb
+        $metric = "polledWsMb"
+    }
+    $gateChecked[$name] = [pscustomobject]@{ task = $value.task; metric = $metric; peakMb = $peak }
+    if ($null -eq $peak) {
+        $gateViolations += [pscustomobject]@{ sample = $name; task = $value.task; metric = "unmeasured"; peakMb = $null; limitMb = $MaxPeakMb }
+    } elseif ($peak -gt $MaxPeakMb) {
+        $gateViolations += [pscustomobject]@{ sample = $name; task = $value.task; metric = $metric; peakMb = $peak; limitMb = $MaxPeakMb }
+    }
+}
+if ($historySummary.status -ne "skipped") {
+    $peak = $historySummary.peakWsMb
+    $metric = "osPeakWsMb"
+    if ($null -eq $peak) {
+        $peak = $historySummary.polledPeakWsMb
+        $metric = "polledWsMb"
+    }
+    $gateChecked["history"] = [pscustomobject]@{ task = "history"; metric = $metric; peakMb = $peak }
+    if ($null -eq $peak) {
+        $gateViolations += [pscustomobject]@{ sample = "history"; task = "history"; metric = "unmeasured"; peakMb = $null; limitMb = $MaxPeakMb }
+    } elseif ($peak -gt $MaxPeakMb) {
+        $gateViolations += [pscustomobject]@{ sample = "history"; task = "history"; metric = $metric; peakMb = $peak; limitMb = $MaxPeakMb }
+    }
+}
+
 $payload = [pscustomobject]@{
     schemaVersion = 1
     generatedAt   = (Get-Date).ToString("o")
@@ -171,6 +207,13 @@ $payload = [pscustomobject]@{
     samples = $summary
     history = $historySummary
     records = $records
+    memoryGate = [pscustomobject]@{
+        limitMb    = $MaxPeakMb
+        metric     = "osPeakWsMb (PeakWorkingSet64; polledWsMb only as fallback)"
+        checked    = $gateChecked
+        passed     = ($gateViolations.Count -eq 0)
+        violations = $gateViolations
+    }
 }
 
 $payload | ConvertTo-Json -Depth 8 | Set-Content -Path $OutJson -Encoding utf8
@@ -184,4 +227,13 @@ if ($historySummary.status -eq "skipped") {
 } else {
     Write-Output ("history: median {0}ms, max {1}ms, peakWs {2}Mb" -f $historySummary.medianMs, $historySummary.maxMs, $historySummary.peakWsMb)
 }
+
+if ($gateViolations.Count -gt 0) {
+    Write-Output ("memory gate: FAILED (limit {0}Mb)" -f $MaxPeakMb)
+    $gateViolations | ForEach-Object {
+        Write-Output ("  {0}/{1}: peak {2}Mb ({3}) > {4}Mb" -f $_.sample, $_.task, $_.peakMb, $_.metric, $_.limitMb)
+    }
+    exit 1
+}
+Write-Output ("memory gate: passed (all peaks < {0}Mb)" -f $MaxPeakMb)
 
