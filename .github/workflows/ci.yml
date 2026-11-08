@@ -91,6 +91,63 @@ jobs:
             exit 1
           fi
 
+  reveal-budget:
+    name: reveal budget (software rendering)
+    # 只在手动 dispatch 时跑：这是取证 job（软件渲染 / 单核低端代理下的揭示时长），
+    # 不参与每次 push 的门禁；读数写进 ticket 10。
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: install gpu window deps (Linux)
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools x11-utils openbox
+      - name: fetch corpus (excalidraw)
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/fetch-corpus.ps1 -Name excalidraw
+      - name: build release
+        run: cargo build --locked --release -p arch-view
+      - name: reveal timing (lavapipe, 3 runs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/reveal
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          for i in 1 2 3; do
+            xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+              "openbox >/dev/null 2>&1 & sleep 1; exec pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/soft-$i.json" \
+              2>&1 | tee "out/reveal/soft-$i.log"
+          done
+      - name: reveal timing (lavapipe + 1 CPU, 3 runs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          for i in 1 2 3; do
+            xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+              "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 150000 -OutJson out/reveal/soft-1cpu-$i.json" \
+              2>&1 | tee "out/reveal/soft-1cpu-$i.log"
+          done
+      - name: summarize reveal durations
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem out/reveal/*.json | Sort-Object Name) {
+            $data = Get-Content $file.FullName -Raw | ConvertFrom-Json
+            $duration = if ($null -ne $data.revealStartMs -and $null -ne $data.revealDoneMs) {
+              [math]::Round($data.revealDoneMs - $data.revealStartMs, 1)
+            } else { "missing" }
+            "{0}: reveal={1}ms frames={2} intervalMedian={3}ms p95={4}ms exit={5}" -f `
+              $file.Name, $duration, $data.framesTotal, $data.intervals.medianMs, $data.intervals.p95Ms, $data.exitCode
+          }
+      - name: upload reveal budget artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reveal-budget
+          path: out/reveal
+          if-no-files-found: warn
+          retention-days: 14
+
   drift:
     name: drift gate
     runs-on: windows-latest
