@@ -66,7 +66,8 @@ jobs:
             return 1
           }
           # 第一轮保持 ticket 14 的 12 秒预算，用阶段标记定位卡点。
-          if run_attempt default xvfb-run -a -s "-screen 0 1280x1024x24" \
+          # 每轮都用 `timeout` 兜底，避免出现「进程不退出把 job 拖死」的情况。
+          if run_attempt default timeout -k 10s 35s xvfb-run -a -s "-screen 0 1280x1024x24" \
               cargo run --locked -p arch-view -- smoke tests/fixtures/tiny; then
             exit 0
           fi
@@ -79,7 +80,7 @@ jobs:
             export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
             echo "VK_ICD_FILENAMES=${VK_ICD_FILENAMES}"
           fi
-          if run_attempt software xvfb-run -a -s "-screen 0 1280x1024x24" \
+          if run_attempt software timeout -k 10s 55s xvfb-run -a -s "-screen 0 1280x1024x24" \
               cargo run --locked -p arch-view -- smoke tests/fixtures/tiny; then
             exit 0
           fi
@@ -87,32 +88,8 @@ jobs:
           # 不会进入 viewable 状态，gpui 的 MapNotify 驱动刷新循环可能因此不启动。
           echo "software path failed; retrying with openbox window manager"
           export STRATA_SMOKE_TIMEOUT_SECS=60
-          run_attempt openbox xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
+          run_attempt openbox timeout -k 10s 95s xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
               'openbox >/dev/null 2>&1 & sleep 1; exec cargo run --locked -p arch-view -- smoke tests/fixtures/tiny'
-
-      - name: linux window state probe (diagnostic)
-        if: always() && runner.os == 'Linux'
-        shell: bash
-        run: |
-          # 只用于取证：在虚拟显示里跑一次冒烟，8 秒后抓窗口的 X11 状态。
-          set +e
-          xvfb-run -a -s "-screen 0 1280x1024x24" bash -c '
-            export LIBGL_ALWAYS_SOFTWARE=1
-            export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
-            export STRATA_PHASE_MARKERS=1
-            export STRATA_SMOKE_TIMEOUT_SECS=12
-            ./target/debug/arch-view smoke tests/fixtures/tiny > /tmp/probe.log 2>&1 &
-            app=$!
-            sleep 8
-            echo "== xwininfo -root -tree =="
-            xwininfo -root -tree
-            id=$(xwininfo -root -children | grep -E "^    0x" | head -n1 | grep -oE "0x[0-9a-f]+")
-            echo "== xwininfo -id ${id} =="
-            xwininfo -id "${id}" | grep -E "Map State|Width|Height|Override Redirect|Absolute upper-left"
-            wait $app
-            echo "== probe app exit: $? =="
-            cat /tmp/probe.log
-          '
 
   drift:
     name: drift gate
