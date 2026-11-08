@@ -1,10 +1,10 @@
 # 11: 跨平台构建与 GPUI 启动冒烟
 
-**What to build:** 三个平台都能以固定 GPUI 版本、`--locked` 构建；Windows 上应用能启动窗口、渲染一帧并干净退出；macOS/Linux 至少编译通过。把 GPUI 的 pre-1.0 破坏性变更挡在合并前。截图能力为开放决策项，见「截图能力重新定义」。
+**What to build:** 三个平台都能以固定 GPUI 版本、`--locked` 构建；Windows 上应用能启动窗口、渲染一帧并干净退出；macOS/Linux 至少编译通过。把 GPUI 的 pre-1.0 破坏性变更挡在合并前。截图路径已裁决：IR 快照进提交级门禁，Windows OS 窗口捕获只作人工证据（见「截图路径裁决」）。
 
 **Blocked by:** 03（分层地图，提供可渲染的最静态视图）
 
-**Status:** partial（Windows 冒烟实测通过；mac/Linux 与 CI 执行未验证；截图开放项未选定）
+**Status:** partial（Windows 冒烟与截图证据实测通过；mac/Linux 未验证；CI 未实际执行）
 
 **固定样本：** `tests/fixtures/tiny`；启动冒烟使用 `--smoke` 模式。
 
@@ -19,8 +19,8 @@
 - [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵待用户确认**：推荐 Windows 主验收，mac/Linux 编译 + 启动冒烟）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
 - [x] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。仓库无 `.github/dependabot.yml` / `renovate.json`；`Cargo.lock` 已跟踪。
 - [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
-- [ ] 截图能力：**当前未验证，不得记为通过**；路径选定后另加验收项（见下节）。
-- [x] 自动化状态：构建与 Windows 启动冒烟自动化；mac/Linux 运行依赖可用 runner（**待用户确认**）；截图与视觉回归能力当前不可用（见 `docs/acceptance-gaps.md`）。
+- [x] 截图能力：按 2026-11-08 裁决执行为「IR 快照进 CI + Windows OS 捕获人工证据」。IR 快照 `arch-view scene` 输出节点/边/层带/z-order/命中框，同输入两次字节一致；`eval/capture-window.ps1` 为手动脚本，不参与 CI。**mac/Linux 截图不做，未验证。**
+- [x] 自动化状态：构建与 Windows 启动冒烟自动化；IR 快照确定性断言自动化（`cargo test -p arch-view --test scene_snapshot`）；OS 窗口捕获为手动证据，不进 CI；mac/Linux 运行与截图未验证。
 
 ## 验收记录（2026-11-08，B 档）
 
@@ -48,19 +48,43 @@
 
 - **CI 未实际执行**：`.github/workflows/ci.yml` 只在本地落盘，没有远端运行记录；「锁文件不一致即失败」依赖 CI 的 `--locked`，未经实测。
 - **mac/Linux 未验证**：没有可用 runner；gpui 在 Linux 需要系统图形依赖，能否在 `ubuntu-latest` 直接构建未知。
-- **截图开放项未选定**：下方 (a)/(b)/(c)/(d) 仍需用户决策；本票不以截图作为通过条件，「渲染一帧」只由帧后回调标记证明，不代表像素正确。
+- **截图路径已裁决（(d)+(a)）**：IR 快照做提交级门禁，Windows OS 捕获仅作人工证据；mac/Linux 不截图。
 - **`cargo run` 计时口径**：3 秒预算按已构建二进制的墙钟计；`cargo run` 的冷编译时间不计入。
 
-## 截图能力重新定义（2026-11-07，开放项）
+## 截图路径裁决（2026-11-08，已执行）
 
-目标：在不引入「第二套与 GPUI 分叉的渲染路径」的前提下，获得可自动断言、可复现的视觉产物。以下路径均**未选定**，需要用户决策；未选定前本票不以截图作为通过条件。
+用户裁决：**仅 IR 快照 + Windows 下补一次 OS 窗口捕获作为人工证据**；mac/Linux 截图不做。
+
+### IR 快照（提交级门禁）
+
+- 入口：`arch-view scene <目标仓库> [--out <场景文件>]`；产物 `schemaVersion = 1`，含 `repo`、`layout.width/height`、`bands[]`（layer/rect/zIndex/nodeCount）、`nodes[]`（id/layer/rect/labelRect/hitRect/zIndex）、`edges[]`（source/target/kind/from/to/zIndex）。
+- z-order 固定：层带 < 边 < 节点；命中框 `hitRect` 等于节点矩形（当前无额外热区）。
+- 测试（A 档，先 Red 后实现）：`cargo test -p arch-view --test scene_snapshot` 3 passed / 0 failed；实现前实测 1 passed / 2 failed（`scene` 子命令不存在，退出码 2）。
+- 确定性读数：`arch-view scene tests/fixtures/layers --out docs/evidence/11-scene-layers.json` 两次运行字节一致；文件 23,368 字节，SHA256 `4FE2B0EE68C3DF7ADD33EED3E0C610496575547FDB0DB2581D16372360AF4516`。
+- 覆盖边界：只证明布局模型（矩形、端点、层带、z-order、命中框），不覆盖光栅化、抗锯齿、字体度量与 GPU 驱动差异。
+
+### Windows OS 窗口捕获（人工证据，不进 CI）
+
+- 脚本：`eval/capture-window.ps1`（手动执行；启动 `arch-view map`，取主窗口句柄，优先 `PrintWindow`，失败回退屏幕捕获）。
+- 实测（Windows，2026-11-08）：`pwsh -File eval/capture-window.ps1` → exit 0，窗口 1212×835，产物 `docs/evidence/11-window-capture.png`，SHA256 `DA6733FE135332AB7D0DDE292A5DE240385876E86613BBDDCBF7B6598FBAC7AE`；画面可见层带（cli/commands/components/server）、模块节点与标签、跨层边，非黑屏。
+- 不进 CI：需要可见桌面会话，无头 runner 不可靠；每次运行像素受字体/DPI/GPU 影响，不作为门禁。
+
+### 未验证
+
+- macOS/Linux 构建与启动冒烟：无 runner，未验证。
+- CI 实际执行：本地配置存在，无远端运行记录。
+- 像素级差异基线：未建立，OS 捕获仅一次人工证据。
+
+## 截图能力重新定义（2026-11-07 开放项，2026-11-08 已裁决）
+
+目标：在不引入「第二套与 GPUI 分叉的渲染路径」的前提下，获得可自动断言、可复现的视觉产物。2026-11-08 用户裁决 **（d）IR 快照 + （a）Windows 人工捕获**；下表保留原评估与状态。
 
 | 路径 | 做法 | 判据 | CI 可用性 | 与「不允许双渲染路径漂移」的冲突 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| **(a) OS 窗口捕获** | Windows 用 `PrintWindow`/DWM 抓取真实窗口像素；macOS/Linux 用各平台窗口捕获 | 固定窗口尺寸与布局下，PNG 非空、不同颜色数 >10；与基线做像素差 | 低：需要可见窗口与桌面会话；无头 CI 不可靠，多 GPU/DPI 不稳定 | 低：抓的就是 GPUI 真实输出，没有第二条渲染路径；但「离屏」语义不成立 | 开放，待选 |
-| **(b) 切换 gpui git 版本验证离屏 API** | 改用 Zed 仓库的 gpui git revision，检索并验证是否存在公开离屏导出入口 | 能产出 `RgbaImage`/PNG，结构断言与像素基线可复用 | 中：取决于上游 API 与 CI GPU 条件；需锁定 revision | 低：仍为 GPUI 单一渲染路径；但破坏 `=0.2.2` + `--locked` 固定策略，需改 spec 与升级策略 | 开放，待选 |
-| **(c) 场景 IR + 确定性 CPU 光栅器** | GPUI 继续负责交互窗口；另建与布局模型同源的场景 IR，用 CPU 光栅器（如 tiny-skia）生成 PNG | 场景 IR 的节点/边/层带与布局模型逐项一致；PNG 结构断言通过；像素测试确定性可复现 | 高：纯 CPU，无头可用，跨平台一致 | **高**：形成两条渲染路径，存在漂移风险；必须用「同一场景 IR 驱动两条路径」或定期像素对照来约束 | 开放，待选 |
-| **(d) 仅 IR 级快照，不落像素** | 导出确定性场景 IR（JSON/二进制）作为快照产物，断言节点矩形、边端点、标签包围盒、z-order、命中框 | IR 快照字节级稳定；字段与布局模型一致 | 高：纯数据，无头可用 | 低：不新增渲染路径；但无法发现光栅化、抗锯齿、字体度量、GPU 驱动差异 | 开放，待选 |
+| **(a) OS 窗口捕获** | Windows 用 `PrintWindow`/DWM 抓取真实窗口像素；macOS/Linux 用各平台窗口捕获 | 固定窗口尺寸与布局下，PNG 非空、不同颜色数 >10；与基线做像素差 | 低：需要可见窗口与桌面会话；无头 CI 不可靠，多 GPU/DPI 不稳定 | 低：抓的就是 GPUI 真实输出，没有第二条渲染路径；但「离屏」语义不成立 | **已选：仅 Windows 人工证据，不进 CI** |
+| **(b) 切换 gpui git 版本验证离屏 API** | 改用 Zed 仓库的 gpui git revision，检索并验证是否存在公开离屏导出入口 | 能产出 `RgbaImage`/PNG，结构断言与像素基线可复用 | 中：取决于上游 API 与 CI GPU 条件；需锁定 revision | 低：仍为 GPUI 单一渲染路径；但破坏 `=0.2.2` + `--locked` 固定策略，需改 spec 与升级策略 | 未选（否决：破坏版本固定） |
+| **(c) 场景 IR + 确定性 CPU 光栅器** | GPUI 继续负责交互窗口；另建与布局模型同源的场景 IR，用 CPU 光栅器（如 tiny-skia）生成 PNG | 场景 IR 的节点/边/层带与布局模型逐项一致；PNG 结构断言通过；像素测试确定性可复现 | 高：纯 CPU，无头可用，跨平台一致 | **高**：形成两条渲染路径，存在漂移风险；必须用「同一场景 IR 驱动两条路径」或定期像素对照来约束 | 未选（否决：双渲染路径） |
+| **(d) 仅 IR 级快照，不落像素** | 导出确定性场景 IR（JSON/二进制）作为快照产物，断言节点矩形、边端点、标签包围盒、z-order、命中框 | IR 快照字节级稳定；字段与布局模型一致 | 高：纯数据，无头可用 | 低：不新增渲染路径；但无法发现光栅化、抗锯齿、字体度量、GPU 驱动差异 | **已选：提交级门禁** |
 
 **与「不允许双渲染路径漂移」的约束说明：**
 
@@ -68,10 +92,10 @@
 - (c) 明确会产生第二条渲染路径。若选 (c)，必须同时满足：两条路径共享同一场景 IR；IR 变更必须同时更新两侧；提交级跑 IR 结构断言，发布级跑 GPUI 与 CPU 光栅器产物的像素对照；否则不接受。
 - (d) 不产生第二条渲染路径，但只覆盖布局/结构，不覆盖真实像素。
 
-**待用户决定的开放项：**
+**原待用户决定的开放项（2026-11-08 已裁决）：**
 
-1. 选 (a)/(b)/(c)/(d) 中的哪条，或组合（例如 (d) 作为提交级门禁 + (a) 作为发布级人工/本机探针）。
-2. 若选 (c)，是否接受「共享场景 IR」作为强约束，以及像素对照的发布级频率。
-3. 若选 (b)，是否放宽 `gpui = "=0.2.2"` 固定策略、允许锁定 git revision，并同步修改 spec 与升级 runbook。
-4. 截图产物存放位置（仓内基线 / CI artifact / 本机归档）与像素差阈值。
-5. 无头 CI 是否作为硬门禁，还是仅 Windows 本机 + 发布前人工验证。
+1. 选 (d) 作为提交级门禁 + (a) 作为 Windows 本机人工证据；不选 (b)/(c)。
+2. (c) 未采用，因此「共享场景 IR」约束不触发。
+3. (b) 未采用，`gpui = "=0.2.2"` 固定策略不变。
+4. 截图产物：IR 快照 `docs/evidence/11-scene-layers.json`（确定性，入库）；OS 捕获 `docs/evidence/11-window-capture.png`（人工证据，入库一次）；两者都不设像素差阈值。
+5. 无头 CI 不作为截图硬门禁；IR 快照测试可在无头环境跑，OS 捕获仅 Windows 本机手动。

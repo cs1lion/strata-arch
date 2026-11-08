@@ -161,4 +161,13 @@
 - 产物：`out/perf.json` 增加 `memoryGate` 段；`eval/baseline/current.json` 增加 `cases.memoryGate`、`memoryCapConfirmed=true`，并改写旧备注（旧：未实现；新：Windows 门禁已实现，Linux/macOS 未复核）。
 - 未验证：Linux `/usr/bin/time -v` 与 macOS 峰值内存；历史窗口读数仍不可得（归档副本无 `.git`）。
 
+## 11 截图：IR 快照 + Windows 人工捕获（2026-11-08）
+
+- 档位：A（真实 Red）。先写 `crates/arch-view/tests/scene_snapshot.rs`（3 项），实现前实测 1 passed / 2 failed（`scene` 子命令不存在，退出码 2、无场景产物）。
+- Green（实测）：`cargo test -p arch-view --test scene_snapshot` 3 passed / 0 failed；`arch-view scene <repo> [--out]` 输出 `schemaVersion=1` 的节点/边/层带/z-order/命中框。
+- 确定性读数：`docs/evidence/11-scene-layers.json` 23,368 字节，两次运行字节一致；SHA256 `4FE2B0EE68C3DF7ADD33EED3E0C610496575547FDB0DB2581D16372360AF4516`。
+- OS 捕获（人工证据，不进 CI）：新增 `eval/capture-window.ps1`（PrintWindow 优先，失败回退屏幕捕获）；Windows 实测 exit 0，窗口 1212×835，`docs/evidence/11-window-capture.png`，SHA256 `DA6733FE135332AB7D0DDE292A5DE240385876E86613BBDDCBF7B6598FBAC7AE`，画面含层带/节点/标签/边，非黑屏。
+- 裁决落地：选 (d) IR 快照为提交级门禁 + (a) Windows 人工证据；否决 (b)（破坏版本固定）与 (c)（双渲染路径）；mac/Linux 截图不做。
+- 未验证：mac/Linux 构建与冒烟；CI 实际执行；像素差基线未建立。
+
 
