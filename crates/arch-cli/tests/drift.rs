@@ -108,17 +108,19 @@ fn drift_record_writes_a_portable_deterministic_baseline() {
 
     let text = String::from_utf8(first_bytes.clone()).expect("baseline is UTF-8");
     let json: serde_json::Value = serde_json::from_str(&text).expect("baseline is JSON");
-    assert_eq!(json["schemaVersion"].as_u64(), Some(1));
-    assert_eq!(json["populationTolerance"].as_u64(), Some(0));
+    assert_eq!(json["schemaVersion"].as_u64(), Some(2));
+    assert!(
+        json.get("populationTolerance").is_none(),
+        "schema v2 removed the numeric tolerance"
+    );
+    assert!(
+        json.get("layers").is_none(),
+        "schema v2 removed layer counts; module identity is the gate"
+    );
     assert_eq!(
         json["recordedHead"].as_str(),
         None,
         "fixture is not a git repo"
-    );
-    assert_eq!(
-        json["layers"].as_array().expect("layers array").len(),
-        8,
-        "all fixed layers must be recorded, including empty ones"
     );
     assert!(
         !text.contains(fixture_dir().to_str().expect("fixture")),
@@ -160,7 +162,7 @@ fn drift_with_matching_baseline_exits_zero_and_reports_empty() {
         serde_json::from_slice(&output.stdout).expect("stdout must be JSON");
     assert_eq!(json["gate"]["passed"].as_bool(), Some(true));
     assert_eq!(
-        json["gate"]["checks"]["layerPopulation"]["newCount"].as_u64(),
+        json["gate"]["checks"]["moduleChanges"]["newCount"].as_u64(),
         Some(0)
     );
     assert_eq!(
@@ -232,6 +234,52 @@ fn drift_gate_failure_exits_one_with_a_full_report() {
 }
 
 #[test]
+fn a_new_file_fails_the_gate_with_its_layer_and_module() {
+    let temp = TempDir::new("new-file");
+    let baseline = temp.path().join("drift-baseline.json");
+    assert_eq!(record_baseline(&baseline).status.code(), Some(0));
+
+    let repo = fixture_copy("new-file");
+    fs::write(
+        repo.path().join("utils/extra.ts"),
+        "export const extra = 1;\n",
+    )
+    .expect("write new module");
+
+    let output = run_cli(&[
+        "drift",
+        repo.path().to_str().expect("repo"),
+        "--base",
+        baseline.to_str().expect("baseline"),
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an unconfirmed new module must block"
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must carry the report");
+    let violations = json["newViolations"].as_array().expect("violations array");
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0]["kind"].as_str(), Some("moduleChange"));
+    assert_eq!(
+        violations[0]["layer"].as_str(),
+        Some("utils"),
+        "the report must name the affected layer"
+    );
+    assert_eq!(
+        violations[0]["added"][0].as_str(),
+        Some("utils/extra.ts"),
+        "the report must name the module, not only a count"
+    );
+    assert_eq!(
+        json["gate"]["checks"]["moduleChanges"]["newCount"].as_u64(),
+        Some(1)
+    );
+}
+
+#[test]
 fn missing_or_invalid_baseline_exits_two_without_partial_json() {
     let temp = TempDir::new("invalid");
     let missing = temp.path().join("missing.json");
@@ -253,7 +301,7 @@ fn missing_or_invalid_baseline_exits_two_without_partial_json() {
     assert_eq!(record_baseline(&baseline).status.code(), Some(0));
     let text = fs::read_to_string(&baseline).expect("read baseline");
     let mut json: serde_json::Value = serde_json::from_str(&text).expect("baseline JSON");
-    json["schemaVersion"] = serde_json::json!(2);
+    json["schemaVersion"] = serde_json::json!(1);
     fs::write(
         &baseline,
         serde_json::to_string_pretty(&json).expect("serialize"),

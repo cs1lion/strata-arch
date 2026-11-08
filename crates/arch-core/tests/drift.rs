@@ -1,7 +1,8 @@
-//! N1 架构漂移检测的 A 档测试。
+//! N1 架构漂移检测的 A 档测试（schema v2）。
 //!
 //! 判据定义（与 `arch_core::drift` 模块文档一致）：
-//! - **层人口突变**：每层模块计数相对基线变化。容差 0，由基线字段 `populationTolerance` 记录。
+//! - **未确认的模块变更**：当前模块 ID 集合与基线不一致（新增或删除）。报告按层分组显式
+//!   列出 `added` / `removed`；确认方式只能是重录基线。没有数字容差。
 //! - **新增反向边**：`directionAdjusted == true` 的 `(source, target, kind)` 在基线中不存在。
 //! - **新增循环**：模块级强连通分量（SCC）的成员集合在基线中不存在；已存在的循环不重复计数。
 //! - **external 泄漏**：`kind == external-package` 的模块出现在非 `external` 层。
@@ -39,15 +40,6 @@ fn baseline_for(root: &Path) -> DriftBaseline {
 fn report_for(root: &Path, baseline: &DriftBaseline) -> DriftReport {
     let layers = build_layers(root, TOOL_VERSION).expect("layers");
     evaluate(baseline, &layers, TOOL_VERSION)
-}
-
-fn layer_count(baseline: &DriftBaseline, layer: &str) -> usize {
-    baseline
-        .layers
-        .iter()
-        .find(|entry| entry.layer == layer)
-        .unwrap_or_else(|| panic!("layer missing from baseline: {layer}"))
-        .count
 }
 
 struct TempDir(PathBuf);
@@ -106,26 +98,16 @@ fn positive_baseline_reports_no_drift_in_any_criterion() {
     let baseline = baseline_for(&fixture());
 
     assert_eq!(baseline.schema_version, DRIFT_SCHEMA_VERSION);
-    assert_eq!(
-        baseline.population_tolerance, 0,
-        "zero tolerance must be recorded by the baseline, not implied by code"
-    );
-    assert_eq!(layer_count(&baseline, "cli"), 1);
-    assert_eq!(layer_count(&baseline, "commands"), 1);
-    assert_eq!(layer_count(&baseline, "components"), 1);
-    assert_eq!(layer_count(&baseline, "server"), 1);
-    assert_eq!(layer_count(&baseline, "utils"), 2);
-    assert_eq!(layer_count(&baseline, "external"), 1);
-    assert_eq!(layer_count(&baseline, "unclassified"), 1);
+    assert_eq!(baseline.modules.len(), 8);
 
     let report = report_for(&fixture(), &baseline);
 
     assert!(report.gate.passed);
-    assert_eq!(report.gate.checks.layer_population.new_count, 0);
+    assert_eq!(report.gate.checks.module_changes.new_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 0);
     assert_eq!(report.gate.checks.cycles.new_count, 0);
     assert_eq!(report.gate.checks.external_leaks.new_count, 0);
-    assert_eq!(report.gate.checks.layer_population.resolved_count, 0);
+    assert_eq!(report.gate.checks.module_changes.resolved_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.resolved_count, 0);
     assert_eq!(report.gate.checks.cycles.resolved_count, 0);
     assert_eq!(report.gate.checks.external_leaks.resolved_count, 0);
@@ -138,9 +120,9 @@ fn positive_baseline_reports_no_drift_in_any_criterion() {
 }
 
 #[test]
-fn layer_population_shift_is_reported_with_old_and_new_counts() {
+fn added_module_is_reported_as_unconfirmed_change_by_layer() {
     let baseline = baseline_for(&fixture());
-    let repo = fixture_copy("population");
+    let repo = fixture_copy("added");
     fs::write(
         repo.path().join("misc/extra.ts"),
         "export const extra = 1;\n",
@@ -150,24 +132,96 @@ fn layer_population_shift_is_reported_with_old_and_new_counts() {
     let report = report_for(repo.path(), &baseline);
 
     assert!(!report.gate.passed);
-    assert_eq!(report.gate.checks.layer_population.new_count, 1);
+    assert_eq!(report.gate.checks.module_changes.new_count, 1);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 0);
     assert_eq!(report.gate.checks.cycles.new_count, 0);
     assert_eq!(report.gate.checks.external_leaks.new_count, 0);
     assert_eq!(
         report.new_violations,
-        vec![Violation::LayerPopulation {
+        vec![Violation::ModuleChange {
             layer: "unclassified".to_string(),
-            baseline: 1,
-            current: 2,
-            delta: 1,
+            added: vec!["misc/extra.ts".to_string()],
+            removed: vec![],
         }],
-        "population drift must carry the layer, old count, new count and delta"
+        "module changes must be grouped by layer and name the modules"
     );
     assert_eq!(
         report.modules.added,
         vec!["misc/extra.ts".to_string()],
         "the detail layer must locate the new module"
+    );
+}
+
+#[test]
+fn removed_module_is_reported_as_unconfirmed_change_by_layer() {
+    let baseline = baseline_for(&fixture());
+    let repo = fixture_copy("removed");
+    fs::remove_file(repo.path().join("server/api.ts")).expect("remove module");
+
+    let report = report_for(repo.path(), &baseline);
+
+    assert!(!report.gate.passed);
+    assert_eq!(report.gate.checks.module_changes.new_count, 1);
+    assert_eq!(
+        report.new_violations,
+        vec![Violation::ModuleChange {
+            layer: "server".to_string(),
+            added: vec![],
+            removed: vec!["server/api.ts".to_string()],
+        }],
+        "deletions also need explicit confirmation, not a count threshold"
+    );
+    assert_eq!(report.modules.removed, vec!["server/api.ts".to_string()]);
+}
+
+#[test]
+fn added_and_removed_modules_produce_one_violation_per_layer() {
+    let baseline = baseline_for(&fixture());
+    let repo = fixture_copy("two-layers");
+    fs::write(
+        repo.path().join("utils/extra.ts"),
+        "export const extra = 1;\n",
+    )
+    .expect("write utils module");
+    fs::remove_file(repo.path().join("server/api.ts")).expect("remove server module");
+
+    let report = report_for(repo.path(), &baseline);
+
+    assert!(!report.gate.passed);
+    assert_eq!(
+        report.gate.checks.module_changes.new_count, 2,
+        "one grouped record per affected layer"
+    );
+    assert_eq!(
+        report.new_violations,
+        vec![
+            Violation::ModuleChange {
+                layer: "server".to_string(),
+                added: vec![],
+                removed: vec!["server/api.ts".to_string()],
+            },
+            Violation::ModuleChange {
+                layer: "utils".to_string(),
+                added: vec!["utils/extra.ts".to_string()],
+                removed: vec![],
+            },
+        ],
+        "layer groups must be deterministically sorted"
+    );
+}
+
+#[test]
+fn baseline_schema_v2_removes_the_numeric_tolerance_and_layer_counts() {
+    let baseline = baseline_for(&fixture());
+    let json = serde_json::to_string(&baseline).expect("serialize baseline");
+
+    assert!(
+        !json.contains("populationTolerance"),
+        "numeric tolerance must be gone, so it cannot be tuned after the fact"
+    );
+    assert!(
+        !json.contains("\"layers\""),
+        "layer counts are removed: module identity is the gate, not a count"
     );
 }
 
@@ -186,7 +240,7 @@ fn a_new_legal_forward_edge_is_not_drift() {
         report.gate.passed,
         "cli -> utils follows the layer direction and must not be drift"
     );
-    assert_eq!(report.gate.checks.layer_population.new_count, 0);
+    assert_eq!(report.gate.checks.module_changes.new_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 0);
     assert_eq!(report.gate.checks.cycles.new_count, 0);
     assert_eq!(report.gate.checks.external_leaks.new_count, 0);
@@ -207,7 +261,7 @@ fn a_new_reverse_edge_is_reported_with_both_layers() {
 
     assert!(!report.gate.passed);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 1);
-    assert_eq!(report.gate.checks.layer_population.new_count, 0);
+    assert_eq!(report.gate.checks.module_changes.new_count, 0);
     assert_eq!(report.gate.checks.cycles.new_count, 0);
     assert_eq!(report.gate.checks.external_leaks.new_count, 0);
     assert_eq!(
@@ -240,7 +294,7 @@ fn a_new_cycle_is_reported_once_and_existing_cycles_are_not_recounted() {
     assert!(!first.gate.passed);
     assert_eq!(first.gate.checks.cycles.new_count, 1);
     assert_eq!(first.gate.checks.reverse_edges.new_count, 0);
-    assert_eq!(first.gate.checks.layer_population.new_count, 0);
+    assert_eq!(first.gate.checks.module_changes.new_count, 0);
     assert_eq!(
         first.new_violations,
         vec![Violation::Cycle {
@@ -272,17 +326,25 @@ fn a_renamed_module_is_reported_as_added_and_removed() {
     let report = report_for(repo.path(), &baseline);
 
     assert!(
-        report.gate.passed,
-        "a same-layer rename keeps layer populations stable"
+        !report.gate.passed,
+        "a rename is an unconfirmed module identity change and must fail the gate"
+    );
+    assert_eq!(report.gate.checks.module_changes.new_count, 1);
+    assert_eq!(
+        report.new_violations,
+        vec![Violation::ModuleChange {
+            layer: "unclassified".to_string(),
+            added: vec!["misc/note-renamed.ts".to_string()],
+            removed: vec!["misc/note.ts".to_string()],
+        }],
+        "renames must be explicit, never merged into no change"
     );
     assert_eq!(
         report.modules.added,
-        vec!["misc/note-renamed.ts".to_string()],
-        "renames must be explicit, never merged into no change"
+        vec!["misc/note-renamed.ts".to_string()]
     );
     assert_eq!(report.modules.removed, vec!["misc/note.ts".to_string()]);
     assert!(report.modules.moved.is_empty());
-    assert!(report.new_violations.is_empty());
 }
 
 #[test]
@@ -304,8 +366,8 @@ fn an_external_package_outside_the_external_layer_is_a_leak() {
     assert!(!report.gate.passed);
     assert_eq!(report.gate.checks.external_leaks.new_count, 1);
     assert_eq!(
-        report.gate.checks.layer_population.new_count, 0,
-        "the swap keeps counts stable, so the leak must be attributable to the leak criterion"
+        report.gate.checks.module_changes.new_count, 0,
+        "the swap keeps module identities stable, so the leak must be attributable to the leak criterion"
     );
     assert_eq!(
         report.new_violations,
@@ -331,6 +393,7 @@ fn resolved_violations_are_counted_separately_from_new_ones() {
     let report = report_for(repo.path(), &baseline);
 
     assert!(report.gate.passed, "a resolved violation must not block");
+    assert_eq!(report.gate.checks.module_changes.new_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.new_count, 0);
     assert_eq!(report.gate.checks.reverse_edges.resolved_count, 1);
     assert!(report.new_violations.is_empty());
@@ -371,7 +434,7 @@ fn baseline_and_report_are_byte_deterministic_and_roundtrip() {
 
 #[test]
 fn drift_schema_version_is_independent_from_other_artifacts() {
-    assert_eq!(DRIFT_SCHEMA_VERSION, 1);
+    assert_eq!(DRIFT_SCHEMA_VERSION, 2);
 
     let baseline = baseline_for(&fixture());
     assert_eq!(baseline.schema_version, DRIFT_SCHEMA_VERSION);
