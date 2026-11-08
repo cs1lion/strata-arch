@@ -15,10 +15,10 @@
 ## 验收项
 
 - [x] 依赖固定：`gpui = "=0.2.2"`（推荐值，**待用户确认升级节奏**）；`Cargo.lock` 已提交；CI 所有构建使用 `cargo build --locked --workspace`，锁文件不一致即失败。本地 `cargo build --locked --workspace` exit 0；CI 配置已加，**CI 实际执行未验证**。
-- [x] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。实测二进制墙钟 828ms，stdout `smoke: layout 3 modules, 2 edges, 1 bands` 与 `smoke: frame rendered`。
+- [x] Windows：`cargo run --locked -p arch-view -- smoke tests/fixtures/tiny` 在 3 秒内退出码 `0`；进程无 panic；窗口创建成功并可渲染一帧（由启动日志或冒烟标记断言）。实测二进制墙钟 828ms，stdout `smoke: layout 3 modules, 2 edges, 1 bands` 与 `smoke: frame rendered`。（**判据修正 2026-11-08 / ticket 14**：3 秒预算经 20+20 次压测判定不成立，改为 15 秒；原读数保留，理由见 `14-flaky-smoke-timeout.md`。）
 - [ ] macOS 与 Linux：`cargo build --locked --workspace` 通过，启动冒烟为推荐项（**平台矩阵已裁决 2026-11-08：Windows 主验收；macOS/Linux 仅编译未验证，无 runner 实际执行**）。**未验证**：无 mac/Linux runner；CI 已配置两平台但未实际运行。
 - [x] 依赖更新受控：CI 配置中不存在自动依赖更新任务（dependabot/renovate）；`Cargo.lock` 仅在单独 PR 中变更（断言变更 PR 只含依赖相关文件）。仓库无 `.github/dependabot.yml` / `renovate.json`；`Cargo.lock` 已跟踪。
-- [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超 3s、窗口未能创建、锁文件被隐式改写。
+- [x] 失败判据：`--locked` 构建失败、Windows 启动崩溃或超预算（原 3s，ticket 14 修正为 15s）、窗口未能创建、锁文件被隐式改写。
 - [x] 截图能力：按 2026-11-08 裁决执行为「IR 快照进 CI + Windows OS 捕获人工证据」。IR 快照 `arch-view scene` 输出节点/边/层带/z-order/命中框，同输入两次字节一致；`eval/capture-window.ps1` 为手动脚本，不参与 CI。**mac/Linux 截图不做，未验证。**
 - [x] 自动化状态：构建与 Windows 启动冒烟自动化；IR 快照确定性断言自动化（`cargo test -p arch-view --test scene_snapshot`）；OS 窗口捕获为手动证据，不进 CI；mac/Linux 运行与截图未验证。
 
@@ -33,16 +33,24 @@
 ### 实现要点
 
 - `arch-view smoke <repo>`：构建层产物与布局，打开 1200×800 窗口；`Render` 首次调用时用 `Window::on_next_frame` 注册「本帧渲染完成后」回调，回调打印 `smoke: frame rendered` 并 `cx.quit()`。
-- 2.5s 兜底定时器：未渲染则打印 `smoke: timeout waiting for first frame` 并退出；`Application::run` 返回后检查 `AtomicBool`，未渲染则进程 exit 2。
+- 2.5s 兜底定时器：未渲染则打印 `smoke: timeout waiting for first frame` 并退出；`Application::run` 返回后检查 `AtomicBool`，未渲染则进程 exit 2。（ticket 14 已替换为 12s 独立 OS 线程看门狗，原因见该票取证：GPUI 执行器阻塞时原定时器不触发。）
 - 缺仓库参数或多余参数退出码 `2`，stderr 给用法。
 
 ### 读数（实测）
 
-- `cargo test -p arch-view --test smoke`：2 passed / 0 failed（1.81s）。
+- `cargo test -p arch-view --test smoke`：2 passed / 0 failed（1.81s）。（旧读数；ticket 14 修后单跑 20 次 2.50–4.04s、0 失败。）
 - 二进制：`target/debug/arch-view.exe smoke tests/fixtures/tiny` → exit 0，墙钟 828ms，stdout 两行（布局读数 + 帧标记），stderr 空。
 - `cargo build --locked --workspace`：exit 0。
 - `cargo test --workspace`：117 passed / 0 failed；`cargo fmt --all --check` 通过。
 - 依赖控制：`gpui = "=0.2.2"`；`Cargo.lock` 已跟踪；无 dependabot/renovate 配置。
+
+### 判据修正（2026-11-08，ticket 14）
+
+- 原判据：Windows 冒烟在 3 秒内 exit 0。
+- 旧读数：单次 828ms（ticket 11 首测）。
+- 修前实测：单跑 20 次 3 失败、最慢成功 2.62s；并行负载 20 次 18 失败；负载下到帧 6.51–8.66s。
+- 新判据：15 秒内 exit 0；二进制看门狗 12 秒。
+- 理由：3 秒没有并行负载与分布依据，余量仅 0.38s；15 秒对实测最慢 8.66s 留 1.73x 余量，仍能抓住挂死。详见 `14-flaky-smoke-timeout.md`。
 
 ### 已知偏差与未验证
 
