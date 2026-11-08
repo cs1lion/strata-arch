@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arch_core::commit_diff::{
@@ -20,12 +20,16 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
+        // 时钟在 macOS 上分辨率较粗，并发测试可能拿到相同的 nanos 而复用同一目录，
+        // 导致第二个 `git init` 在拷贝模板钩子时报 File exists；用进程内序号兜底。
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "arch-commit-diff-{tag}-{}-{nanos}",
+            "arch-commit-diff-{tag}-{}-{nanos}-{seq}",
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("create temp dir");

@@ -6,6 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arch_core::history::{build_history, build_history_prefixes, HistoryOptions};
@@ -15,12 +16,17 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
+        // 并发测试可能在同一时钟刻度上取到相同 nanos，目录撞名会让用例互相踩踏。
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("arch-prefix-{tag}-{}-{nanos}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "arch-prefix-{tag}-{}-{nanos}-{seq}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("create temp dir");
         Self(path)
     }
