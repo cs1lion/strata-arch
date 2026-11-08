@@ -396,7 +396,7 @@ pwsh -File eval/map-pixel-compare.ps1 -Repo tests/corpus/excalidraw -OutDir out/
 三个条件已落地：
 
 1. **常态像素闸门**：`eval/map-pixel-compare.ps1` 默认阈值改为 changed% ≤0.30%、maxDelta ≤100；标准场景（`tests/corpus/excalidraw`，`p1=0,0,1`）跑一次即判红/绿。本轮 `base vs A` = 0.174% / 90，PASS；`base vs B`、`A vs BA` 仍 0/0。
-2. **几何等价独立断言**：`crates/arch-view/tests/geometry_equivalence.rs` 在三个相机位逐项比较节点中心/尺寸/屏幕矩形、标签文本与锚点、边端点/方向样式/透明度；`group_edges` 在批量与逐边两种模式下展开后必须与输入序列逐项一致。CI 常态执行 `cargo test --locked -p arch-view -p arch-core`（`.github/workflows/ci.yml`），不依赖截图，和像素断言分开失败；`arch-cli` 测试依赖 pinned 语料，不在该 job 内。
+2. **几何等价独立断言**：`crates/arch-view/tests/geometry_equivalence.rs` 在三个相机位逐项比较节点中心/尺寸/屏幕矩形、标签文本与锚点、边端点/方向样式/透明度；`group_edges` 在批量与逐边两种模式下展开后必须与输入序列逐项一致。CI 常态执行 `.github/workflows/ci.yml` 的 `test (locked)`：Windows/macOS 直接 `cargo test --locked -p arch-view -p arch-core`，Linux 在 xvfb + 软件 Vulkan 下跑同一命令（多个集成测试要真实窗口）；三平台都只跳过依赖 pinned 语料的 `tsx_golden_baseline`/`excalidraw_golden_baseline`，测试前用 `tests/fixtures/history-seed/build.ps1` 重建被 `.gitignore` 排除的历史样本。不依赖截图，和像素断言分开失败。CI run `42523467901`（head `17a5f61`）三平台 + drift gate 全绿。
 3. **回落开关**：`STRATA_EDGE_BATCH=0` 恢复逐边绘制，用于需要精确栅格（逐条虚线相位、逐边绘制顺序）的场合；A 默认值改为 1。
 
 读数分组（旧读数原样保留，不覆盖）：
