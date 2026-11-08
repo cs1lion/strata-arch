@@ -96,4 +96,15 @@
 - 全量：`cargo test --workspace` 115 passed / 0 failed；`cargo fmt --all --check` OK。
 - 偏差/未验证：`--screenshot` 未实现（gpui 0.2.2 无离屏导出），移交 ticket 11；excalidraw 时间线未测（L2 缓存无 `.git`）；每刻度重跑前缀历史，fixture 6 刻度 4435ms，大仓 O(n²) 不可用（作为 ticket 10 性能输入）；刻度点击/节点选择仅 smoke，无事件自动化；ticket 原文「5 个提交」与实际 6 个不符，已保留原描述并标注。
 
+## 10 性能与内存基线归档
+
+- 档位：C（预算先行）。实现前钉死：tsx index ≤2000ms、excalidraw index ≤10000ms、excalidraw history ≤10000ms、峰值 512MB（待确认）、3 次取中位数、批次间中位数波动 ≤20%。
+- 完成：`eval/perf-baseline.ps1`（release、3 次、墙钟 + `WorkingSet64` 轮询 + OS `PeakWorkingSet64`、硬件/工具版本/样本 commit 写入 `out/perf.json`）；`eval/baseline/current.json` 摘要。
+- 读数（release，`AMD Ryzen 7 8845H`，16 逻辑 CPU，Windows NT 10.0.26300.0，PS 7.6.9）：
+  - tsx index：批次 1 `93.6/69.4/54.7` 中位数 69.4ms、峰值 5.7MB；批次 2 `101.4/69.5/66.5` 中位数 69.5ms、峰值 6.7MB。
+  - excalidraw index：批次 1 `278.3/288.8/277.9` 中位数 278.3ms、峰值 5.9MB；批次 2 `337.9/293.4/289.8` 中位数 293.4ms、峰值 6.0MB。
+  - 批次间中位数波动：tsx 0.14%、excalidraw 5.4%（≤20%）。单批首轮偏高标注冷启动噪声，原始读数保留。
+  - 超限：合成 5001 个 `.ts` → exit 2、stdout 空、stderr「源文件数 5001 超过上限 5000，已拒绝索引」。
+- 偏差/未验证：excalidraw 历史窗口无法测（缓存无 `.git`），不按通过计；512MB 内存硬上限未实现、未确认，读数只是 Windows 代理口径；`>20k 符号` 维度无独立门禁；硬件基线是否进 CI 待用户确认。
+
 （后续每票在此追加）
