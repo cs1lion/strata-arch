@@ -24,7 +24,7 @@ use arch_view::loading::{
     LoadingStage, LoadingState,
 };
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
-use arch_view::reveal::{reveal_allowed, RevealState};
+use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
@@ -542,10 +542,10 @@ fn spawn_map_loading(
         let mut reveal = RevealState::new(reveal_enabled, layout.bands.len());
         reveal.start();
         println!(
-            "map: reveal={} layers={} frames={}",
+            "map: reveal={} layers={} durationMs={}",
             if reveal.is_enabled() { "on" } else { "off" },
             layout.bands.len(),
-            reveal.total_frames()
+            REVEAL_DURATION_MS
         );
 
         let built_view = cx.update(|cx| {
@@ -568,6 +568,7 @@ fn spawn_map_loading(
                 transition_generation: 0,
                 transition_delta: Rc::new(Cell::new(0.0)),
                 reveal,
+                reveal_progress: Rc::new(Cell::new(0.0)),
                 reveal_scheduled: false,
                 reveal_start_marked: false,
                 reveal_mid_marked: false,
@@ -1800,8 +1801,10 @@ struct MapView {
     transition_generation: u64,
     /// 当前帧的转场进度，由 `with_animation` 的 animator 写入、帧回调读取。
     transition_delta: Rc<Cell<f32>>,
-    /// P5 首屏分层揭示：一次性、帧驱动、可打断。
+    /// P5 首屏分层揭示：一次性、时长驱动（进度来自 GPUI 动画时钟）、可打断。
     reveal: RevealState,
+    /// 当前帧的揭示进度，由 `with_animation` 的 animator 写入、帧回调读取。
+    reveal_progress: Rc<Cell<f32>>,
     reveal_scheduled: bool,
     reveal_start_marked: bool,
     reveal_mid_marked: bool,
@@ -1957,7 +1960,8 @@ impl MapView {
         });
     }
 
-    /// 每个 GPUI 帧回调推进一格；仍在揭示时续订下一帧，播完即停（不回绕）。
+    /// 每个 GPUI 帧回调读取 `with_animation` 写下的进度；仍在揭示时续订下一帧，
+    /// 播完即停（不回绕）。进度来自框架动画时钟，帧数只影响采样疏密。
     fn schedule_reveal_frame(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
         if !view.reveal.is_active() || view.reveal_scheduled {
             return;
@@ -1970,7 +1974,7 @@ impl MapView {
         cx.on_next_frame(window, |view, window, cx| {
             view.reveal_scheduled = false;
             let was_active = view.reveal.is_active();
-            view.reveal.advance_frame();
+            view.reveal.set_progress(view.reveal_progress.get());
             if was_active && view.reveal.is_finished() {
                 phase_marker("reveal:done");
             } else if was_active && !view.reveal_mid_marked && view.reveal.overall_progress() >= 0.5
@@ -2571,10 +2575,26 @@ impl Render for MapView {
             root = root.child(panel);
         }
 
+        // P5：揭示进度只由 GPUI 动画时钟驱动（固定时长），帧率只决定中间帧疏密。
+        let mut element = if self.reveal.is_active() {
+            let progress = self.reveal_progress.clone();
+            root.with_animation(
+                ("reveal", 0u64),
+                Animation::new(Duration::from_millis(REVEAL_DURATION_MS)),
+                move |element, value| {
+                    progress.set(value);
+                    element
+                },
+            )
+            .into_any_element()
+        } else {
+            root.into_any_element()
+        };
+
         if self.state.transition().is_some() {
             let delta = self.transition_delta.clone();
             let generation = self.transition_generation;
-            return root
+            element = element
                 .with_animation(
                     ("camera-transition", generation),
                     Animation::new(Duration::from_millis(200)),
@@ -2585,7 +2605,7 @@ impl Render for MapView {
                 )
                 .into_any_element();
         }
-        root.into_any_element()
+        element
     }
 }
 

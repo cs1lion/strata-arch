@@ -160,7 +160,8 @@ fn reveal_offsets_never_cull_a_visible_node() {
     };
     let mut reveal = RevealState::new(true, map.bands.len());
     reveal.start();
-    loop {
+    for step in 0..=100 {
+        reveal.set_progress(step as f32 / 100.0);
         for stage in 0..map.bands.len() {
             let offset = reveal.offset_for_stage(stage);
             for node in &map.nodes {
@@ -174,9 +175,6 @@ fn reveal_offsets_never_cull_a_visible_node() {
                     );
                 }
             }
-        }
-        if !reveal.advance_frame() {
-            break;
         }
     }
 }
