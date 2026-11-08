@@ -303,3 +303,4 @@ cargo test --locked
 6. 未做任何用户测试。
 7. 未测 macOS/Linux 字体与 DPI 差异。
 8. 未实际执行 GPUI 升级流程。
+9. （2026-11-08）ticket 15 的 P2 短镜头转场只验证到模型进度序列；GPUI 实际帧数与总时长未实测——`with_animation` 按 GPUI 内部墙钟推进，`gpui 0.2.2` 无公开离屏导出，测试时钟不接管 `Animation` 的时钟。UI 侧目前只有 200ms 的固定 `Animation` duration。
