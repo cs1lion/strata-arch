@@ -256,6 +256,7 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                 ..Default::default()
             },
             move |window, cx| {
+                phase_marker("window:callback");
                 let ticks = timeline.ticks();
                 let view = cx.new(|_| TimelineView {
                     state: CanvasState::new(layout),
@@ -273,8 +274,9 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
             },
         )
         .expect("open timeline window");
+        phase_marker("window:created");
         cx.activate(true);
-        phase_marker("window:opened");
+        phase_marker("window:activated");
 
         if let Some(milliseconds) = auto_close_ms {
             cx.spawn(async move |cx| {
