@@ -29,6 +29,19 @@ fn assert_visible(lines: &[String], needle: &str, context: &str) {
 }
 
 #[test]
+fn map_and_diff_tasks_can_name_their_own_stage() {
+    let state = LoadingState::for_task(
+        "正在计算结构 diff",
+        LoadingStage::Custom("导出 from 提交快照".to_string()),
+    );
+    let lines = state.visible_lines();
+
+    assert_visible(&lines, "正在计算结构 diff", "自定义标题");
+    assert_visible(&lines, "导出 from 提交快照", "自定义阶段");
+    assert_visible(&lines, "取消", "长操作必须提供可见的取消出口");
+}
+
+#[test]
 fn loading_state_is_never_blank_and_names_the_stage() {
     let status = LoadStatus::Loading(LoadingState::new());
     let lines = status.visible_lines();

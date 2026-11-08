@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
-use arch_core::commit_diff::diff_commits;
+use arch_core::commit_diff::{diff_commits_cancellable, CommitDiffError, DiffProgress};
 use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, DIFF_LABEL, FADE_DURATION_MS};
@@ -31,10 +31,10 @@ use arch_view::view::{
     symbol_kind_palette, CanvasState, Level, SymbolLayout, Viewport,
 };
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, App, Application,
-    Bounds, ClickEvent, Context, Entity, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PathBuilder, Render, ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds,
-    WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
+    AnyView, App, Application, Bounds, ClickEvent, Context, Entity, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render, ScrollDelta,
+    ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -50,6 +50,113 @@ fn phase_marker(label: &str) {
     if std::env::var_os("STRATA_PHASE_MARKERS").is_some() {
         println!("phase: {label}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+/// 「先开窗、后加载」的通用外壳：窗口先呈现阶段文案，数据就绪后挂上真实子视图。
+///
+/// 长操作期间窗口必须可见且显示当前阶段；用户可关闭窗口或点「取消」立即退出。
+struct LoadingShell<T: Render> {
+    status: LoadStatus,
+    child: Option<Entity<T>>,
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+impl<T: Render> LoadingShell<T> {
+    fn new(headline: &str, stage: &str) -> Self {
+        Self {
+            status: LoadStatus::Loading(LoadingState::for_task(
+                headline,
+                LoadingStage::Custom(stage.to_string()),
+            )),
+            child: None,
+            cancel: None,
+        }
+    }
+
+    fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    fn set_stage(&mut self, stage: &str) {
+        if let LoadStatus::Loading(loading) = &mut self.status {
+            loading.set_stage(LoadingStage::Custom(stage.to_string()));
+        }
+    }
+
+    fn fail(&mut self, message: String) {
+        self.status = LoadStatus::Failed { message };
+    }
+
+    fn ready(&mut self, child: Entity<T>) {
+        self.status = LoadStatus::Ready;
+        self.child = Some(child);
+    }
+
+    fn render_status_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let failed = matches!(self.status, LoadStatus::Failed { .. });
+        let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
+        let mut panel = div()
+            .size_full()
+            .bg(rgb(0x0d1117))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(10.))
+            .px(px(24.));
+        for line in self.status.visible_lines() {
+            panel = panel.child(div().text_sm().text_color(color).child(line));
+        }
+        if !failed {
+            panel = panel.child(
+                div()
+                    .mt(px(6.))
+                    .px(px(12.))
+                    .py(px(6.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(rgb(0x2c3a4a))
+                    .bg(rgb(0x161b22))
+                    .text_color(rgb(0xe6edf3))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            if let Some(cancel) = &this.cancel {
+                                cancel.store(true, Ordering::SeqCst);
+                                if let LoadStatus::Loading(loading) = &mut this.status {
+                                    loading.set_stage(LoadingStage::Custom(
+                                        "正在取消：等待当前阶段收尾".to_string(),
+                                    ));
+                                }
+                            } else {
+                                cx.quit();
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child("取消准备（也可直接关闭窗口）"),
+            );
+        }
+        panel.into_any_element()
+    }
+}
+
+impl<T: Render> Render for LoadingShell<T> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static SHELL_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+        if !SHELL_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("frame:render");
+            window.on_next_frame(|_, _cx| phase_marker("frame:presented"));
+        }
+        if let Some(child) = &self.child {
+            return div()
+                .size_full()
+                .child(AnyView::from(child.clone()))
+                .into_any_element();
+        }
+        self.render_status_panel(cx)
     }
 }
 
@@ -170,99 +277,204 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         }
     }
 
-    let playback = match (from.as_deref(), to.as_deref()) {
-        (Some(from), Some(to)) => {
-            let path = build_path(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"), from, to)
-                .map_err(|error| format!("构建路径失败: {error}"))?;
-            let mut playback = PlaybackState::new(&path);
-            // 证据钩子（ticket 11）：仅用于本地像素证据链，让 P1 上下文淡出态可在启动时复现；
-            // 正常启动不受影响，等价于用户在 UI 里点一次「动画: 关 → 开」。
-            if std::env::var_os("STRATA_EVIDENCE_ANIMATION").is_some() {
-                playback.set_animation_enabled(true);
-            }
-            Some(playback)
-        }
+    let playback_request = match (from, to) {
+        (Some(from), Some(to)) => Some((from, to)),
         (None, None) => None,
         _ => return Err(format!("--from 与 --to 必须同时提供\n{USAGE}")),
     };
 
-    let artifact = build_layers(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
-        .map_err(|error| format!("构建层产物失败: {error}"))?;
-    let callgraph = build_call_graph(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
-        .map_err(|error| format!("构建调用图失败: {error}"))?;
-    let layout = layout_map(&artifact, LayoutConfig::default());
+    let repo = PathBuf::from(&target);
+    let reveal_requested = reveal_requested || std::env::var_os("STRATA_EVIDENCE_REVEAL").is_some();
 
-    let band_summary = layout
-        .bands
-        .iter()
-        .map(|band| format!("{}={}", band.layer, band.node_count))
-        .collect::<Vec<_>>()
-        .join(", ");
-    println!(
-        "map: {} modules, {} edges, {} bands [{}], canvas {}x{}",
-        layout.nodes.len(),
-        layout.edges.len(),
-        layout.bands.len(),
-        band_summary,
-        layout.width,
-        layout.height
-    );
-
-    let reveal_requested =
-        reveal_requested || std::env::var_os("STRATA_EVIDENCE_REVEAL").is_some();
-    let reveal_enabled = reveal_allowed(reveal_requested, playback.is_some());
-    let mut reveal = RevealState::new(reveal_enabled, layout.bands.len());
-    // 层带/模块在这里之前已全部构建完成，所以 P5 在数据就绪后才启动；
-    // map 路径没有加载态面板，揭示不会与加载态抢同一帧。
-    reveal.start();
-    println!(
-        "map: reveal={} layers={} frames={}",
-        if reveal.is_enabled() { "on" } else { "off" },
-        layout.bands.len(),
-        reveal.total_frames()
-    );
-
+    // 先开窗：分层/调用图/布局都在窗口打开后的后台任务里完成，
+    // 长操作期间窗口显示阶段文案，用户可随时关闭或点取消。
+    phase_marker("app:created");
     Application::new().run(move |cx: &mut App| {
+        phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        let window_repo = repo;
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |_, cx| {
-                cx.new(|_| MapView {
-                    state: CanvasState::new(layout),
-                    callgraph,
-                    playback,
-                    ticker_running: false,
-                    fly_to_anchor: None,
-                    press_origin: None,
-                    drag_last: None,
-                    dragged: false,
-                    transition_generation: 0,
-                    transition_delta: Rc::new(Cell::new(0.0)),
-                    reveal,
-                    reveal_scheduled: false,
-                    reveal_start_marked: false,
-                    reveal_mid_marked: false,
-                })
+            move |_window, cx| {
+                phase_marker("window:callback");
+                let shell =
+                    cx.new(|_| LoadingShell::<MapView>::new("正在准备架构地图", "构建分层"));
+                spawn_map_loading(
+                    shell.clone(),
+                    window_repo,
+                    playback_request,
+                    reveal_requested,
+                    cx,
+                );
+                shell
             },
         )
         .expect("open map window");
+        phase_marker("window:created");
         cx.activate(true);
+        phase_marker("window:activated");
 
         if let Some(milliseconds) = auto_close_ms {
             cx.spawn(async move |cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(milliseconds))
                     .await;
+                phase_marker("quit:auto");
                 let _ = cx.update(|cx| cx.quit());
             })
             .detach();
         }
     });
+    phase_marker("main:end");
 
     Ok(())
+}
+
+/// 后台准备架构地图；每完成一个阶段就更新窗口内的阶段文案。
+fn spawn_map_loading(
+    shell: Entity<LoadingShell<MapView>>,
+    repo: PathBuf,
+    playback_request: Option<(String, String)>,
+    reveal_requested: bool,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        phase_marker("map:prep:start");
+
+        let mut playback = None;
+        if let Some((from, to)) = playback_request {
+            set_shell_stage(&shell, cx, "构建引导路径");
+            let path_repo = repo.clone();
+            let built = cx
+                .background_executor()
+                .spawn(async move {
+                    build_path(&path_repo, env!("CARGO_PKG_VERSION"), &from, &to)
+                        .map_err(|error| format!("构建路径失败: {error}"))
+                })
+                .await;
+            let path = match built {
+                Ok(path) => path,
+                Err(message) => return map_load_failed(&shell, cx, message),
+            };
+            let mut state = PlaybackState::new(&path);
+            // 证据钩子（ticket 11）：仅用于本地像素证据链，让 P1 上下文淡出态可在启动时复现；
+            // 正常启动不受影响，等价于用户在 UI 里点一次「动画: 关 → 开」。
+            if std::env::var_os("STRATA_EVIDENCE_ANIMATION").is_some() {
+                state.set_animation_enabled(true);
+            }
+            playback = Some(state);
+        }
+
+        let layers_repo = repo.clone();
+        let layered = cx
+            .background_executor()
+            .spawn(async move { build_layers(&layers_repo, env!("CARGO_PKG_VERSION")) })
+            .await;
+        phase_marker("map:prep:layers");
+        let artifact = match layered {
+            Ok(artifact) => artifact,
+            Err(error) => return map_load_failed(&shell, cx, format!("构建层产物失败: {error}")),
+        };
+
+        set_shell_stage(&shell, cx, "构建调用图");
+        let callgraph_repo = repo.clone();
+        let graphed = cx
+            .background_executor()
+            .spawn(async move { build_call_graph(&callgraph_repo, env!("CARGO_PKG_VERSION")) })
+            .await;
+        phase_marker("map:prep:callgraph");
+        let callgraph = match graphed {
+            Ok(callgraph) => callgraph,
+            Err(error) => return map_load_failed(&shell, cx, format!("构建调用图失败: {error}")),
+        };
+
+        set_shell_stage(&shell, cx, "计算布局");
+        let layout = cx
+            .background_executor()
+            .spawn(async move { layout_map(&artifact, LayoutConfig::default()) })
+            .await;
+        phase_marker("map:prep:layout");
+
+        let band_summary = layout
+            .bands
+            .iter()
+            .map(|band| format!("{}={}", band.layer, band.node_count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "map: {} modules, {} edges, {} bands [{}], canvas {}x{}",
+            layout.nodes.len(),
+            layout.edges.len(),
+            layout.bands.len(),
+            band_summary,
+            layout.width,
+            layout.height
+        );
+
+        let reveal_enabled = reveal_allowed(reveal_requested, playback.is_some());
+        let mut reveal = RevealState::new(reveal_enabled, layout.bands.len());
+        reveal.start();
+        println!(
+            "map: reveal={} layers={} frames={}",
+            if reveal.is_enabled() { "on" } else { "off" },
+            layout.bands.len(),
+            reveal.total_frames()
+        );
+
+        let built_view = cx.update(|cx| {
+            cx.new(move |_| MapView {
+                state: CanvasState::new(layout),
+                callgraph,
+                playback,
+                ticker_running: false,
+                fly_to_anchor: None,
+                press_origin: None,
+                drag_last: None,
+                dragged: false,
+                transition_generation: 0,
+                transition_delta: Rc::new(Cell::new(0.0)),
+                reveal,
+                reveal_scheduled: false,
+                reveal_start_marked: false,
+                reveal_mid_marked: false,
+            })
+        });
+        let map = match built_view {
+            Ok(map) => map,
+            Err(_) => return,
+        };
+        phase_marker("map:prep:done");
+        let _ = shell.update(cx, |shell, cx| {
+            shell.ready(map);
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+fn set_shell_stage<T: Render>(
+    shell: &Entity<LoadingShell<T>>,
+    cx: &mut gpui::AsyncApp,
+    stage: &str,
+) {
+    let _ = shell.update(cx, |shell, cx| {
+        shell.set_stage(stage);
+        cx.notify();
+    });
+}
+
+fn map_load_failed(
+    shell: &Entity<LoadingShell<MapView>>,
+    cx: &mut gpui::AsyncApp,
+    message: String,
+) {
+    let _ = shell.update(cx, |shell, cx| {
+        shell.fail(message);
+        cx.notify();
+    });
 }
 
 fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
@@ -433,6 +645,7 @@ fn timeline_load_failed(view: &Entity<TimelineView>, cx: &mut gpui::AsyncApp, me
 }
 
 fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    phase_marker("diff:prep:start");
     let target = args
         .next()
         .ok_or_else(|| format!("diff 缺少目标仓库路径\n{USAGE}"))?;
@@ -473,50 +686,157 @@ fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let from = from.ok_or_else(|| format!("diff 缺少 --from\n{USAGE}"))?;
     let to = to.ok_or_else(|| format!("diff 缺少 --to\n{USAGE}"))?;
     let repo = PathBuf::from(&target);
-    let artifact = diff_commits(&repo, &from, &to, env!("CARGO_PKG_VERSION"))
-        .map_err(|error| format!("构建结构 diff 失败: {error}"))?;
-    println!(
-        "diff: from={} to={} added={} removed={} modified={} renames={}",
-        artifact.from.commit,
-        artifact.to.commit,
-        artifact.stats.added,
-        artifact.stats.removed,
-        artifact.stats.modified,
-        artifact.stats.renames
-    );
-    let model = DiffModel::from_artifact(&artifact);
+    let cancel = Arc::new(AtomicBool::new(false));
 
+    // 先开窗：`diff_commits` 在窗口打开后的后台任务里执行，并在每个阶段更新文案。
+    // 超过 2 秒的路径不能再让用户面对「没有窗口」的静止画面。
+    phase_marker("app:created");
     Application::new().run(move |cx: &mut App| {
+        phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        let window_repo = repo;
+        let window_cancel = cancel.clone();
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |_, cx| {
-                cx.new(|_| DiffView {
-                    model,
+            move |_window, cx| {
+                phase_marker("window:callback");
+                let shell_cancel = window_cancel.clone();
+                let shell = cx.new(move |_| {
+                    LoadingShell::<DiffView>::new("正在计算结构 diff", "解析提交")
+                        .with_cancel(shell_cancel)
+                });
+                spawn_diff_loading(
+                    shell.clone(),
+                    window_repo,
+                    from,
+                    to,
                     fade_enabled,
-                    fade_generation: 0,
-                })
+                    window_cancel,
+                    cx,
+                );
+                shell
             },
         )
         .expect("open diff window");
+        phase_marker("window:created");
         cx.activate(true);
+        phase_marker("window:activated");
 
         if let Some(milliseconds) = auto_close_ms {
             cx.spawn(async move |cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(milliseconds))
                     .await;
+                phase_marker("quit:auto");
                 let _ = cx.update(|cx| cx.quit());
             })
             .detach();
         }
     });
+    phase_marker("main:end");
 
     Ok(())
 }
+
+/// 后台计算结构 diff；阶段进度经共享槽转给前台，取消标志在每个可中断边界检查。
+fn spawn_diff_loading(
+    shell: Entity<LoadingShell<DiffView>>,
+    repo: PathBuf,
+    from: String,
+    to: String,
+    fade_enabled: bool,
+    cancel: Arc<AtomicBool>,
+    cx: &mut App,
+) {
+    let progress = Arc::new(Mutex::new(Some(DiffProgress::Resolving)));
+    let done = Arc::new(AtomicBool::new(false));
+    let progress_task = progress.clone();
+    let done_task = done.clone();
+    let cancel_task = cancel.clone();
+    let task = cx.background_executor().spawn(async move {
+        phase_marker("diff:prep:start");
+        let mut report = |stage: DiffProgress| {
+            if let Ok(mut slot) = progress_task.lock() {
+                *slot = Some(stage);
+            }
+        };
+        let result = diff_commits_cancellable(
+            &repo,
+            &from,
+            &to,
+            env!("CARGO_PKG_VERSION"),
+            &cancel_task,
+            &mut report,
+        );
+        done_task.store(true, Ordering::SeqCst);
+        result
+    });
+
+    cx.spawn(async move |cx| {
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                set_shell_stage(&shell, cx, "正在取消：等待当前阶段收尾");
+            } else if let Ok(slot) = progress.lock() {
+                if let Some(stage) = *slot {
+                    set_shell_stage(&shell, cx, stage.label());
+                }
+            }
+            if done.load(Ordering::SeqCst) {
+                break;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+        }
+
+        match task.await {
+            Ok(artifact) => {
+                println!(
+                    "diff: from={} to={} added={} removed={} modified={} renames={}",
+                    artifact.from.commit,
+                    artifact.to.commit,
+                    artifact.stats.added,
+                    artifact.stats.removed,
+                    artifact.stats.modified,
+                    artifact.stats.renames
+                );
+                let model = DiffModel::from_artifact(&artifact);
+                let built = cx.update(|cx| {
+                    cx.new(move |_| DiffView {
+                        model,
+                        fade_enabled,
+                        fade_generation: 0,
+                    })
+                });
+                let view = match built {
+                    Ok(view) => view,
+                    Err(_) => return,
+                };
+                phase_marker("diff:prep:done");
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.ready(view);
+                    cx.notify();
+                });
+            }
+            Err(CommitDiffError::Cancelled) => {
+                phase_marker("diff:cancelled");
+                let _ = cx.update(|cx| cx.quit());
+            }
+            Err(error) => {
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.fail(format!("构建结构 diff 失败: {error}"));
+                    cx.notify();
+                });
+            }
+        }
+    })
+    .detach();
+}
+
+static DIFF_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 struct DiffView {
     model: DiffModel,
@@ -525,7 +845,11 @@ struct DiffView {
 }
 
 impl Render for DiffView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !DIFF_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("content:render");
+            window.on_next_frame(|_, _cx| phase_marker("content:presented"));
+        }
         let fade = DiffFade::new(self.fade_enabled);
         let generation = self.fade_generation;
         let header = format!(
@@ -1435,11 +1759,7 @@ impl MapView {
     }
 
     /// 每个 GPUI 帧回调推进一格；仍在揭示时续订下一帧，播完即停（不回绕）。
-    fn schedule_reveal_frame(
-        view: &mut MapView,
-        window: &mut Window,
-        cx: &mut Context<MapView>,
-    ) {
+    fn schedule_reveal_frame(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
         if !view.reveal.is_active() || view.reveal_scheduled {
             return;
         }
@@ -1454,9 +1774,7 @@ impl MapView {
             view.reveal.advance_frame();
             if was_active && view.reveal.is_finished() {
                 phase_marker("reveal:done");
-            } else if was_active
-                && !view.reveal_mid_marked
-                && view.reveal.overall_progress() >= 0.5
+            } else if was_active && !view.reveal_mid_marked && view.reveal.overall_progress() >= 0.5
             {
                 view.reveal_mid_marked = true;
                 phase_marker("reveal:mid");
@@ -1469,8 +1787,14 @@ impl MapView {
     }
 }
 
+static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+
 impl Render for MapView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("content:render");
+            window.on_next_frame(|_, _cx| phase_marker("content:presented"));
+        }
         let labels = self.state.labels_visible();
         let selected = self.state.selected().map(ToOwned::to_owned);
         let highlighted = self.state.highlighted();

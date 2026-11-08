@@ -13,13 +13,15 @@ use arch_core::layers::{build_layers, LayersArtifact};
 use crate::layout::{layout_map, LayoutConfig, MapLayout};
 use crate::timeline::{TimelineEntry, TimelineState};
 
-/// 加载态的阶段。`SamplingHistory` 在 `git log` 完成后带上刻度总数。
+/// 加载态的阶段。`SamplingHistory` 在 `git log` 完成后带上刻度总数；
+/// `Custom` 供 map/diff 等其它长操作显示各自阶段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadingStage {
     ReadingCommits,
     SamplingHistory { ticks: usize },
     BuildingLayers,
     ComputingLayout,
+    Custom(String),
 }
 
 impl LoadingStage {
@@ -29,6 +31,7 @@ impl LoadingStage {
             Self::SamplingHistory { ticks } => format!("准备历史：共 {ticks} 个刻度（一次遍历）"),
             Self::BuildingLayers => "构建分层".to_string(),
             Self::ComputingLayout => "计算布局".to_string(),
+            Self::Custom(label) => label.clone(),
         }
     }
 }
@@ -36,6 +39,7 @@ impl LoadingStage {
 /// 加载态的帧计数：动效相位只由帧数派生，不使用墙钟。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadingState {
+    headline: String,
     stage: LoadingStage,
     frames: u64,
 }
@@ -43,13 +47,25 @@ pub struct LoadingState {
 impl LoadingState {
     pub fn new() -> Self {
         Self {
+            headline: "正在准备演化时间线".to_string(),
             stage: LoadingStage::ReadingCommits,
             frames: 0,
         }
     }
 
+    pub fn for_task(headline: impl Into<String>, stage: LoadingStage) -> Self {
+        Self {
+            headline: headline.into(),
+            stage,
+            frames: 0,
+        }
+    }
+
     pub fn with_stage(stage: LoadingStage) -> Self {
-        Self { stage, frames: 0 }
+        Self {
+            stage,
+            ..Self::new()
+        }
     }
 
     pub fn stage(&self) -> &LoadingStage {
@@ -73,16 +89,16 @@ impl LoadingState {
         (self.frames % 4) as usize
     }
 
-    pub fn headline(&self) -> &'static str {
-        "正在准备演化时间线"
+    pub fn headline(&self) -> &str {
+        &self.headline
     }
 
-    /// 窗口内必须显示的非空文案：标题 + 当前阶段 + 一句说明。
+    /// 窗口内必须显示的非空文案：标题 + 当前阶段 + 取消出口说明。
     pub fn visible_lines(&self) -> Vec<String> {
         vec![
             self.headline().to_string(),
             format!("当前阶段：{}", self.stage.label()),
-            "数据准备好后自动切换到时间线视图".to_string(),
+            "可随时取消（关闭窗口）；数据准备好后自动切换".to_string(),
         ]
     }
 }
