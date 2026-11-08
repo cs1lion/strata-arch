@@ -6,7 +6,7 @@
 
 **Blocked by:** 05（`CanvasState` / viewport / 命中框）、07（`camera_center` 模型）。
 
-**Status:** implemented & verified（2026-11-08；UI 实际帧数未验证，见文末）。
+**Status:** implemented & verified（2026-11-08；UI 节拍用探针实测，MapView 逐帧序列未单独打点，见文末）。
 
 **固定样本/commit：** `tests/fixtures/callgraph`；开工基线 commit `a030101`（本票 fork 点 HEAD）。硬件/OS：`AMD Ryzen 7 8845H`、16 逻辑 CPU、Windows、PowerShell 7.6.9；`cargo test` debug profile。
 
@@ -26,7 +26,7 @@
    - 转场途中点击命中按当前插值相机换算。
    - 单步路径走完精确落在终点，无上冲/NaN。
 4. **失败判据**：只到终态但没有中间态（瞬移）；关闭开关后视口与旧行为有任何差异；中断后位置等于起点或终点；转场中点击命中错误节点或落空；出现 NaN/Inf；生产代码出现墙钟或随机源。
-5. **自动化状态**：`部分自动化`——模型层 7 条结构断言已自动化；GPUI 实际帧数/总时长无公开离屏入口，无法自动实测（登记见 `docs/acceptance-gaps.md` 第 3、8 节）。
+5. **自动化状态**：`部分自动化`——模型层 7 条结构断言已自动化；GPUI `with_animation(200ms)` 的帧数/总时长用本机探针实测（11 帧 / 216ms），但不进 CI；MapView 场景自身的逐帧序列未自动断言（`gpui 0.2.2` 无公开离屏入口，见 `docs/acceptance-gaps.md` 第 3、8 节）。
 
 ## 断言先行清单（B 档证据）
 
@@ -73,6 +73,29 @@ click consistency: click (601.00,221.00) world (366.00,42.00) from-world (601.00
 - 时间源：`Animation::new(Duration::from_millis(200))`（GPUI 内部时钟推进），`crates/arch-view/src` 中 `Instant::now|SystemTime::now|Date::now|rand::` **0 命中**。
 - 测试结果：camera_transition **7 passed**；`cargo test --workspace` 全绿；`cargo fmt --all --check` 干净。
 
+### UI 帧数与总时长（本机实测）
+
+命令：`cargo run -p arch-view --example animation_probe`（探针只测 GPUI `with_animation(200ms)` 的真实节拍，不驱动相机；`src/` 仍无墙钟）。
+
+```text
+probe frame  1 delta 0.0000 elapsed 11ms
+probe frame  2 delta 0.0602 elapsed 61ms
+probe frame  3 delta 0.3082 elapsed 77ms
+probe frame  4 delta 0.3897 elapsed 86ms
+probe frame  5 delta 0.4329 elapsed 124ms
+probe frame  6 delta 0.6235 elapsed 143ms
+probe frame  7 delta 0.7196 elapsed 160ms
+probe frame  8 delta 0.8033 elapsed 178ms
+probe frame  9 delta 0.8906 elapsed 194ms
+probe frame 10 delta 0.9705 elapsed 203ms
+probe frame 11 delta 1.0000 elapsed 216ms
+probe done: frames=11 elapsed_ms=216
+```
+
+- 总帧数：**11**；首帧到 `delta=1.0` 实测 **216ms**（均值帧间隔约 19.6ms，最长间隔 38ms，即 86→124ms 掉了一帧）。
+- MapView 路径在帧回调里写入模型、下一帧才渲染该进度，因此实际视觉转场比探针多 1 帧（预期约 **12 帧 / 216–233ms**）。
+
+
 ## 反向用例（四种）
 
 1. **单步路径**：`alpha → alpha`，4 段进度走完无上冲、无 NaN，终态精确落在目标。
@@ -87,6 +110,6 @@ click consistency: click (601.00,221.00) world (366.00,42.00) from-world (601.00
 
 ## 未验证的
 
-- **GPUI 实际帧数与总时长未实测**：`with_animation` 用 GPUI 内部 `Instant` 推进，`gpui 0.2.2` 无公开离屏导出，测试时钟也不接管 `Animation` 的时钟；可实测的只有模型进度序列与 200ms 的固定 `Animation` duration。已登记到 `docs/acceptance-gaps.md`。
+- **MapView 场景自身的逐帧序列未单独打点**：上面 11 帧/216ms 是同一 `with_animation` 机制在本机的实测；MapView 多 1 帧属于代码路径推导，未在窗口内逐帧记录。`gpui 0.2.2` 无公开离屏导出，无法进 CI 自动断言帧数。
 - 真实窗口下的转场观感、DPI/刷新率差异未做人工录屏。
 - 视觉迭代：未调整任何像素/布局参数；转场只改视口插值，不动相机模型与布局。
