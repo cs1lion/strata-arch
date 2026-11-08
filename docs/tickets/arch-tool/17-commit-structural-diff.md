@@ -48,8 +48,67 @@
 
 ## Red/Green 证据
 
-（实现前在此登记真实失败输出；未实测不预填。）
+### core（A 档）
+
+- Red 提交：`5caf63c test(commit-diff): add assertion-level red for tree diff`。
+- Red 命令：`cargo test -p arch-core --test commit_diff -- --nocapture`。
+- Red 实测（重放该提交）：`test result: FAILED. 1 passed; 6 failed`；测试二进制编译通过，失败均为断言不成立：
+  - `added 计数 left: 0 right: 3`（合成 fixture 期望 3）
+  - `removed 计数 left: 0 right: 2`
+  - `疑似重命名命中数 left: 0 right: 1`
+  - `空文件应出现在 added`
+  - `added 计数 left: 0 right: 25`（本仓库 `2b66deb → 29f8e27`）
+  - `diff 必须真的读到提交内容`
+- Green 命令与实测：同命令 `test result: ok. 7 passed; 0 failed`。
+
+### view（B 档）
+
+- Red 提交：`bde8afb test(diff-view): add assertion-level red for tints and entrance fade`。
+- Red 命令：`cargo test -p arch-view --test commit_diff_view -- --nocapture`。
+- Red 实测（重放该提交）：`test result: FAILED. 2 passed; 3 failed`：
+  - `改名不得合并成一行 left: 0 right: 6`
+  - `最终态 alpha 必须到 255 left: 0 right: 255`
+  - `关闭淡入后 progress=0 必须与静态渲染逐位一致 left: 795557632 right: 795557887`
+- Green 命令与实测：同命令 `test result: ok. 5 passed; 0 failed`。
 
 ## 读数（改前 / 改后）
 
-（实现后按同口径补充。）
+### 结构 diff 计数
+
+| 样本 | added | removed | modified | 疑似重命名 | 命令 |
+| --- | --- | --- | --- | --- | --- |
+| 合成 fixture（测试内建） | 3 | 2 | 1 | 1 | `cargo test -p arch-core --test commit_diff synthetic_diff_separates_added_removed_modified -- --nocapture` |
+| 本仓库 `2b66deb → 29f8e27` | 25 | 0 | 0 | 0 | `cargo test -p arch-core --test commit_diff repository_history_pair_has_expected_counts -- --nocapture` |
+
+合成 fixture 明细（同命令原始输出）：
+
+- added：`src/blank.ts`（空文件，符号数 1）、`src/legacy.ts`（改名目标）、`src/new.ts`。
+- removed：`src/dead.ts`、`src/old.ts`（改名源，仍在 removed 中）。
+- modified：`src/a.ts`，符号数 2→3，reason `symbol-count`。
+- 疑似重命名命中 1 组：`src/old.ts ↔ src/legacy.ts`（路径相似度 0.6、符号 Jaccard 1.0）。
+- 漏报对照：`src/dead.ts` 与 `src/new.ts` 路径相似度 0.6，但符号 Jaccard 0，按规则不提示（测试断言两者 `renameHint = None`）。
+- 反向用例：同一 commit 对比自身 `0/0/0/0`；整目录删除 `removed = 2`；空文件留在 added（符号数 1），未进 modified。
+- 只读：diff 前后 `git status --porcelain` 与 `git rev-parse HEAD` 均不变；同一输入两次运行 JSON 字节一致。
+
+### 淡入最终态与关闭态
+
+- 启用淡入：`progress = 0 → 0.25 → 0.5 → 0.75 → 1.0` alpha 单调；`alpha_at(1.0)` 的 alpha 字节 = `255`。
+- 最终态恒定：`progress ∈ {1.0, 1.0, 2.0}` 的三帧，三类 tint 的 packed RGBA 均等于静态 `packed_static`。
+- 关闭淡入：`progress ∈ {0.0, 0.1, 0.5, 0.9, 1.0, 2.0}`，三类 tint 的 packed RGBA 与静态渲染逐位相等。
+- 三色块：`added = 0x2f6b3f`、`removed = 0x7a3138`、`modified = 0x7a5b24`，互不相同。
+- 时间源：`rg "Instant::now|SystemTime::now|Date::now|rand::|thread_rng" crates/arch-view/src` → 0 命中，退出码 1；淡入进度由 `with_animation` 的 GPUI 帧回调写入。
+
+### 回归与门禁
+
+- `cargo test --workspace`：全部套件 `0 failed`。
+- `cargo fmt --all --check`：通过。
+- drift CI：
+  - `cargo run -p arch-cli -- drift tests/corpus/tsx --base eval/baseline/drift-tsx.json` → exit 0，四类 `newCount = resolvedCount = 0`。
+  - `cargo run -p arch-cli -- drift tests/corpus/excalidraw --base eval/baseline/drift-excalidraw.json` → exit 0，四类全 0。
+- 未触碰 ticket 14/15/16 的既有判据与截图基线。
+
+## 做到 / 没做到 / 未验证
+
+- **做到的**：上述计数、疑似重命名命中/漏报、同 commit 零变化、整目录删除、空文件、只读与确定性、三色块、淡入最终态恒定、关闭态逐位一致、时间源 0 命中、全量回归与 drift CI 均实测通过。
+- **没做到的**：未从真实帧缓冲采样最终色值（`gpui 0.2.2` 无公开离屏导出）；`arch-view diff` 窗口本轮未实际打开，只验证模型与编译；未提供 headless JSON 子命令。
+- **未验证的**：大仓库双 commit 快照的耗时与内存未测（本轮样本最大为 802 模块的 excalidraw 基线，但 P4 未对其跑 diff）；三色块的实际屏幕对比度未测；改名规则在真实仓库中的误报率只有合成样本的漏报对照。
