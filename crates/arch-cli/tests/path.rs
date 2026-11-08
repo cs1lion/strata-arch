@@ -142,7 +142,7 @@ fn path_query_returns_ordered_steps() {
         "src/utils/helper.ts#function:helper",
     ]);
 
-    assert_eq!(json["schemaVersion"], 1);
+    assert_eq!(json["schemaVersion"], 2);
     assert_eq!(json["found"], true);
     assert_eq!(json["length"], 3);
     assert_eq!(
@@ -236,6 +236,107 @@ fn path_output_is_byte_deterministic() {
     let second = run_cli(&arguments);
     assert_eq!(first.status.code(), Some(0));
     assert_eq!(first.stdout, second.stdout);
+}
+
+#[test]
+fn narrative_flag_prints_text_with_one_line_per_step() {
+    let fixture = fixture_dir();
+    let arguments = [
+        "path",
+        fixture.to_str().expect("path"),
+        "--from",
+        "src/cli.ts#module-toplevel",
+        "--to",
+        "src/utils/helper.ts#function:helper",
+        "--narrative",
+    ];
+    let output = run_cli(&arguments);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "--narrative must stay silent on stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let first_stdout = output.stdout.clone();
+    let text = String::from_utf8(output.stdout).expect("narrative text");
+    assert!(
+        text.starts_with(
+            "路径 src/cli.ts#module-toplevel → src/utils/helper.ts#function:helper：3 步"
+        ),
+        "narrative header must name both ends and the step count: {text}"
+    );
+    let body_lines = text
+        .lines()
+        .filter(|line: &&str| line.starts_with("- "))
+        .count();
+    assert_eq!(body_lines, 3, "one narrative line per step: {text}");
+    assert!(
+        !text.trim_start().starts_with('{'),
+        "--narrative must not print JSON: {text}"
+    );
+
+    let second = run_cli(&arguments);
+    assert_eq!(
+        first_stdout, second.stdout,
+        "narrative text must be byte deterministic"
+    );
+}
+
+#[test]
+fn narrative_flag_writes_text_to_out_file() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let output_path = std::env::temp_dir().join(format!("strata-path-narrative-{unique}.txt"));
+
+    let output = run_cli(&[
+        "path",
+        fixture_dir().to_str().expect("path"),
+        "--from",
+        "src/cli.ts#module-toplevel",
+        "--to",
+        "src/utils/helper.ts#function:helper",
+        "--narrative",
+        "--out",
+        output_path.to_str().expect("path"),
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stdout.is_empty(),
+        "--narrative --out must not duplicate text on stdout"
+    );
+    let written = fs::read_to_string(&output_path).expect("narrative file");
+    assert!(written.contains("src/cli.ts#module-toplevel"));
+    assert_eq!(
+        written
+            .lines()
+            .filter(|line: &&str| line.starts_with("- "))
+            .count(),
+        3
+    );
+
+    fs::remove_file(&output_path).ok();
+}
+
+#[test]
+fn narrative_with_entries_exits_2() {
+    let output = run_cli(&[
+        "path",
+        fixture_dir().to_str().expect("path"),
+        "--entries",
+        "--narrative",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--narrative") && stderr.contains("--entries") && stderr.contains("不能"),
+        "stderr must explain the conflict, not just reject the flag: {stderr}"
+    );
 }
 
 #[test]
