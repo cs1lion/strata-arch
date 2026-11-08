@@ -8,6 +8,7 @@ license.workspace = true
 arch-core = { path = "../arch-core" }
 gpui = "=0.2.2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 serde_json = "1"

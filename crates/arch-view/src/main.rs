@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -27,6 +28,7 @@ use gpui::{
 const USAGE: &str = "用法:
   arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
   arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]
+  arch-view scene <目标仓库> [--out <场景文件>]
   arch-view smoke <目标仓库>";
 
 fn main() -> ExitCode {
@@ -40,6 +42,13 @@ fn main() -> ExitCode {
             }
         },
         Some("timeline") => match run_timeline(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                ExitCode::from(2)
+            }
+        },
+        Some("scene") => match run_scene(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("{message}");
@@ -282,6 +291,65 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
         return Err("没有可用的 first-parent 提交".to_string());
     }
     Ok(entries)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneArtifact {
+    schema_version: u32,
+    tool_version: String,
+    repo: arch_core::RepoInfo,
+    layout: MapLayout,
+}
+
+fn run_scene(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let target = args
+        .next()
+        .ok_or_else(|| format!("scene 缺少目标仓库路径\n{USAGE}"))?;
+    if target.starts_with("--") {
+        return Err(format!("scene 缺少目标仓库路径\n{USAGE}"));
+    }
+
+    let mut out: Option<PathBuf> = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--out" => {
+                out = Some(PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| "--out 缺少文件路径".to_string())?,
+                ));
+            }
+            other => return Err(format!("未知参数: {other}\n{USAGE}")),
+        }
+    }
+
+    let artifact = build_layers(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
+        .map_err(|error| format!("构建层产物失败: {error}"))?;
+    let layout = layout_map(&artifact, LayoutConfig::default());
+    let scene = SceneArtifact {
+        schema_version: 1,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        repo: artifact.repo,
+        layout,
+    };
+    let json =
+        serde_json::to_string_pretty(&scene).map_err(|error| format!("序列化场景失败: {error}"))?;
+
+    match out {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        format!("创建输出目录失败 {}: {error}", parent.display())
+                    })?;
+                }
+            }
+            fs::write(&path, format!("{json}\n"))
+                .map_err(|error| format!("写入场景失败 {}: {error}", path.display()))?;
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
 }
 
 fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
