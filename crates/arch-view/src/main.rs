@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -376,7 +377,18 @@ fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 
     let rendered = Arc::new(AtomicBool::new(false));
     let rendered_in_view = rendered.clone();
-    let rendered_timeout = rendered.clone();
+    let rendered_watchdog = rendered.clone();
+    // 看门狗必须是独立 OS 线程：窗口创建/首次渲染阻塞时 GPUI 执行器无法运行，
+    // 原来的 `cx.spawn` 定时器无法触发（见 ticket 14 取证）。
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(12));
+        if !rendered_watchdog.load(Ordering::SeqCst) {
+            println!("smoke: timeout waiting for first frame");
+            let _ = std::io::stdout().flush();
+            std::process::exit(2);
+        }
+    });
+
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         cx.open_window(
@@ -394,17 +406,6 @@ fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         )
         .expect("open smoke window");
         cx.activate(true);
-
-        cx.spawn(async move |cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(2500))
-                .await;
-            if !rendered_timeout.load(Ordering::SeqCst) {
-                println!("smoke: timeout waiting for first frame");
-                let _ = cx.update(|cx| cx.quit());
-            }
-        })
-        .detach();
     });
 
     if !rendered.load(Ordering::SeqCst) {
