@@ -18,7 +18,7 @@
     "peakRssMb": 512,
     "medianFluctuationPercent": 20,
     "hardwareBaselineConfirmed": false,
-    "memoryCapConfirmed": false
+    "memoryCapConfirmed": true
   },
   "cases": {
     "tsx": {
@@ -53,11 +53,28 @@
       "stdoutEmpty": true,
       "stderr": "错误: 目标仓库源文件数 5001 超过上限 5000，已拒绝索引",
       "status": "measured"
+    },
+    "memoryGate": {
+      "task": "eval/perf-baseline.ps1 内存门禁（默认 -MaxPeakMb 512）",
+      "metric": "osPeakWsMb（OS PeakWorkingSet64）；polledWsMb 仅作回退",
+      "limitMb": 512,
+      "green": {
+        "command": "pwsh -File eval/perf-baseline.ps1 -OutJson out/perf.json -Runs 3",
+        "exitCode": 0,
+        "peaksMb": {"tsx": 6.6, "excalidraw": 4.9},
+        "stdout": "memory gate: passed (all peaks < 512Mb)"
+      },
+      "red": {
+        "command": "pwsh -File eval/perf-baseline.ps1 -MaxPeakMb 1 -OutJson out/perf-gate-red.json -Runs 1",
+        "exitCode": 1,
+        "stdout": "memory gate: FAILED (limit 1Mb)；tsx/index peak 5Mb、excalidraw/index peak 4.8Mb"
+      },
+      "status": "measured"
     }
   },
   "notes": [
-    "Windows 峰值内存为进程 WorkingSet 代理口径（同时记录 OS PeakWorkingSet64），置信度低；未在 Linux 用 /usr/bin/time -v 复核。",
-    "512MB 硬上限与推荐硬件基线仍待用户确认；当前未实现内存超限拒绝。",
+    "Windows 峰值内存门禁使用 OS PeakWorkingSet64（进程驻留集/RSS 峰值）；轮询 WorkingSet64 是采样下界，实测首轮 tsx 轮询 5.5MB 而 OS 峰值 6.6MB。两者口径不同：RSS 是 OS 认为驻留的物理页，PeakWorkingSet64 是生命周期峰值；轮询会漏短峰，故只用于兜底。未在 Linux 用 /usr/bin/time -v 复核。",
+    "512MB 硬上限已实现为 eval/perf-baseline.ps1 的门禁断言（超限退出 1）；推荐硬件基线仍待用户确认。",
     "历史窗口预算未取得读数，不得按通过计。",
     "完整原始读数在 out/perf.json（不入库）。"
   ]
