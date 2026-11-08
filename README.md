@@ -1,25 +1,66 @@
 # Strata
 
-> Local-first TypeScript/JavaScript architecture & codebase evolution explorer built in Rust and GPUI.
+本地优先的 TypeScript/JavaScript 架构解析与可视化工具：静态分析得到模块分层、依赖与调用图，再把它们放进原生桌面窗口里看。Rust workspace，`arch-core` 负责解析与图模型，`arch-cli` 输出 JSON，`arch-view` 提供 GPUI 桌面视图。
 
-面向大型 TS/JS 代码库的本地优先架构解析与可视化工具。基于 Rust + GPUI 构建，提供高效静态分析与高性能原生桌面视图。
+## 前置条件
 
-## 核心能力 (Core Capabilities)
+- Rust stable（workspace 使用 edition 2021，CI 用 `dtolnay/rust-toolchain@stable`）。
+- 目标仓库需含 TS/JS 源文件；`timeline` 与 `diff` 还要求它是**非浅克隆**的 git 仓库。
+- Windows：安装 Rust MSVC toolchain 即可，无额外系统库。
+- Linux：需要 xcb / xkbcommon 与 Vulkan/GL 运行库，参考 CI 安装命令：
+  ```bash
+  sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools
+  ```
+- macOS：可编译；运行尚未验证（见下方「平台支持」）。
 
-- **AST 与符号级静态分析**：基于 AST 的精确符号提取、跨文件引用解析与推断。
-- **模块层级与调用/依赖图构建**：自动推断模块多层级结构，呈现清晰的模块间依赖与方法调用关系图谱。
-- **Git 提交演化时间线追踪**：结合历史 Commit，可视化演化路径与架构漂移情况。
-- **引导式源码阅读路径生成 (Guided Reading Tour)**：智能计算主干阅读链路，自动推荐从核心入口到关键分支的源码阅读步骤。
+## 三分钟跑起来
 
-## Workspace 架构 (Crate Architecture)
+```bash
+# 1) 构建（release，首次编译 GPUI 较慢，只需一次）
+cargo build --release --locked
 
-本项目采用 Rust Workspace 模块化设计：
+# 2) 最小仓库的架构地图（分层 + 依赖边）
+cargo run --release -p arch-view -- map tests/fixtures/tiny
 
-- `arch-core`: 静态分析与演化图谱引擎，负责源码解析、依赖图构建与演化路径计算。
-- `arch-cli`: Headless 结构化 JSON 数据契约 CLI，便于集成 CI/CD 工具链或第三方自动化流程。
-- `arch-view`: 基于 GPUI 的高性能原生桌面交互视图，提供分层地图、路径播放与演化时间线展示。
+# 3) 提交演化时间线（在本仓库内运行，读取 first-parent 提交历史）
+cargo run --release -p arch-view -- timeline .
 
-工程纪律与 TDD 规范见 [ENGINEERING-DISCIPLINE.md](docs/process/ENGINEERING-DISCIPLINE.md)，合作规范见 [AGENTS.md](AGENTS.md)。
+# 4) 两个提交的结构 diff（本仓库内的一对固定 commit，示例输出 added=25）
+cargo run --release -p arch-view -- diff . --from 2b66deb --to 29f8e27
+
+# 5) 引导式阅读路径（入口 → 目标符号，逐步播放）
+cargo run --release -p arch-view -- map tests/fixtures/path \
+  --from src/cli.ts#module-toplevel --to src/utils/helper.ts#function:helper
+```
+
+四个视图各自看什么：
+
+| 模式 | 命令入口 | 看的是什么 |
+| --- | --- | --- |
+| `map` | `arch-view map <repo>` | 模块分层地图与模块间依赖边；先开窗、显示加载态，数据就绪后展示内容 |
+| `timeline` | `arch-view timeline <repo>` | 按提交采样的演化时间线（模块数、边、分层带随时间的漂移） |
+| `diff` | `arch-view diff <repo> --from <commit> --to <commit>` | 两个 commit 之间的结构差异：added / removed / modified 与疑似重命名提示 |
+| `path` | `arch-view map <repo> --from <入口ID> --to <符号ID>` | 从入口到目标的一条最短调用路径，可在底部面板逐步播放 |
+
+需要 JSON 而不是窗口时，用 `arch-cli`：
+
+```bash
+cargo run --release -p arch-cli -- index tests/fixtures/tiny --out out/index.json
+cargo run --release -p arch-cli -- layers tests/fixtures/tiny --out out/layers.json
+cargo run --release -p arch-cli -- path tests/fixtures/path --entries
+```
+
+运行期退出：窗口关闭即退出；自动化场景用 `--auto-close-ms <毫秒>` 定时干净退出（退出码 0）。
+
+## 已知限制
+
+- **diff 在大仓上约 10 秒**：excalidraw（802 模块）热 diff 实测 median 约 9.8s、p95 约 10.2s。窗口先显示加载态与当前阶段，可随时关闭窗口或点「取消」立即退出；读数与预算见 [ticket 10](docs/tickets/arch-tool/10-performance-memory-baseline.md)。
+- **Linux 只在软件渲染下验证过**：CI 用 `xvfb` + `openbox` + Mesa lavapipe 跑窗口冒烟，只证明能开窗、出帧、干净退出，不代表真实 GPU 表现，也不代表画面正确；视觉判据见 [acceptance-gaps 2.2.1/2.2.2](docs/acceptance-gaps.md)。
+- **macOS 仅编译验证**：CI 构建通过，未在真机运行；依据见 ticket 11 与 CI run 42475740482。
+- **首屏揭示动画默认关闭**：`--reveal` 才启用分层淡入（也接受环境变量 `STRATA_EVIDENCE_REVEAL`）。在 excalidraw 语料上实测 6 层 80 帧约 6.3–8.0s 才播完；任意交互可立即跳到最终态。默认关闭是有意选择，避免在加载态之后叠加等待。
+- **timeline / diff 需要真实历史**：无 `.git` 的归档副本（如 `tests/corpus/excalidraw`）不能用于 `timeline`；浅克隆会失败或找不到 `--from/--to` 指定的提交。
+- **符号与路径的已知缺口**：顶层 JSX 位于 `root.render(<...>)` 参数内时不产生 `module-toplevel` 的 jsx 边，这类入口无法给出路径（见 [ticket 06](docs/tickets/arch-tool/06-entry-target-guided-path-query.md)）。
 
 ## 平台支持（实测）
 
@@ -29,30 +70,6 @@
 | macOS | CI 通过 | 未运行 | 仅编译验证 |
 | Linux | CI 通过（需 xcb / xkbcommon 系统库） | 窗口冒烟通过（CI：xvfb + openbox + 软件渲染） | 运行验证（软件渲染） |
 
-macOS 目前只承诺可编译，不承诺可运行；依据见 ticket 11 与 CI run 42475740482。
-
-Linux 的运行验证是虚拟显示（`xvfb`）里加窗口管理器（`openbox`）、用 Mesa lavapipe **软件渲染**跑窗口冒烟：只证明「能开窗、能出帧、能干净退出」，**不代表真实 GPU 表现**，也不证明画面正确（视觉判据见 [acceptance-gaps 2.2.1/2.2.2](docs/acceptance-gaps.md)）。
-
-## 快速开始 (Quick Start)
-
-### 构建与测试
-
-```powershell
-cargo build --locked --workspace
-cargo test --workspace
-```
-
-### 运行示例
-
-```powershell
-# CLI 分析
-cargo run -p arch-cli -- index tests/fixtures/tiny
-
-# GUI 交互视图
-cargo run -p arch-view -- smoke tests/fixtures/tiny
-cargo test -p arch-view --test scene_snapshot
-```
-
 ### 时间线启动行为
 
 `arch-view timeline <repo>` 采用「先开窗、后加载」：窗口先出现并显示加载态（当前阶段，例如「准备历史：共 617 个刻度」「构建分层」），数据就绪后自动切换到时间线并打印 `timeline: N ticks, M modules, K bands`。
@@ -60,3 +77,22 @@ cargo test -p arch-view --test scene_snapshot
 - 窗口先出现、暂时只有加载文案是正常行为，不是卡死；计数行出现或时间线视图切换完成才算就绪。
 - 若 `--auto-close-ms` 小于数据准备时间，进程会在计数行打印之前干净退出（退出码 0，stderr 无 panic），此时 stdout 可能没有 `timeline:` 行。
 - 数据准备失败时，错误显示在窗口内，不只写 stderr。
+
+## Workspace 结构
+
+- `arch-core`：源码解析、模块解析、分层推断、调用图、历史采样与 commit 结构 diff。
+- `arch-cli`：headless JSON 产物（`index` / `layers` / `callgraph` / `history` / `path` / `drift`）。
+- `arch-view`：GPUI 桌面视图（map / timeline / diff / path 播放 / scene / smoke）。
+
+工程纪律与 TDD 规范见 [ENGINEERING-DISCIPLINE.md](docs/process/ENGINEERING-DISCIPLINE.md)，协作约定见 [AGENTS.md](AGENTS.md)。
+
+## 验证与回归
+
+```bash
+cargo test --workspace
+cargo fmt --check
+pwsh eval/drift-gate.ps1 -PlanOnly   # 改动是否触发漂移门禁
+pwsh eval/release-check.ps1          # 本地发布前检查：五条路径 + 测试 + fmt + drift 计划
+```
+
+`eval/release-check.ps1` 只用于本地发布前核对，不进入 CI（CI 已覆盖构建、测试与漂移门禁）。四条用户可见路径的耗时口径见 [eval/path-timing.ps1](eval/path-timing.ps1)。
