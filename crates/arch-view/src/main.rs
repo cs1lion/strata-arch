@@ -4,8 +4,9 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use std::collections::BTreeSet;
-
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::guided_path::build_path;
@@ -25,7 +26,8 @@ use gpui::{
 
 const USAGE: &str = "用法:
   arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
-  arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]";
+  arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]
+  arch-view smoke <目标仓库>";
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -38,6 +40,13 @@ fn main() -> ExitCode {
             }
         },
         Some("timeline") => match run_timeline(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                ExitCode::from(2)
+            }
+        },
+        Some("smoke") => match run_smoke(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("{message}");
@@ -273,6 +282,115 @@ fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, 
         return Err("没有可用的 first-parent 提交".to_string());
     }
     Ok(entries)
+}
+
+fn run_smoke(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let target = args
+        .next()
+        .ok_or_else(|| format!("smoke 缺少目标仓库路径\n{USAGE}"))?;
+    if target.starts_with("--") {
+        return Err(format!("smoke 缺少目标仓库路径\n{USAGE}"));
+    }
+    if args.next().is_some() {
+        return Err(format!("smoke 不接受额外参数\n{USAGE}"));
+    }
+
+    let artifact = build_layers(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"))
+        .map_err(|error| format!("构建层产物失败: {error}"))?;
+    let layout = layout_map(&artifact, LayoutConfig::default());
+    println!(
+        "smoke: layout {} modules, {} edges, {} bands",
+        layout.nodes.len(),
+        layout.edges.len(),
+        layout.bands.len()
+    );
+
+    let rendered = Arc::new(AtomicBool::new(false));
+    let rendered_in_view = rendered.clone();
+    let rendered_timeout = rendered.clone();
+    Application::new().run(move |cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            move |_, cx| {
+                cx.new(|_| SmokeView {
+                    layout,
+                    rendered: rendered_in_view,
+                    scheduled: false,
+                })
+            },
+        )
+        .expect("open smoke window");
+        cx.activate(true);
+
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(2500))
+                .await;
+            if !rendered_timeout.load(Ordering::SeqCst) {
+                println!("smoke: timeout waiting for first frame");
+                let _ = cx.update(|cx| cx.quit());
+            }
+        })
+        .detach();
+    });
+
+    if !rendered.load(Ordering::SeqCst) {
+        return Err("smoke 失败：窗口未渲染一帧（可能缺少可用图形后端）".to_string());
+    }
+    Ok(())
+}
+
+struct SmokeView {
+    layout: MapLayout,
+    rendered: Arc<AtomicBool>,
+    scheduled: bool,
+}
+
+impl Render for SmokeView {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.scheduled {
+            self.scheduled = true;
+            let rendered = self.rendered.clone();
+            window.on_next_frame(move |_, cx| {
+                rendered.store(true, Ordering::SeqCst);
+                println!("smoke: frame rendered");
+                cx.quit();
+            });
+        }
+
+        let mut root = div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .bg(rgb(0x0d1117));
+        for band in &self.layout.bands {
+            root = root.child(band_element(band, Viewport::default()));
+        }
+        for node in &self.layout.nodes {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(node.rect.x))
+                    .top(px(node.rect.y))
+                    .w(px(node.rect.width))
+                    .h(px(node.rect.height))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(rgb(0x2c3a4a))
+                    .bg(rgb(0x2d4f7a))
+                    .overflow_hidden()
+                    .px(px(6.))
+                    .text_xs()
+                    .text_color(rgb(0xe6edf3))
+                    .child(node.id.clone()),
+            );
+        }
+        root
+    }
 }
 
 struct TimelineView {
