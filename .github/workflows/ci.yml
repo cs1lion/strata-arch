@@ -15,6 +15,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # arch-core 的 commit_diff 测试要对仓内历史提交 2b66deb..29f8e27 求差，浅克隆会报 UnknownCommit。
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: install gpu window deps (Linux)
         if: runner.os == 'Linux'
