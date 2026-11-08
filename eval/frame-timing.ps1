@@ -14,10 +14,12 @@
 [CmdletBinding()]
 param(
     [string]$Repo = "tests/corpus/excalidraw",
-    [ValidateSet("pan", "reveal", "idle")]
+    [ValidateSet("pan", "reveal", "idle", "ab")]
     [string]$Mode = "pan",
     [int]$Frames = 120,
     [string]$Skip = "",
+    [string]$AbCycle = "base,A,AD1",
+    [int]$AbSegmentFrames = 60,
     [int]$IdleMs = 5000,
     [string]$Exe = "target/release/arch-view.exe",
     [string]$OutJson = "out/frame-timing.json"
@@ -50,6 +52,15 @@ switch ($Mode) {
         $autoCloseMs = 2500 + $IdleMs + 5000
         $windowTag = "idle"
     }
+    "ab" {
+        $segments = @($AbCycle.Split(',') | Where-Object { $_.Trim() })
+        $envVars["STRATA_AB_CYCLE"] = ($segments -join ",")
+        $envVars["STRATA_AB_SEGMENT_FRAMES"] = "$AbSegmentFrames"
+        # 末尾多跑一整段作为补齐，保证最后一段也有完整 F 帧（该段同样按帧下标切分统计）。
+        $envVars["STRATA_AUTOPAN_FRAMES"] = "$($segments.Count * $AbSegmentFrames + $AbSegmentFrames)"
+        $autoCloseMs = 2500 + (($segments.Count + 1) * $AbSegmentFrames * 120) + 8000
+        $windowTag = "ab"
+    }
 }
 if ($Skip) { $envVars["STRATA_RENDER_SKIP"] = $Skip }
 $arguments += @("--auto-close-ms", "$autoCloseMs")
@@ -70,6 +81,9 @@ $process.Start() | Out-Null
 $marks = [ordered]@{}
 $frameTimes = New-Object System.Collections.Generic.List[double]
 $panFrameTimes = New-Object System.Collections.Generic.List[double]
+$abMarks = New-Object System.Collections.Generic.List[object]
+$abRows = @()
+$abSummary = @()
 $firstLine = ""
 $counters = ""
 $line = $process.StandardOutput.ReadLine()
@@ -80,6 +94,9 @@ while ($null -ne $line) {
         if (-not $marks.Contains($label)) { $marks[$label] = $elapsed }
         if ($label -eq "frame") { $frameTimes.Add($elapsed) }
         if ($label -eq "pan:frame") { $panFrameTimes.Add($elapsed) }
+        if ($label.StartsWith("ab:segment=")) {
+            $abMarks.Add([pscustomobject]@{ name = $label.Substring(11); at = $elapsed })
+        }
     } elseif ($line.StartsWith("frame: ")) {
         $counters = $line
     } elseif ($line.StartsWith("map: ") -and -not $firstLine) {
@@ -150,9 +167,43 @@ switch ($Mode) {
         $idleFrames = @($frameTimes | Where-Object { $_ -gt $idleStart -and $_ -le $idleEnd }).Count
         $stats = [pscustomobject]@{ count = $idleFrames; median = 0; p95 = 0; min = 0; max = 0; mean = 0 }
     }
+    "ab" {
+        # 帧下标即渲染序号（每个 MapView 帧输出一行 `phase: frame`，空闲时不渲染）。
+        # 第 i 段固定覆盖帧 [i*F, (i+1)*F)，段内单独统计；不足 F 帧的尾段丢弃，不跨段混算。
+        $abRows = @()
+        $frameArray = $frameTimes.ToArray()
+        $seen = @{}
+        for ($index = 0; $index -lt $abMarks.Count; $index += 1) {
+            $from = $index * $AbSegmentFrames
+            $to = [math]::Min($from + $AbSegmentFrames, $frameArray.Count)
+            if (($to - $from) -lt $AbSegmentFrames) { continue }
+            $segmentIntervals = Get-Intervals @($frameArray[$from..($to - 1)])
+            $segmentStats = Get-Stats $segmentIntervals
+            $name = $abMarks[$index].name
+            $instance = if ($seen.ContainsKey($name)) { $seen[$name] + 1 } else { 1 }
+            $seen[$name] = $instance
+            $abRows += [pscustomobject]@{
+                segment = $name
+                instance = $instance
+                intervalsMs = @($segmentIntervals | ForEach-Object { [math]::Round($_, 2) })
+                stats = $segmentStats
+            }
+        }
+        $abSummary = @()
+        foreach ($group in ($abRows | Group-Object segment)) {
+            $medianOfMedians = (Get-Stats @($group.Group | ForEach-Object { $_.stats.median })).median
+            $medianOfP95 = (Get-Stats @($group.Group | ForEach-Object { $_.stats.p95 })).median
+            $abSummary += [pscustomobject]@{
+                segment = $group.Name
+                batches = $group.Count
+                medianOfMediansMs = $medianOfMedians
+                medianOfP95Ms = $medianOfP95
+            }
+        }
+    }
 }
 
-if ($Mode -ne "idle") { $stats = Get-Stats $intervals }
+if ($Mode -notin @("idle", "ab")) { $stats = Get-Stats $intervals }
 $fps = if ($stats.median -and $stats.median -gt 0) { [math]::Round(1000 / $stats.median, 1) } else { $null }
 
 $detail = [pscustomobject]@{
@@ -180,6 +231,8 @@ $detail = [pscustomobject]@{
         fpsFromMedian = $fps
     }
     rawIntervalsMs = @($intervals | ForEach-Object { [math]::Round($_, 2) })
+    abSegments = @($abRows)
+    abSummary = @($abSummary)
     stderrTail = @(($stderr -split "`n") | Where-Object { $_ -and $_.Trim() } | Select-Object -Last 3)
 }
 $outDir = Split-Path -Parent $OutJson
@@ -191,9 +244,29 @@ $detail | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $OutJson -Encoding 
 Write-Output ("frame timing: mode={0} skip={1} repo={2}" -f $Mode, $(if ($Skip) { $Skip } else { "-" }), $Repo)
 Write-Output ("  {0}" -f $firstLine)
 Write-Output ("  {0}" -f $counters)
-Write-Output ("  frames={0} window Intervals={1}" -f $detail.framesTotal, $stats.count)
+if ($Mode -ne "ab") {
+    Write-Output ("  frames={0} window Intervals={1}" -f $detail.framesTotal, $stats.count)
+}
 if ($Mode -eq "idle") {
     Write-Output ("  idle frames in {0}ms window: {1}（判据要求 0）" -f $IdleMs, $stats.count)
+} elseif ($Mode -eq "ab") {
+    if ($abRows.Count -eq 0) {
+        Write-Output "  未读到 phase: ab:segment 打点（检查 STRATA_FRAME_TRACE / STRATA_AB_CYCLE）"
+    } else {
+        Write-Output ("  {0,-10} {1,-7} {2,6} {3,9} {4,9} {5,9} {6,9} {7,9}" -f `
+                "segment", "batch", "samples", "median", "p95", "min", "max", "mean")
+        foreach ($row in $abRows) {
+            Write-Output ("  {0,-10} {1,7} {2,6} {3,9} {4,9} {5,9} {6,9} {7,9}" -f `
+                    $row.segment, $row.instance, $row.stats.count, $row.stats.median, $row.stats.p95, `
+                    $row.stats.min, $row.stats.max, $row.stats.mean)
+        }
+        Write-Output ""
+        Write-Output ("  {0,-10} {1,7} {2,16} {3,14}" -f "segment", "batches", "median(median)", "median(p95)")
+        foreach ($row in $abSummary) {
+            Write-Output ("  {0,-10} {1,7} {2,16} {3,14}" -f `
+                    $row.segment, $row.batches, $row.medianOfMediansMs, $row.medianOfP95Ms)
+        }
+    }
 } else {
     Write-Output ("  interval median={0}ms p95={1}ms min={2}ms max={3}ms mean={4}ms (~{5}fps)" -f `
             $stats.median, $stats.p95, $stats.min, $stats.max, $stats.mean, $fps)
