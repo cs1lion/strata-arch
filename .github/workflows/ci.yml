@@ -48,6 +48,39 @@ jobs:
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
+      - name: macos window smoke (map)
+        # 平台矩阵最后一块空白：macOS 目前只有编译验证。这里复用同一套阶段标记
+        # （STRATA_PHASE_MARKERS + `phase: content:presented`）与「exit 0 + 标记命中」判据，
+        # 不新造判定。--auto-close-ms 保证窗口自己退出；外层 python 计时器只防挂死。
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          export STRATA_PHASE_MARKERS=1
+          set +e
+          python3 -c '
+import subprocess, sys
+log = open("out/macos-window-smoke.log", "w")
+cmd = ["./target/debug/arch-view", "map", "tests/fixtures/layers",
+       "--auto-close-ms", "5000", "--no-reveal"]
+try:
+    proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=90)
+except subprocess.TimeoutExpired:
+    log.write("macos smoke: timeout waiting for auto-close\n")
+    log.flush()
+    sys.exit(124)
+sys.exit(proc.returncode)
+'
+          status=$?
+          set -e
+          cat out/macos-window-smoke.log
+          if [ "$status" -eq 0 ] && grep -q "phase: content:presented" out/macos-window-smoke.log; then
+            echo "== macos smoke: PASS (exit 0, content:presented) =="
+          else
+            echo "== macos smoke: FAIL (exit ${status}) =="
+            exit 1
+          fi
       - name: linux display and vulkan diagnostics
         if: runner.os == 'Linux'
         shell: bash
