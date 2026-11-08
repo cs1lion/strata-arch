@@ -224,6 +224,8 @@ cargo run -q -p arch-core --example history_prefix_equiv -- %TEMP%\tsx-hist 617
 
 **结论：** 瓶颈已从采样层转移到 GPUI 固定启动成本（约 3.2s，占端到端近 6 成）；采样只占约 23%。端到端总耗时仍是大头，但已不是采样算法问题。**未验证**：残差内部（`Application::new`、窗口创建、首帧渲染、字体/GPU 初始化）未再拆分，不同 GPU/驱动下可能变化。
 
+（2026-11-08 复核：该「残差」是用总量减分项得到的间接值，把进程退出与测量批次漂移一并计入；直接分阶段打点见下文「首帧分阶段打点（残差口径修正）」。原结论保留，不被静默覆盖。）
+
 ## debug vs release 对照（2026-11-08 补测；交错测量）
 
 **触发：** 上节端到端读数是 **debug** 构建，而票 10 的性能基线是 **release**，不能用 debug 残差直接给出最终结论。因此用同一命令、同一语料（tsx @ `4473971f`，617 刻度）让 debug/release 交替运行，控制并行线抢资源造成的漂移。
@@ -267,6 +269,72 @@ cargo run -q -p arch-core --example history_prefix_equiv -- %TEMP%\tsx-hist 617
 
 **未验证：** 残差内部（`Application::new`、窗口创建、首帧渲染、字体/GPU 初始化）仍未拆分；交错测量只能控制时间窗内负载，不能完全排除并行线瞬时抢占。
 
+## 首帧分阶段打点（2026-11-08；残差口径修正）
+
+**触发：** 上节的 2868.8ms 是「端到端总量 − 采样 − git log − layers/layout」得到的**间接残差**，把 `Application::new`、窗口创建、首帧渲染与**进程退出**混在一起。退出耗时用户不可感知，算进「启动成本」会虚高。本节改为进程内阶段标记 + 外部时间戳，直接测四段。
+
+**固定样本：** `%TEMP%\tsx-hist`（`privatenumber/tsx` @ `4473971f4b3261de253209b148d8fdc43269fcc4`，617 个 first-parent 刻度）。
+
+**插桩口径（不影响正式路径）：**
+
+- 标记只在 `STRATA_PHASE_MARKERS=1` 时输出 `phase: <label>`，默认路径只多一次环境变量读取，不改变行为。
+- `arch-view/src` 仍然**没有墙钟/随机源命中**：`cargo test -p arch-view --test commit_diff_view view_sources_do_not_query_wall_clock_or_randomness` 通过。时间戳由外部脚本读到每行标记时记录，因此含管道与调度延迟（毫秒级）。
+- 标记位置：`main:start`、`prep:git-log`、`prep:history`、`prep:layers`、`prep:layout`、`app:created`（`Application::new` 返回）、`app:entry`、`window:opened`（`open_window` 返回并 activate）、`frame:render`（首次 `render`）、`frame:presented`（首帧后的 `on_next_frame`）、`quit:auto`、`main:end`，`process:exit` 由外部脚本记录。
+- 计时工具：`eval/phase-timing.ps1`（外部 harness，一次运行 = 启动进程 → 逐行记录标记到达时间 → 等进程真正退出）。
+
+**命令：**
+
+```
+pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/release/arch-view.exe -Repo "$env:TEMP\tsx-hist" -Runs 3 -AutoCloseMs 3000
+pwsh -NoProfile -File eval/phase-timing.ps1 -Exe target/debug/arch-view.exe   -Repo "$env:TEMP\tsx-hist" -Runs 3 -AutoCloseMs 3000
+```
+
+交错对照为 release/debug 各跑 1 次、连续 3 对。`--auto-close-ms 3000` 只是让进程活过首帧，便于测量退出段；它不是首帧的一部分。
+
+### 四段读数（交错 3 对；release / debug 同命令同语料）
+
+| 阶段 | 标记区间 | release 中位数（3 次） | debug 中位数（3 次） |
+| --- | --- | --- | --- |
+| 进程启动 → `Application::new` 返回（**含全部数据准备**） | `main:start`→`app:created` | **1200 ms**（1112 / 1200 / 1348） | **1691 ms**（1553 / 1691 / 1886） |
+| 其中数据准备（git log + 采样 + layers + layout） | `main:start`→`prep:layout` | **776 ms**（753 / 776 / 842） | **1205 ms**（1186 / 1205 / 1330） |
+| 其中 `Application::new` 本身 | `prep:layout`→`app:created` | **424 ms**（359 / 424 / 506） | **486 ms**（367 / 486 / 556） |
+| 建窗口到窗口可用 | `app:created`→`window:opened` | **172 ms**（160 / 172 / 454） | **919 ms**（622 / 919 / 1275） |
+| 窗口可用 → 首帧呈现 | `window:opened`→`frame:presented` | **34 ms**（30 / 34 / 54） | **69 ms**（58 / 69 / 102） |
+| **首帧（主指标）：进程启动 → 首帧呈现** | `process:start`→`frame:presented` | **1509 ms**（1424 / 1509 / 1953） | **2967 ms**（2476 / 2967 / 3025） |
+| 窗口关闭 → 进程退出 | `quit:auto`→`process:exit` | **109 ms**（103 / 109 / 113） | **110 ms**（101 / 110 / 272） |
+| 其中 `main:end`→进程退出 | `main:end`→`process:exit` | **93 ms** | **96 ms** |
+
+**波动说明：**
+
+- 交错批次的 release 首帧 3 次为 1424 / 1509 / 1953 ms（中位数 1509，极差 529ms，约 ±17.5%）。debug 为 2476 / 2967 / 3025 ms（中位数 2967）。
+- 另有两批 release 单构建读数（同命令、`AutoCloseMs=3000`）：首帧 1296 / 1559 / 1703 ms 与 2171 / 2379 / 3225 ms。把 9 次 release 读数合并，中位数 **1703 ms**、范围 **1296–3225 ms**；极值出现在并行线负载较高的批次。**判据应取空闲机器的 3 次中位数**，负载批次只作波动上界。
+- `frame:render` 的绝对时间比 `window:opened` 标记早约 14–53ms：`open_window` 在返回前已同步触发首次渲染，所以「窗口可用 → 首帧呈现」与「建窗口」有轻微重叠，表中按标记墙钟顺序拆开，不重复计时。
+
+### 数据准备与首帧的先后（已查清）
+
+代码顺序是决定性证据：`run_timeline` 先 `build_timeline_entries`（刻度 git log + 617 刻度批式采样）→ `build_layers` → `layout_map`，**全部完成后才** `Application::new()` → `open_window` → 首帧。阶段标记也一致：release 下 `prep:layout` 在 891ms，`app:created` 在 1315ms，首帧在 1509ms，没有出现「首帧先出、数据后填」。
+
+→ **617 刻度的数据准备完整发生在首帧之前，用户等的是「准备 + 首帧」，首帧指标必须包含准备，不能把准备从首帧里剔出去。**
+
+### 旧结论修正（原读数与理由保留）
+
+- 旧读数原样保留：debug 端到端 5436ms / 残差 3166ms（58.3%）；交错后 debug 4742 / release 4302ms，release 残差 2868.8ms（66.7%）。
+- 直接打点：release 首帧 **1509ms**、关闭→退出 **109ms**。**假设「2.9s 残差主要是退出」不成立**——退出不到 0.1s。
+- 旧 ac0 3855ms、ac500 4302ms 与「首帧 1509 + 退出 109 + 对应等待」相加明显对不上（分别高出约 2.2s），说明那两批总量自身受并行线负载漂移影响；减法残差把无法归因的部分整体塞给了「GPUI 启动/退出」。这是**口径错误**，不是产品阶段真实耗时。
+- 修正后的结论：release 617 刻度首帧 ≈ **1509ms**，构成 = 进程/运行时 ≈115ms + 数据准备 ≈776ms（git log 115 + 采样 471 + layers 190 + layout <1）+ `Application::new` ≈424ms + 建窗口 ≈172ms + 首帧呈现 ≈34ms。**数据准备是最大单项（约 51%），GPUI 相关（Application::new + 窗口 + 呈现）约 42%，退出 <0.1s、可忽略。** 原「瓶颈转移到 GPUI 启动」相对采样算法仍成立，但按首帧口径不能说 GPUI 独占六成。
+
+### 判断与阈值建议
+
+**判断：release 首帧 1.5s（空闲机器中位数；合并中位数 1.7s）对「5 分钟看懂陌生仓库」不构成阻塞问题。** 任务承诺是分钟级，1.5–1.7s 启动只占其不到 1%；且首帧已包含 617 个提交的全部采样，不是空窗口。但负载下会到 2.4–3.2s，属于「可感知等待」，不能宣称「瞬时」。
+
+**建议判据（待用户确认）：release、617 刻度、空闲机器、同命令，首帧（进程启动→首帧呈现）3 次中位数 ≤ 2.0s，单次硬上限 ≤ 3.0s；目标 ≤ 1.5s。**
+
+- 不建议写 ≤ 1s：当前仅数据准备 0.78s + `Application::new` 0.42s 已是 1.2s，不改架构就不可达，写进去只会变成长期红项。
+- ≤ 2.0s 的余量来自实测：首帧中位数 1.5s，交错批次最大 1.95s；再高就进入明显卡顿区。
+- 若未来要求 ≤ 1s，唯一可行方向是把数据准备移出首帧关键路径（先开窗显示加载态，再异步填时间线）；这是产品代码改动，本节不实施。
+
+**未验证：** `Application::new` 内部（字体/GPU/后端初始化）与 `open_window` 内部仍未细分；外部时间戳含毫秒级管道延迟。
+
 ### 逐字节等价（真实 tsx 抽查）
 
 `history_prefix_equiv` 对 n=6 / 20 / 617 的每个刻度比较旧 `build_history(until=@T+1)` 与批式的序列化 JSON：**全部 `equal=true`**。n=617 最后一刻度两侧 SHA256 均为 `f492c2a60b588b31c5f771a580347878baf036651f24a5a3cf7a190e17107a79`。fixture 的完整 B4 断言见上节。
@@ -282,7 +350,8 @@ cargo run -q -p arch-core --example history_prefix_equiv -- %TEMP%\tsx-hist 617
 
 - 逐字节等价与反向用例：已自动化（`crates/arch-core/tests/history_prefixes.rs`，fixture + 合成仓）。
 - 617 真实历史规模曲线、debug/release 采样对照与等价抽查：**手工一次性测量**（`arch-core/examples/history_scale_curve.rs`、`history_batch_probe.rs`、`history_prefix_equiv.rs`），未纳入 CI；依赖真实 tsx 克隆，不能在 Gate 默认跑。
-- 已补测：617 刻度端到端 debug/release（含 UI 启动与布局，见上节）；未验证：GPUI 残差内部拆分。
+- 已补测：617 刻度端到端 debug/release（含 UI 启动与布局，见上节）；**首帧四段已拆分**（`eval/phase-timing.ps1` + `STRATA_PHASE_MARKERS=1`，见「首帧分阶段打点」）；未验证：`Application::new` / `open_window` 内部细分。
+- 首帧打点工具是**手工测量**：依赖真实 tsx 克隆与图形后端，未纳入 CI；标记默认关闭，不影响 Gate 的正式路径。
 
 端到端同口径（`target/debug/arch-view.exe timeline tests/fixtures/history --auto-close-ms 500`，3 次；debug 构建）：`3993.9 / 3845.5 / 3031.5 ms`，中位数 3845.5 ms；旧读数 4435 ms。
 
