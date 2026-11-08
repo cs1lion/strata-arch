@@ -20,3 +20,81 @@ jobs:
       - name: windows window smoke
         if: runner.os == 'Windows'
         run: cargo run --locked -p arch-view -- smoke tests/fixtures/tiny
+
+  drift:
+    name: drift gate
+    runs-on: windows-latest
+    # 门禁由 eval/drift-gate.ps1 按改动路径判定；未触及 drift 输入面时 job 秒退并通过。
+    # 语料用 eval/fetch-corpus.ps1 拉取并按 pin 校验，缓存 key 带 corpus.toml 哈希，
+    # pin 变化自动失效。语料不可用时：
+    #   - 非基线改动 -> corpus 标 skipped，coverage.missing 写明缺口，job 仍绿；
+    #   - 基线/pin 改动 -> 脚本直接判红（退出 1），不允许降级通过。
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: plan
+        id: plan
+        shell: pwsh
+        run: |
+          $base = "${{ github.base_ref }}"
+          if ($base) {
+            $base = "origin/$base"
+          } else {
+            $base = "${{ github.event.before }}"
+          }
+          if (-not $base -or $base -match '^0+$') { $base = 'NONE' }
+          $plan = @(pwsh -NoProfile -File eval/drift-gate.ps1 -PlanOnly -BaseRef $base)
+          $plan | Write-Output
+          $required = if ($plan -contains 'required=true') { 'true' } else { 'false' }
+          $corpusRequired = if ($plan -contains 'corpus_required=true') { 'true' } else { 'false' }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "required=$required"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "corpus_required=$corpusRequired"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "base=$base"
+      - name: restore corpus cache
+        id: corpus-cache
+        if: steps.plan.outputs.required == 'true' && steps.plan.outputs.corpus_required == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: tests/corpus
+          key: drift-corpus-${{ runner.os }}-${{ hashFiles('eval/corpus.toml') }}
+      - name: fetch corpus
+        if: steps.plan.outputs.required == 'true' && steps.plan.outputs.corpus_required == 'true' && steps.corpus-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/fetch-corpus.ps1
+      - name: verify corpus pins
+        id: corpus-verify
+        if: steps.plan.outputs.required == 'true' && steps.plan.outputs.corpus_required == 'true'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File eval/fetch-corpus.ps1 -VerifyOnly
+          $verified = if ($LASTEXITCODE -eq 0) { 'true' } else { 'false' }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "verified=$verified"
+          if ($verified -ne 'true') {
+            Write-Output "::warning::corpus pin 校验未通过；非基线改动将降级跳过，基线改动会判红"
+          }
+          exit 0
+      - name: save corpus cache
+        if: steps.plan.outputs.required == 'true' && steps.plan.outputs.corpus_required == 'true' && steps.corpus-cache.outputs.cache-hit != 'true' && steps.corpus-verify.outputs.verified == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tests/corpus
+          key: drift-corpus-${{ runner.os }}-${{ hashFiles('eval/corpus.toml') }}
+      - name: build arch-cli
+        if: steps.plan.outputs.required == 'true'
+        run: cargo build --locked -p arch-cli
+      - name: drift gate
+        if: steps.plan.outputs.required == 'true'
+        shell: pwsh
+        env:
+          PLAN_CORPUS_REQUIRED: ${{ steps.plan.outputs.corpus_required }}
+          CORPUS_VERIFIED: ${{ steps.corpus-verify.outputs.verified }}
+        run: |
+          $argv = @('-NoProfile', '-File', 'eval/drift-gate.ps1', '-BaseRef', '${{ steps.plan.outputs.base }}')
+          if ($env:PLAN_CORPUS_REQUIRED -eq 'true' -and $env:CORPUS_VERIFIED -ne 'true') {
+            $argv += '-CorpusUnavailable'
+          }
+          & pwsh @argv
+          exit $LASTEXITCODE
