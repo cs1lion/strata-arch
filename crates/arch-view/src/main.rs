@@ -22,7 +22,7 @@ use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
-use arch_view::timeline::{TimelineEntry, TimelineState};
+use arch_view::timeline::{degradation_label, TimelineEntry, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
     symbol_kind_palette, CanvasState, Level, SymbolLayout, Viewport,
@@ -36,7 +36,7 @@ use gpui::{
 
 const USAGE: &str = "用法:
   arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--from <入口ID> --to <符号ID>]
-  arch-view timeline <目标仓库> [--auto-close-ms <毫秒>]
+  arch-view timeline <目标仓库> [--auto-close-ms <毫秒>] [--autoplay]
   arch-view diff <目标仓库> --from <commit> --to <commit> [--no-fade] [--auto-close-ms <毫秒>]
   arch-view scene <目标仓库> [--out <场景文件>]
   arch-view smoke <目标仓库>";
@@ -202,6 +202,7 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let mut auto_close_ms: Option<u64> = None;
+    let mut autoplay = false;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--auto-close-ms" => {
@@ -214,6 +215,7 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                         .map_err(|_| format!("--auto-close-ms 不是有效毫秒数: {value}"))?,
                 );
             }
+            "--autoplay" => autoplay = true,
             other => return Err(format!("未知参数: {other}\n{USAGE}")),
         }
     }
@@ -238,11 +240,21 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |_, cx| {
-                cx.new(|_| TimelineView {
+            move |window, cx| {
+                let ticks = timeline.ticks();
+                let view = cx.new(|_| TimelineView {
                     state: CanvasState::new(layout),
+                    playback: TimelinePlayback::new(ticks),
                     timeline,
-                })
+                    trace: autoplay,
+                    playback_progress: Rc::new(Cell::new(0.0)),
+                    playback_last_progress: Rc::new(Cell::new(-1.0)),
+                    playback_generation: 0,
+                });
+                if autoplay {
+                    view.update(cx, |view, cx| view.start_playback(window, cx));
+                }
+                view
             },
         )
         .expect("open timeline window");
@@ -683,9 +695,75 @@ impl Render for SmokeView {
     }
 }
 
+/// `with_animation` 的循环周期；进度回绕后按差值换算为毫秒喂给播放模型。
+const PLAYBACK_ANIMATION_MS: f32 = 10_000.0;
+
 struct TimelineView {
     state: CanvasState,
     timeline: TimelineState,
+    playback: TimelinePlayback,
+    /// `--autoplay` 冒烟模式：把帧回调驱动的刻度切换打印出来。
+    trace: bool,
+    /// 当前帧的动画进度，由 `with_animation` animator 写入、帧回调读取。
+    playback_progress: Rc<Cell<f32>>,
+    /// 上一帧进度；`-1.0` 表示尚未收到帧。
+    playback_last_progress: Rc<Cell<f32>>,
+    /// 播放代际：每次开始播放 +1，让动画元素 id 重新计时。
+    playback_generation: u64,
+}
+
+impl TimelineView {
+    fn start_playback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.playback.play() {
+            return;
+        }
+        self.timeline.scrub_to(self.playback.current());
+        self.playback_generation += 1;
+        self.playback_progress.set(0.0);
+        self.playback_last_progress.set(-1.0);
+        TimelineView::schedule_playback_frame(self, window, cx);
+        cx.notify();
+    }
+
+    /// 每个动画帧读取 `with_animation` 进度并推进离散播放；仍在播放时续订下一帧。
+    fn schedule_playback_frame(
+        view: &mut TimelineView,
+        window: &mut Window,
+        cx: &mut Context<TimelineView>,
+    ) {
+        if !view.playback.should_drive_frames() {
+            return;
+        }
+        cx.on_next_frame(window, |view, window, cx| {
+            let progress = view.playback_progress.get();
+            let last = view.playback_last_progress.get();
+            let delta = if last < 0.0 {
+                0.0
+            } else if progress >= last {
+                progress - last
+            } else {
+                // 循环动画回绕：补上上一周期尾部。
+                1.0 - last + progress
+            };
+            view.playback_last_progress.set(progress);
+            if view.playback.on_frame(delta * PLAYBACK_ANIMATION_MS) {
+                view.timeline.scrub_to(view.playback.current());
+                if view.trace {
+                    println!(
+                        "playback: frame tick {} speed {}x",
+                        view.playback.current() + 1,
+                        view.playback.speed()
+                    );
+                }
+            }
+            if view.playback.should_drive_frames() {
+                TimelineView::schedule_playback_frame(view, window, cx);
+            } else if view.trace && view.playback.is_ended() {
+                println!("playback: ended at tick {}", view.playback.current() + 1);
+            }
+            cx.notify();
+        });
+    }
 }
 
 impl Render for TimelineView {
@@ -772,10 +850,105 @@ impl Render for TimelineView {
                     .bg(if active { rgb(0xf2f5f8) } else { rgb(0x3d4b5c) })
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                         this.timeline.scrub_to(index);
+                        this.playback.on_scrub(index);
                         cx.notify();
                     })),
             );
         }
+
+        let playing = self.playback.is_playing();
+        let playback_enabled = self.playback.enabled();
+        let ended = self.playback.is_ended();
+        let speed = self.playback.speed();
+        let position = if ticks > 0 { current + 1 } else { 0 };
+
+        // 离散播放控制：只在刻度间跳变，不提供刻度内进度条（避免暗示连续变化）。
+        let controls = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .id("timeline-playback-toggle")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(if playback_enabled {
+                        rgb(0x2c3a4a)
+                    } else {
+                        rgb(0x50241f)
+                    })
+                    .child(if playback_enabled {
+                        "播放:开"
+                    } else {
+                        "播放:关"
+                    })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.playback.set_enabled(!this.playback.enabled());
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("timeline-playback-play")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child(if playing { "暂停" } else { "播放" })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        if this.playback.is_playing() {
+                            this.playback.pause();
+                        } else {
+                            this.start_playback(window, cx);
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("timeline-playback-back")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child("上一步")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if this.playback.step_back() {
+                            this.timeline.scrub_to(this.playback.current());
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("timeline-playback-forward")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child("下一步")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        if this.playback.step_forward() {
+                            this.timeline.scrub_to(this.playback.current());
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("timeline-playback-speed")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2c3a4a))
+                    .child(format!("速度 {speed}x"))
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.playback.cycle_speed();
+                        cx.notify();
+                    })),
+            )
+            .child(div().child(format!("第 {position}/{ticks} 刻度")));
 
         let mut footer = div()
             .absolute()
@@ -793,7 +966,21 @@ impl Render for TimelineView {
             .text_color(rgb(0xe6edf3))
             .child(commit)
             .child(ticks_row)
-            .child("灰=无历史 · 蓝→橙=churn 0→11+");
+            .child(controls)
+            .child("灰=无历史 · 蓝→橙=churn 0→11+")
+            .child(if ended {
+                div().text_color(rgb(0xd98a3d)).child("播放结束")
+            } else {
+                div()
+            });
+
+        if let Some(label) = degradation_label(flags) {
+            footer = footer.child(
+                div()
+                    .text_color(rgb(0xe07b39))
+                    .child(format!("退化标记: {label}")),
+            );
+        }
 
         let mut markers = Vec::new();
         if flags.sampled {
@@ -829,7 +1016,22 @@ impl Render for TimelineView {
         }
 
         root = root.child(footer);
-        root
+
+        if self.playback.is_playing() {
+            let progress = self.playback_progress.clone();
+            let generation = self.playback_generation;
+            root.with_animation(
+                ("timeline-playback", generation),
+                Animation::new(Duration::from_millis(PLAYBACK_ANIMATION_MS as u64)).repeat(),
+                move |element, value| {
+                    progress.set(value);
+                    element
+                },
+            )
+            .into_any_element()
+        } else {
+            root.into_any_element()
+        }
     }
 }
 
