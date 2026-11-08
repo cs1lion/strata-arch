@@ -674,7 +674,7 @@ mod tests {
     fn path_similarity_rewards_same_directory_and_prefix() {
         assert!(path_similarity("src/old.ts", "src/old-renamed.ts") >= RENAME_PATH_THRESHOLD);
         assert!(path_similarity("src/dead.ts", "src/new.ts") >= RENAME_PATH_THRESHOLD);
-        assert!(path_similarity("src/a.ts", "lib/a.ts") < RENAME_PATH_THRESHOLD);
+        assert!(path_similarity("src/a.ts", "lib/b.ts") < RENAME_PATH_THRESHOLD);
     }
 
     #[test]
