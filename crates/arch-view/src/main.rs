@@ -8,28 +8,30 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use std::collections::BTreeSet;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::commit_diff::diff_commits;
 use arch_core::guided_path::build_path;
-use arch_core::history::{build_history_prefixes, HistoryOptions};
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, DIFF_LABEL, FADE_DURATION_MS};
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
+use arch_view::loading::{
+    build_layer_artifact, compute_layout, list_first_parent_commits, sample_history, LoadStatus,
+    LoadingStage, LoadingState,
+};
 use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
-use arch_view::timeline::{degradation_label, TimelineEntry, TimelinePlayback, TimelineState};
+use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     band_background_palette, layer_palette, paint_symbol_edges, paint_symbol_edges_with_roles,
     symbol_kind_palette, CanvasState, Level, SymbolLayout, Viewport,
 };
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, App, Application,
-    Bounds, ClickEvent, Context, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Bounds, ClickEvent, Context, Entity, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PathBuilder, Render, ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds,
     WindowOptions,
 };
@@ -231,45 +233,23 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let repo = PathBuf::from(&target);
-    let entries = build_timeline_entries(&repo)?;
-    let artifact = build_layers(&repo, env!("CARGO_PKG_VERSION"))
-        .map_err(|error| format!("构建层产物失败: {error}"))?;
-    phase_marker("prep:layers");
-    let layout = layout_map(&artifact, LayoutConfig::default());
-    phase_marker("prep:layout");
-    let timeline = TimelineState::new(entries);
-    println!(
-        "timeline: {} ticks, {} modules, {} bands",
-        timeline.ticks(),
-        layout.nodes.len(),
-        layout.bands.len()
-    );
 
+    // 先开窗：数据准备移到窗口打开后的后台任务里，首帧只呈现加载态。
     let application = Application::new();
     phase_marker("app:created");
     application.run(move |cx: &mut App| {
         phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        let window_repo = repo;
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |window, cx| {
+            move |_window, cx| {
                 phase_marker("window:callback");
-                let ticks = timeline.ticks();
-                let view = cx.new(|_| TimelineView {
-                    state: CanvasState::new(layout),
-                    playback: TimelinePlayback::new(ticks),
-                    timeline,
-                    trace: autoplay,
-                    playback_progress: Rc::new(Cell::new(0.0)),
-                    playback_last_progress: Rc::new(Cell::new(-1.0)),
-                    playback_generation: 0,
-                });
-                if autoplay {
-                    view.update(cx, |view, cx| view.start_playback(window, cx));
-                }
+                let view = cx.new(|_| TimelineView::loading(autoplay));
+                spawn_timeline_loading(view.clone(), window_repo, autoplay, cx);
                 view
             },
         )
@@ -292,6 +272,101 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     phase_marker("main:end");
 
     Ok(())
+}
+
+/// 后台分阶段准备数据；每段完成即更新加载态文案，全部完成后切换到真实视图。
+///
+/// 自动关闭早于本任务完成时，`view.update` 返回 `Err`（app 已释放），这里只忽略返回值：
+/// 进程仍按 `quit:auto` 干净退出，不延迟、不 panic。
+fn spawn_timeline_loading(view: Entity<TimelineView>, repo: PathBuf, autoplay: bool, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        phase_marker("load:start");
+
+        let list_repo = repo.clone();
+        let listed = cx
+            .background_executor()
+            .spawn(async move { list_first_parent_commits(&list_repo) });
+        let commits = match listed.await {
+            Ok(commits) => commits,
+            Err(message) => return timeline_load_failed(&view, cx, message),
+        };
+        phase_marker("load:stage:git-log");
+        phase_marker("prep:git-log");
+        if commits.is_empty() {
+            return timeline_load_failed(&view, cx, "没有可用的 first-parent 提交".to_string());
+        }
+
+        let total = commits.len();
+        set_loading_stage(&view, cx, LoadingStage::SamplingHistory { ticks: total });
+
+        let sample_repo = repo.clone();
+        let sampled = cx
+            .background_executor()
+            .spawn(async move { sample_history(&sample_repo, &commits) });
+        let entries = match sampled.await {
+            Ok(entries) => entries,
+            Err(message) => return timeline_load_failed(&view, cx, message),
+        };
+        phase_marker("load:stage:history");
+        phase_marker("prep:history");
+
+        set_loading_stage(&view, cx, LoadingStage::BuildingLayers);
+        let layers_repo = repo.clone();
+        let layered = cx
+            .background_executor()
+            .spawn(async move { build_layer_artifact(&layers_repo) });
+        let artifact = match layered.await {
+            Ok(artifact) => artifact,
+            Err(message) => return timeline_load_failed(&view, cx, message),
+        };
+        phase_marker("load:stage:layers");
+        phase_marker("prep:layers");
+
+        set_loading_stage(&view, cx, LoadingStage::ComputingLayout);
+        let layout = cx
+            .background_executor()
+            .spawn(async move { compute_layout(&artifact) })
+            .await;
+        phase_marker("load:stage:layout");
+        phase_marker("prep:layout");
+
+        let timeline = TimelineState::new(entries);
+        let ticks = timeline.ticks();
+        println!(
+            "timeline: {} ticks, {} modules, {} bands",
+            ticks,
+            layout.nodes.len(),
+            layout.bands.len()
+        );
+        let _ = view.update(cx, |view, cx| {
+            view.playback = TimelinePlayback::new(ticks);
+            view.autoplay_pending = autoplay;
+            view.content = TimelineContent::Ready(Box::new(ReadyTimeline {
+                state: CanvasState::new(layout),
+                timeline,
+            }));
+            cx.notify();
+        });
+        phase_marker("load:done");
+    })
+    .detach();
+}
+
+fn set_loading_stage(view: &Entity<TimelineView>, cx: &mut gpui::AsyncApp, stage: LoadingStage) {
+    let _ = view.update(cx, |view, cx| {
+        if let TimelineContent::Loading(loading) = &mut view.content {
+            loading.set_stage(stage);
+        }
+        cx.notify();
+    });
+}
+
+fn timeline_load_failed(view: &Entity<TimelineView>, cx: &mut gpui::AsyncApp, message: String) {
+    phase_marker("load:failed");
+    let _ = view.update(cx, |view, cx| {
+        view.content = TimelineContent::Failed(message);
+        cx.notify();
+    });
 }
 
 fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
@@ -490,65 +565,6 @@ fn short_commit(commit: &str) -> &str {
     commit.get(..7).unwrap_or(commit)
 }
 
-fn build_timeline_entries(repo: &std::path::Path) -> Result<Vec<TimelineEntry>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "log",
-            "--reverse",
-            "--first-parent",
-            "--format=%H%x09%ct%x09%s",
-        ])
-        .output()
-        .map_err(|error| format!("运行 git log 失败: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git log 失败: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let mut commits = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let mut parts = line.splitn(3, '\t');
-        let hash = parts.next().unwrap_or_default().to_string();
-        let time = parts
-            .next()
-            .unwrap_or_default()
-            .parse::<u64>()
-            .map_err(|_| format!("无法解析提交时间: {line}"))?;
-        let subject = parts.next().unwrap_or_default().to_string();
-        commits.push((hash, time, subject));
-    }
-    phase_marker("prep:git-log");
-
-    // 一次 git 遍历生成所有刻度前缀，替代逐刻度重跑 build_history 的 O(刻度×遍历) 采样。
-    let tick_times = commits.iter().map(|(_, time, _)| *time).collect::<Vec<_>>();
-    let artifacts = build_history_prefixes(
-        repo,
-        env!("CARGO_PKG_VERSION"),
-        HistoryOptions::default(),
-        &tick_times,
-    )
-    .map_err(|error| format!("构建历史产物失败: {error}"))?;
-    phase_marker("prep:history");
-
-    let mut entries = Vec::new();
-    for ((hash, time, subject), artifact) in commits.into_iter().zip(artifacts) {
-        entries.push(TimelineEntry {
-            hash,
-            time,
-            subject,
-            artifact,
-        });
-    }
-    if entries.is_empty() {
-        return Err("没有可用的 first-parent 提交".to_string());
-    }
-    Ok(entries)
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SceneArtifact {
@@ -720,12 +736,42 @@ impl Render for SmokeView {
 /// `with_animation` 的循环周期；进度回绕后按差值换算为毫秒喂给播放模型。
 const PLAYBACK_ANIMATION_MS: f32 = 10_000.0;
 
-struct TimelineView {
+struct ReadyTimeline {
     state: CanvasState,
     timeline: TimelineState,
+}
+
+/// 视图内容：先呈现加载态，后台数据就绪后整体切换；失败时在窗口内显示错误。
+enum TimelineContent {
+    Loading(LoadingState),
+    Failed(String),
+    Ready(Box<ReadyTimeline>),
+}
+
+impl TimelineContent {
+    fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready(_))
+    }
+
+    fn status_lines(&self) -> Vec<String> {
+        match self {
+            Self::Loading(loading) => LoadStatus::Loading(loading.clone()).visible_lines(),
+            Self::Failed(message) => LoadStatus::Failed {
+                message: message.clone(),
+            }
+            .visible_lines(),
+            Self::Ready(_) => Vec::new(),
+        }
+    }
+}
+
+struct TimelineView {
+    content: TimelineContent,
     playback: TimelinePlayback,
     /// `--autoplay` 冒烟模式：把帧回调驱动的刻度切换打印出来。
     trace: bool,
+    /// 数据就绪后、首个渲染帧启动一次播放（`start_playback` 需要 `Window`）。
+    autoplay_pending: bool,
     /// 当前帧的动画进度，由 `with_animation` animator 写入、帧回调读取。
     playback_progress: Rc<Cell<f32>>,
     /// 上一帧进度；`-1.0` 表示尚未收到帧。
@@ -735,11 +781,34 @@ struct TimelineView {
 }
 
 impl TimelineView {
+    fn loading(trace: bool) -> Self {
+        Self {
+            content: TimelineContent::Loading(LoadingState::new()),
+            playback: TimelinePlayback::new(1),
+            trace,
+            autoplay_pending: trace,
+            playback_progress: Rc::new(Cell::new(0.0)),
+            playback_last_progress: Rc::new(Cell::new(-1.0)),
+            playback_generation: 0,
+        }
+    }
+
+    fn timeline_mut(&mut self) -> Option<&mut TimelineState> {
+        match &mut self.content {
+            TimelineContent::Ready(ready) => Some(&mut ready.timeline),
+            _ => None,
+        }
+    }
+
     fn start_playback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.playback.play() {
+        if self.playback.play() {
+            let index = self.playback.current();
+            if let Some(timeline) = self.timeline_mut() {
+                timeline.scrub_to(index);
+            }
+        } else {
             return;
         }
-        self.timeline.scrub_to(self.playback.current());
         self.playback_generation += 1;
         self.playback_progress.set(0.0);
         self.playback_last_progress.set(-1.0);
@@ -769,7 +838,10 @@ impl TimelineView {
             };
             view.playback_last_progress.set(progress);
             if view.playback.on_frame(delta * PLAYBACK_ANIMATION_MS) {
-                view.timeline.scrub_to(view.playback.current());
+                let index = view.playback.current();
+                if let Some(timeline) = view.timeline_mut() {
+                    timeline.scrub_to(index);
+                }
                 if view.trace {
                     println!(
                         "playback: frame tick {} speed {}x",
@@ -786,9 +858,29 @@ impl TimelineView {
             cx.notify();
         });
     }
+
+    /// 加载/失败态：整窗居中显示非空文案，避免白屏或静默。
+    fn render_status_panel(&self) -> impl IntoElement {
+        let failed = matches!(self.content, TimelineContent::Failed(_));
+        let mut panel = div()
+            .size_full()
+            .bg(rgb(0x0d1117))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(10.))
+            .px(px(24.));
+        for line in self.content.status_lines() {
+            let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
+            panel = panel.child(div().text_sm().text_color(color).child(line));
+        }
+        panel
+    }
 }
 
 static TIMELINE_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+static TIMELINE_CONTENT_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -796,13 +888,27 @@ impl Render for TimelineView {
             phase_marker("frame:render");
             window.on_next_frame(|_, _cx| phase_marker("frame:presented"));
         }
-        let layout = self.state.map().clone();
-        let full_scale = self.timeline.heat_is_full_scale();
-        let flags = self.timeline.flags();
-        let selected = self.timeline.selected().map(ToOwned::to_owned);
-        let current = self.timeline.current_index();
-        let ticks = self.timeline.ticks();
-        let commit = self
+        if !self.content.is_ready() {
+            return self.render_status_panel().into_any_element();
+        }
+        if self.autoplay_pending {
+            self.autoplay_pending = false;
+            self.start_playback(window, cx);
+        }
+        if !TIMELINE_CONTENT_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("content:render");
+            window.on_next_frame(|_, _cx| phase_marker("content:presented"));
+        }
+        let TimelineContent::Ready(ready) = &self.content else {
+            unreachable!("加载态已在上面提前返回");
+        };
+        let layout = ready.state.map().clone();
+        let full_scale = ready.timeline.heat_is_full_scale();
+        let flags = ready.timeline.flags();
+        let selected = ready.timeline.selected().map(ToOwned::to_owned);
+        let current = ready.timeline.current_index();
+        let ticks = ready.timeline.ticks();
+        let commit = ready
             .timeline
             .current_entry()
             .map(|entry| {
@@ -827,7 +933,7 @@ impl Render for TimelineView {
         }
 
         for (index, node) in layout.nodes.iter().enumerate() {
-            let heat = self.timeline.heat(&node.id);
+            let heat = ready.timeline.heat(&node.id);
             let background = rgb(((heat.color[0] as u32) << 16)
                 | ((heat.color[1] as u32) << 8)
                 | heat.color[2] as u32);
@@ -860,7 +966,9 @@ impl Render for TimelineView {
                     .text_color(rgb(0xe6edf3))
                     .child(node.id.clone())
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        this.timeline.select(&node_id);
+                        if let Some(timeline) = this.timeline_mut() {
+                            timeline.select(&node_id);
+                        }
                         cx.notify();
                     })),
             );
@@ -877,7 +985,9 @@ impl Render for TimelineView {
                     .rounded(px(2.))
                     .bg(if active { rgb(0xf2f5f8) } else { rgb(0x3d4b5c) })
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        this.timeline.scrub_to(index);
+                        if let Some(timeline) = this.timeline_mut() {
+                            timeline.scrub_to(index);
+                        }
                         this.playback.on_scrub(index);
                         cx.notify();
                     })),
@@ -943,7 +1053,10 @@ impl Render for TimelineView {
                     .child("上一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_back() {
-                            this.timeline.scrub_to(this.playback.current());
+                            let index = this.playback.current();
+                            if let Some(timeline) = this.timeline_mut() {
+                                timeline.scrub_to(index);
+                            }
                         }
                         cx.notify();
                     })),
@@ -958,7 +1071,10 @@ impl Render for TimelineView {
                     .child("下一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_forward() {
-                            this.timeline.scrub_to(this.playback.current());
+                            let index = this.playback.current();
+                            if let Some(timeline) = this.timeline_mut() {
+                                timeline.scrub_to(index);
+                            }
                         }
                         cx.notify();
                     })),
@@ -1029,7 +1145,7 @@ impl Render for TimelineView {
         }
 
         if let Some(selected) = &selected {
-            let text = match self.timeline.module_metric(selected) {
+            let text = match ready.timeline.module_metric(selected) {
                 Some(module) => format!(
                     "{} · lastModified {} · count {} · churn {} · span {}s",
                     module.id,
