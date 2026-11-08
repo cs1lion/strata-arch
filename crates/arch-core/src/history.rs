@@ -144,14 +144,48 @@ struct ModuleStats {
     deletions: u64,
 }
 
-pub fn build_history(
-    root: &Path,
-    tool_version: &str,
-    options: HistoryOptions,
-) -> Result<HistoryArtifact, HistoryError> {
+struct RepoContext {
+    toplevel_text: String,
+    head: String,
+}
+
+fn open_repo(root: &Path) -> Result<RepoContext, HistoryError> {
     let requested = PathBuf::from(root);
     if !requested.is_dir() {
         return Err(HistoryError::NotDirectory(display_path(&requested)));
+    }
+
+    // 正常路径合并为单次 rev-parse：仓库根、浅克隆标记、HEAD 一次取回。
+    // 只在失败时退回逐项查询，保留 NotGit / NoCommits 的精确错误分类。
+    let combined = git_optional(
+        &requested,
+        &[
+            "rev-parse",
+            "--show-toplevel",
+            "--is-shallow-repository",
+            "HEAD",
+        ],
+    )?;
+    if let Some(text) = combined {
+        let mut lines = text.lines().map(str::trim);
+        if let (Some(toplevel), Some(shallow), Some(head)) =
+            (lines.next(), lines.next(), lines.next())
+        {
+            if !toplevel.is_empty()
+                && !head.is_empty()
+                && head.chars().all(|c| c.is_ascii_hexdigit())
+            {
+                let toplevel = PathBuf::from(toplevel);
+                let toplevel_text = display_path(&toplevel);
+                if shallow == "true" {
+                    return Err(HistoryError::Shallow(toplevel_text));
+                }
+                return Ok(RepoContext {
+                    toplevel_text,
+                    head: head.to_string(),
+                });
+            }
+        }
     }
 
     let Some(toplevel) = git_optional(&requested, &["rev-parse", "--show-toplevel"])? else {
@@ -172,6 +206,35 @@ pub fn build_history(
     };
     let head = head.trim().to_string();
 
+    Ok(RepoContext {
+        toplevel_text,
+        head,
+    })
+}
+
+/// 仓库元信息与提交列表是两条独立的 git 调用，并发执行以摊掉进程启动成本。
+/// 两者都失败时优先返回 `open_repo` 的错误（NotGit / NoCommits / Shallow 分类更精确）。
+fn load_repo_and_commits(
+    root: &Path,
+    since: Option<&str>,
+    until: Option<&str>,
+) -> Result<(RepoContext, Vec<Commit>), HistoryError> {
+    let (context, commits) = std::thread::scope(|scope| {
+        let context = scope.spawn(|| open_repo(root));
+        let commits = scope.spawn(|| load_commits(root, since, until));
+        (
+            context.join().expect("open_repo thread"),
+            commits.join().expect("load_commits thread"),
+        )
+    });
+    Ok((context?, commits?))
+}
+
+fn load_commits(
+    toplevel: &Path,
+    since: Option<&str>,
+    until: Option<&str>,
+) -> Result<Vec<Commit>, HistoryError> {
     let mut log_arguments = vec![
         "log",
         "--first-parent",
@@ -179,21 +242,31 @@ pub fn build_history(
         "--numstat",
         "-M",
     ];
-    if let Some(since) = &options.since {
+    if let Some(since) = since {
         log_arguments.push("--since");
         log_arguments.push(since);
     }
-    if let Some(until) = &options.until {
+    if let Some(until) = until {
         log_arguments.push("--until");
         log_arguments.push(until);
     }
     log_arguments.push("HEAD");
-    let log = git(&toplevel, &log_arguments)?;
-    let commits = parse_log(&log);
+    let log = git(toplevel, &log_arguments)?;
+    Ok(parse_log(&log))
+}
 
+/// 把已过滤好的提交聚合为产物；调用方负责保证 `commits` 已是该刻度的前缀集合。
+fn aggregate(
+    commits: &[&Commit],
+    context: &RepoContext,
+    tool_version: &str,
+    max_commits: usize,
+    since: Option<String>,
+    until: Option<String>,
+) -> HistoryArtifact {
     let available = commits.len();
-    let truncated = available > options.max_commits;
-    let scanned = available.min(options.max_commits);
+    let truncated = available > max_commits;
+    let scanned = available.min(max_commits);
 
     let mut stats: HashMap<String, ModuleStats> = HashMap::new();
     let mut aliases: HashMap<String, String> = HashMap::new();
@@ -258,18 +331,18 @@ pub fn build_history(
         })
         .collect::<Vec<_>>();
 
-    Ok(HistoryArtifact {
+    HistoryArtifact {
         schema_version: HISTORY_SCHEMA_VERSION,
         tool_version: tool_version.to_string(),
         repo: HistoryRepo {
-            path: toplevel_text,
-            head,
+            path: context.toplevel_text.clone(),
+            head: context.head.clone(),
             is_git: true,
         },
         window: HistoryWindow {
-            max_commits: options.max_commits,
-            since: options.since,
-            until: options.until,
+            max_commits,
+            since,
+            until,
             first_parent: true,
         },
         sampled: false,
@@ -282,7 +355,63 @@ pub fn build_history(
             modules: modules.len(),
         },
         modules,
-    })
+    }
+}
+
+pub fn build_history(
+    root: &Path,
+    tool_version: &str,
+    options: HistoryOptions,
+) -> Result<HistoryArtifact, HistoryError> {
+    let (context, commits) =
+        load_repo_and_commits(root, options.since.as_deref(), options.until.as_deref())?;
+    let refs = commits.iter().collect::<Vec<_>>();
+    Ok(aggregate(
+        &refs,
+        &context,
+        tool_version,
+        options.max_commits,
+        options.since,
+        options.until,
+    ))
+}
+
+/// 一次 git 遍历生成多个「截至各刻度」的前缀产物（ticket 09 性能修复入口）。
+///
+/// `tick_times` 为各刻度的提交时间（Unix epoch 秒）；每个刻度的 `until` 仍按旧口径
+/// 记为 `@<time + 1>`，产物与逐刻度调用 [`build_history`] 逐字节一致。
+/// `options.until` 被 `tick_times` 覆盖，调用方不应同时传入。
+pub fn build_history_prefixes(
+    root: &Path,
+    tool_version: &str,
+    options: HistoryOptions,
+    tick_times: &[u64],
+) -> Result<Vec<HistoryArtifact>, HistoryError> {
+    debug_assert!(
+        options.until.is_none(),
+        "build_history_prefixes 忽略 options.until，请改用 tick_times"
+    );
+    // 一次遍历取全量 first-parent 提交；每个刻度只在内存里按同一个 `--until` 语义过滤。
+    let (context, commits) = load_repo_and_commits(root, options.since.as_deref(), None)?;
+
+    let mut artifacts = Vec::with_capacity(tick_times.len());
+    for time in tick_times {
+        // 与旧实现一致：刻度 T 的 until 为 `@T+1`，按 committer date 过滤。
+        let bound = time.saturating_add(1);
+        let filtered = commits
+            .iter()
+            .filter(|commit| commit.time <= bound)
+            .collect::<Vec<_>>();
+        artifacts.push(aggregate(
+            &filtered,
+            &context,
+            tool_version,
+            options.max_commits,
+            options.since.clone(),
+            Some(format!("@{bound}")),
+        ));
+    }
+    Ok(artifacts)
 }
 
 fn git(repo: &Path, arguments: &[&str]) -> Result<String, HistoryError> {
