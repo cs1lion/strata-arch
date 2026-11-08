@@ -138,7 +138,13 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         (Some(from), Some(to)) => {
             let path = build_path(&PathBuf::from(&target), env!("CARGO_PKG_VERSION"), from, to)
                 .map_err(|error| format!("构建路径失败: {error}"))?;
-            Some(PlaybackState::new(&path))
+            let mut playback = PlaybackState::new(&path);
+            // 证据钩子（ticket 11）：仅用于本地像素证据链，让 P1 上下文淡出态可在启动时复现；
+            // 正常启动不受影响，等价于用户在 UI 里点一次「动画: 关 → 开」。
+            if std::env::var_os("STRATA_EVIDENCE_ANIMATION").is_some() {
+                playback.set_animation_enabled(true);
+            }
+            Some(playback)
         }
         (None, None) => None,
         _ => return Err(format!("--from 与 --to 必须同时提供\n{USAGE}")),
