@@ -100,3 +100,7 @@ pwsh eval/release-check.ps1          # 本地发布前检查：五条路径 + �
 ```
 
 `eval/release-check.ps1` 只用于本地发布前核对，不进入 CI（CI 已覆盖构建、测试与漂移门禁）。四条用户可见路径的耗时口径见 [eval/path-timing.ps1](eval/path-timing.ps1)。
+
+## 许可证
+
+Strata 采用双许可：**MIT OR Apache-2.0**，使用者可任选其一，不是同时遵守两份。完整文本见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LICENSE-APACHE)；裁决记录见 [ADR 0003](docs/adr/0003-dual-license.md)。
