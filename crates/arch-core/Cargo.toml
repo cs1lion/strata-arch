@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "Local-first static analysis and architecture graph engine for TypeScript/JavaScript repositories"
 repository = "https://github.com/cs1lion/strata-arch"
-# license 待定：发布前由维护者决定，勿填占位值
+license.workspace = true
 keywords = ["typescript", "javascript", "static-analysis", "architecture", "call-graph"]
 categories = ["development-tools", "parser-implementations"]
 

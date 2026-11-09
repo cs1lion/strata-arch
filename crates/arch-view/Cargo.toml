@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "GPUI desktop view for Strata: layered architecture map, guided path playback and evolution timeline"
 repository = "https://github.com/cs1lion/strata-arch"
-# license 待定：发布前由维护者决定，勿填占位值
+license.workspace = true
 keywords = ["gpui", "visualization", "typescript", "architecture", "gui"]
 categories = ["visualization", "development-tools", "graphics"]
 

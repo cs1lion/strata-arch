@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "Headless CLI that emits Strata's architecture, history and diff artifacts as JSON"
 repository = "https://github.com/cs1lion/strata-arch"
-# license 待定：发布前由维护者决定，勿填占位值
+license.workspace = true
 keywords = ["cli", "json", "typescript", "static-analysis", "architecture"]
 categories = ["command-line-utilities", "development-tools"]
 
