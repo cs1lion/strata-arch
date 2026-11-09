@@ -753,9 +753,8 @@ if ($sel.Valid.Count -lt 2) {
 # 驱动方式：真实按键（PostMessage WM_KEYDOWN），与用户手动按键走同一条键盘链；
 # 判据见 docs/tickets/arch-tool/20-module-search-focus.md C1/C2/C9/C10。
 Write-Output "== state: search =="
-$env:STRATA_EVIDENCE_SEARCH = $null
-$env:STRATA_EVIDENCE_FOCUS = $null
-$searchArgs = @("map", "tests/fixtures/layers", "--no-reveal", "--auto-close-ms", "9000")
+# 与票 20 固定样本一致：802 模块语料，聚焦标签给的是真实的一跳计数。
+$searchArgs = @("map", "tests/corpus/excalidraw", "--no-reveal", "--auto-close-ms", "15000")
 
 $searchOffStdout = Invoke-Capture -Name "search-off" -AppArgs $searchArgs `
     -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200

@@ -38,7 +38,7 @@ cargo run --release -p arch-view -- map tests/fixtures/path \
 
 | 模式 | 命令入口 | 看的是什么 |
 | --- | --- | --- |
-| `map` | `arch-view map <repo>` | 模块分层地图与模块间依赖边；先开窗、显示加载态，数据就绪后展示内容 |
+| `map` | `arch-view map <repo>` | 模块分层地图与模块间依赖边；先开窗、显示加载态，数据就绪后展示内容。`/` 或 `Ctrl/Cmd+F` 搜索模块（`↑/↓` 选择、`Enter` 聚焦、`Esc` 清除）；有 `--from/--to` 时搜索禁用 |
 | `timeline` | `arch-view timeline <repo>` | 按提交采样的演化时间线（模块数、边、分层带随时间的漂移） |
 | `diff` | `arch-view diff <repo> --from <commit> --to <commit>` | 两个 commit 之间的结构差异：added / removed / modified 与疑似重命名提示 |
 | `path` | `arch-view map <repo> --from <入口ID> --to <符号ID>` | 从入口到目标的一条最短调用路径，可在底部面板逐步播放 |
@@ -59,6 +59,8 @@ cargo run --release -p arch-cli -- path tests/fixtures/path --entries
 - **Linux 只在软件渲染下验证过**：CI 用 `xvfb` + `openbox` + Mesa lavapipe 跑窗口冒烟，只证明能开窗、出帧、干净退出，不代表真实 GPU 表现，也不代表画面正确；视觉判据见 [acceptance-gaps 2.2.1/2.2.2](docs/acceptance-gaps.md)。
 - **macOS 运行验证范围有限**：CI（macOS runner）用 `map tests/fixtures/layers --auto-close-ms` 证明能开窗、能出帧、干净退出；只此一项，不代表真实机器的 GPU/显示器体验，也没有像素证据。日志与判据见 [acceptance-gaps 2.2.3](docs/acceptance-gaps.md)。
 - **首屏揭示动画默认开启**：`--no-reveal` 关闭（与 `--reveal` 同时出现时以 `--no-reveal` 为准）。固定 **900ms** 时长驱动（进度取自 GPUI 动画时钟，帧率只决定中间帧疏密），各层带按层序均分时长。实测 `reveal:start → reveal:done`：本机 0.93s、lavapipe 多核 0.99s、lavapipe 单核 1.16s（最慢与最快相差 24%）。任意交互可立即跳到最终态。需要精确的静态截图或中途帧时用 `--no-reveal`。
+- **模块搜索只搜模块路径**：按 `NodeLayout.id` 子串匹配，不搜符号、不搜标签文本；`Enter` 聚焦后只有焦点模块与它的一跳上下游保持不透明（其余沿用 P1 的 0.68），焦点标签给出上游/下游计数。输入法（IME）未接入，只采单个可打印字符，中文等组字输入不保证可用；组字状态下的按键无法区分。证据与读数见 [ticket 20](docs/tickets/arch-tool/20-module-search-focus.md)。
+- **输入期间帧未达预算**：excalidraw（802 模块 / 4363 边）连续输入实测帧间隔 p95 **48.6ms**（本机；稳态平移 p95 37.9ms 作对照），未达 33ms 预算；匹配本身 release 中位数 0.034ms，瓶颈是每键触发整帧重绘。判据未改，改进方向另开票。
 - **timeline / diff 需要真实历史**：无 `.git` 的归档副本（如 `tests/corpus/excalidraw`）不能用于 `timeline`；浅克隆会失败或找不到 `--from/--to` 指定的提交。
 - **符号与路径的已知缺口**：顶层 JSX 位于 `root.render(<...>)` 参数内时不产生 `module-toplevel` 的 jsx 边，这类入口无法给出路径（见 [ticket 06](docs/tickets/arch-tool/06-entry-target-guided-path-query.md)）。
 

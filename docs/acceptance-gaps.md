@@ -98,7 +98,7 @@ while (-not $p.HasExited) {
 
 ### 2.2.1 本地像素证据链（2026-11-08 追加，人工项，不进 CI）
 
-`eval/pixel-evidence.ps1` 复用 `eval/capture-window.ps1` 的 Windows `PrintWindow` 抓屏，在可见桌面会话下跑五个状态并做像素断言。产物写 `out/pixel-evidence/`（被 `.gitignore` 排除，不入库）。命令：`pwsh -File eval/pixel-evidence.ps1`；最近一次实测 **14/14 通过**（`out/pixel-evidence/report.json`）。
+`eval/pixel-evidence.ps1` 复用 `eval/capture-window.ps1` 的 Windows `PrintWindow` 抓屏，在可见桌面会话下跑八个状态并做像素断言。产物写 `out/pixel-evidence/`（被 `.gitignore` 排除，不入库）。命令：`pwsh -File eval/pixel-evidence.ps1`；最近一次实测 **24/24 通过**（`out/pixel-evidence/report.json`）。
 
 | 状态 | 判定方式 | 阈值与依据 | 实测读数（2728×1879，DPI 216 / 2.25x） |
 | --- | --- | --- | --- |
@@ -107,6 +107,9 @@ while (-not $p.HasExited) {
 | diff 三色 | 精确色 ±8 的像素计数 | 每色 ≥2000。依据：单行 tint 约 2400×54≈1.2e5 像素，2000≈单行 1.5%，排除孤立抗锯齿像素 | `#2f6b3f`=461903 / `#7a3138`=306721 / `#7a5b24`=154087；合成 repo `added=3 removed=2 modified=1`（history fixture 的 `modified=0` 不足以证三色） |
 | P1 上下文淡出前后帧 | 关闭态 vs 开启态（`STRATA_EVIDENCE_ANIMATION=1`）整帧帧差 | changedRatio ≥2% 且 32×32 热点单元（≥30% 变化）≥10。依据：16 节点中 13 个非路径节点透明度 0.25→0.68，节点瓦片+标签约占画面 10%，取 1/5 余量；13 个节点各至少覆盖 1 格 | changed=7.886%，meanAbs=1.256，maxCell=100%，hotCells=454，bbox=(37,142)-(2560,1816) |
 | P3 播放推进 | autoplay 相邻帧帧差；另跑同状态静态基线 | 至少一对相邻帧 changedRatio ≥0.2% 且热点单元 ≥1。依据：单个时间线热力格约 0.4% 画面；静态基线噪声上限 0.1%，与 0.2% 拉开 2x | maxChanged=1.288%，maxCell=100%，hotCells=88；同 tick 对 0.000%；静态基线 changed=0.000000% |
+| 搜索：有结果 / 无匹配（ticket 20，excalidraw 802 模块） | 左上角 30%×25% 区域内唯一底色 `#161b22` 的像素数与纵向范围 | 有结果与无匹配各 ≥20000 像素；有结果的底边比无匹配低 ≥200px（6 行命中 ≈310px 的保守下限） | off=0、results=115865、nomatch=97493；底边 448 vs 221（差 227） |
+| 搜索：聚焦态含标签（ticket 20） | 右下角标签底色像素 + 正文白像素；左上角面板底色应归零 | 标签底色 ≥5000、正文白 ≥300；面板底色 ≤100 | 标签 bg=34154、text=2028（行 1767–1837）；面板 bg=0；stdout `phase: search:label module=external:@site/src upstream=3 downstream=0` |
+| 搜索：清除后（ticket 20） | 同区域底色像素回到基线 | 面板/标签底色 ≤100 | 面板=0、标签=0（基线与清除后一致） |
 
 **限制与事实边界（不当自动化包装）：**
 
@@ -115,6 +118,8 @@ while (-not $p.HasExited) {
 - **需要可见桌面会话**：无头 CI 不可用；整条链路登记为人工项，不进 CI 门禁。
 - **抓屏进程必须 DPI-aware**：PowerShell 默认 DPI-unaware 时 `GetWindowRect` 返回虚拟尺寸（1212×835），而 `PrintWindow` 按物理像素渲染（2728×1879），截图右下被裁切，底部播放面板与居中状态文案全部丢失。脚本启动时调用 `SetProcessDpiAwarenessContext(-4)`（per-monitor v2）后才完整。这是脚本前置条件，不是可选项。
 - **`PrintWindow` 动画首帧可能是空白帧**：实测开启动画后首帧只有标题栏可见、客户区全空，整帧平均亮度约 8.5（正常内容帧 24–30）。脚本用平均亮度 15 作为有效帧门限，跳过空白帧并在 `report.json` 的 `blankFrames` 记录编号，不把空白帧当作证据；本次复跑未出现空白帧，历史抓取曾出现 1 帧。替代方案：`capture-window.ps1 -Method screen` 走 `CopyFromScreen` 绕过 Direct3D 表面，或增大 `WarmupMs` 让后续帧稳定后再采。
+- **按键注入方式（2026-11-09）**：`capture-window.ps1 -Keys` 用 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 把按键送进窗口，走应用的 `on_key_down` 真实路径（stdout 有 `phase: key:*` 为证）。`SendKeys` 实测不进 GPUI 0.2.2 的键盘链（无任何 `key:` 标记），已弃用。注入前先 `SetForegroundWindow` 并在画布左上角点一下，让窗口激活且画布拿到键盘焦点。
+- **搜索面板的隔离度量**：面板/标签与场景其余部分唯一的共同色是底色 `#161b22`，因此用「该色像素数 + 纵向范围」判断可见性。最初用「正文白像素相对基线的增量」，实测被面板自身遮挡底层节点标签抵消（无匹配面板增量 -997），不能隔离面板；改为底色口径后判据（三态可见）未变，只换度量方式。
 - **读数会随 GPU / 字体 / 缩放漂移**：阈值仅用于本机人工证据，不设 CI 像素门禁。
 - 本次未改动任何 `eval/` 期望值文件（`corpus.toml`、`baseline/current.json` 未变），因此无需独立的期望值变更提交。
 

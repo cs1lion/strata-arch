@@ -6,7 +6,7 @@
 
 **Blocked by:** 05（命中框与画布交互）、15（P2 相机转场，直接复用不改造）、16（P1 上下文淡出与 `0.68` 口径）、19（P1 步进带来的播放态判定）。
 
-**Status:** criteria-first（判据已定，2026-11-09；实现按「模型 → 相机/淡出接线 → 标签 → 像素证据 → 文档」分层推进）。
+**Status:** implemented（2026-11-09）。C1–C7、C9、C10 通过；**C8 的输入期间帧不达标**（p95 48.6ms > 33ms），判据未改、阈值未调，原因与替代路线见「实测读数」；lavapipe 侧未测。
 
 **固定样本/commit：** 交互与排序：`tests/fixtures/layers`（16 模块，含同 basename 与多级路径）；性能：`tests/corpus/excalidraw`（802 模块，`eval/corpus.toml` 钉住的快照）；像素证据：`tests/corpus/excalidraw`（与既有像素基线同场景）。硬件/OS：`AMD Ryzen 7 8845H`、Windows、PowerShell 7.6.9；性能读数用 `--release`。
 
@@ -111,6 +111,57 @@
 4. **像素证据**：`eval/pixel-evidence.ps1` 加三态与聚焦态帧，跑出读数。
 5. **文档**：README、`docs/acceptance-gaps.md`、CLI 帮助；按层提交、push、报 CI。
 
+## 实测读数（2026-11-09）
+
+### 802 模块匹配耗时（release，本机）
+
+`cargo test --release -p arch-view --test module_search matching_802 -- --nocapture`：
+
+| 项 | 读数 | 判据 |
+| --- | --- | --- |
+| 模块数 | 802 | — |
+| query=`components` 命中数 | 255 | — |
+| 匹配 + 排序中位数（101 次） | **0.034ms** | ≤3ms ✅ |
+| 匹配 + 排序 p95 | 0.041ms | 仅记录 |
+| debug 构建同测 | 0.522ms | 仅记录（不参与判据） |
+
+### 输入期间帧（C8）
+
+`pwsh -File eval/frame-timing.ps1 -Mode search -SearchPrefix <query> -SearchKeyDelayMs <ms>`；按键经 `PostMessage` 注入，输入窗口由应用自己打的 `phase: key:/` 到最后一个 `phase: key:*` 界定。
+
+| 场景 | 帧数 | median | p95 | min / max | 判定 |
+| --- | --- | --- | --- | --- | --- |
+| 本机 GPU，81 键连续高速输入（1ms/键，窗口 3260ms） | 79 | 39.49ms | **48.59ms** | 27.14 / 104.97 | **未达标**（>33ms） |
+| 本机 GPU，人速输入（25ms/键，11 键） | 9 | 51.17ms | 79.03ms | — | 仅参考：间隔受按键节奏约束，不是帧成本 |
+| 对照：稳态平移（60 帧，`-Mode pan`） | 58 | 32.44ms | 37.99ms | — | 整帧重绘基线已超 33ms |
+| lavapipe（Linux/xvfb） | — | — | — | — | **未测**：按键注入仅实现 Win32 `PostMessage`，Linux 侧无对应注入路径，本轮不产假读数 |
+
+**结论与解释（不改判据、不调阈值）：** C8 的帧预算不成立。搜索匹配本身 0.034ms，占一帧 0.1% 以下；瓶颈是每键触发的整帧重绘——4363 条边 / 802 节点 / 802 标签，稳态平移就已 38ms p95。要让输入帧落到 33ms，需要减少重绘范围或降格，不属于本轮「模型 + 接线」的范围。可解释替代（另开票，不在本票验收内）：
+
+1. 画布层做离屏缓存/脏区重绘，输入时只重绘面板区域；
+2. 输入态临时关闭边与标签细节（等价于现有 `Skip` 栅格档），并在面板标注；
+3. 在 1.0 缩放或更小窗口下复测，给出与硬件无关的换算口径。
+
+### 像素证据（C9 / C10）
+
+`pwsh -File eval/pixel-evidence.ps1`（excalidraw 802 模块，真实按键驱动）：**24/24 通过**。
+
+| 状态 | 读数 |
+| --- | --- |
+| 搜索关闭（基线） | 面板底色 0，标签底色 0 |
+| 有结果（`/components`） | 面板底色 115865；结果面板底边 y=448 |
+| 无匹配（`/zzzz`） | 面板底色 97493；底边 y=221（比有结果高 227px，满足 ≥200） |
+| 聚焦态（`/components{ENTER}`） | 面板底色 0；标签底色 34154、正文白 2028、纵向 1767–1837；stdout `phase: search:label module=external:@site/src upstream=3 downstream=0` |
+| 清除后（`/components{ENTER}{ESC}`） | 面板底色 0、标签底色 0，与基线一致 |
+
+口径变更留档：最初用「正文白像素相对基线的增量」判断面板可见性，实测被面板自身遮挡底层节点标签抵消（无匹配面板增量 **-997**），无法隔离面板；改为「唯一底色 `#161b22` 的像素数 + 纵向范围」。判据（三态可见）未变，只更换度量方式，理由同步写入 `docs/acceptance-gaps.md`。
+
+## 实现中发现并修掉的缺陷
+
+- **Enter 后相机不动**：像素证据第一版显示聚焦帧与基线完全相同。原因：无播放路径的 `apply_fly_to_if_needed` 每帧 `cancel_transition()`，把搜索刚发起的转场清掉。改为已进入搜索聚焦时不取消；修复后聚焦模块落到视口中线。
+- **输入不重绘**：`Character`/`Backspace`/`↑/↓` 只改状态不发 `cx.notify()`，面板停在打开当帧。改为按键处理末尾统一 `notify()`。
+- **SendKeys 不进键盘链**：`System.Windows.Forms.SendKeys` 在该 GPUI 0.2.2 窗口上无任何 `phase: key:*`；改用 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 后按键走真实的 `on_key_down`。
+
 ## 已知限制（开工前登记，不假装支持）
 
 - **IME 未接入**：本轮用 `on_key_down` 的 `key_char` 采集 ASCII，不实现 `EntityInputHandler`。中文/日文等输入法组字不保证可用；不宣称支持，后续单开票。
@@ -119,6 +170,7 @@
 
 ## 未验证的
 
-- 802 模块匹配耗时与输入期间帧 p95：待实现后实测（本轮报告给出）。
-- 三态像素读数：待实现后实测。
-- `Enter` 聚焦标签在不同 DPI/字体下的换行与截断：本轮不做自适应，只保证 100% DPI 下完整可读；未测其他 DPI。
+- lavapipe（Linux/xvfb）侧的输入期间帧：无按键注入路径，未测（本机读数见上表）。
+- 非 100% / 非 2.25x DPI 下的标签换行与截断：本轮不做自适应，只保证本机 DPI 下完整可读。
+- 真机 IME 组字：不实现，也未做任何可用性声明；只登记为不支持。
+- 跳转到「无入边也无出边」的孤立模块时标签显示 `0 / 0`：像素证据实测（external:@site/src upstream=3 downstream=0）覆盖了单向情形，双向为 0 时只验过模型。
