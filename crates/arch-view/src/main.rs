@@ -35,9 +35,9 @@ use arch_view::view::{
 };
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
-    AnyView, App, Application, Bounds, ClickEvent, Context, Entity, FocusHandle, IntoElement,
+    AnyView, App, Application, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
-    ScrollDelta, ScrollWheelEvent, Timer, Window, WindowBounds, WindowOptions,
+    ScrollDelta, ScrollWheelEvent, Stateful, Timer, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -1985,252 +1985,27 @@ impl MapView {
         cx.notify();
     }
 
-    /// 当前帧生效的渲染调优：无 A/B 周期时读环境变量，有周期时按帧段轮换。
-    fn current_tuning(&self) -> RenderTuning {
-        if self.ab_segments.is_empty() {
-            return RenderTuning::from_env();
-        }
-        let ordinal = self.frame_count.saturating_sub(1);
-        let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
-        RenderTuning::for_segment(&self.ab_segments[segment])
-    }
-
-    /// 诊断：逐帧平移，用于在外部测持续重绘的帧间隔；播完即停。
-    fn schedule_autopan_step(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
-        if view.autopan_scheduled {
-            return;
-        }
-        let Some(remaining) = view.autopan_remaining else {
-            return;
-        };
-        if remaining == 0 {
-            view.autopan_remaining = None;
-            return;
-        }
-        view.autopan_scheduled = true;
-        cx.on_next_frame(window, |view, window, cx| {
-            view.autopan_scheduled = false;
-            // 往返平移：位置在 0 / 8px 间交替，避免单向平移把内容移出屏幕后
-            // 让后段帧成本因可见内容变少而虚假下降（A/B 交替对照要求空间条件一致）。
-            let remaining = view.autopan_remaining.unwrap_or(0);
-            let step = if remaining % 2 == 0 { 8.0 } else { -8.0 };
-            view.state.pan_by(step, 0.0);
-            phase_marker("pan:frame");
-            let left = view.autopan_remaining.unwrap_or(1).saturating_sub(1);
-            if left == 0 {
-                view.autopan_remaining = None;
-                phase_marker("pan:done");
-            } else {
-                view.autopan_remaining = Some(left);
-                MapView::schedule_autopan_step(view, window, cx);
-            }
-            cx.notify();
-        });
-    }
-
-    /// 每个 GPUI 帧回调读取 `with_animation` 写下的进度；仍在揭示时续订下一帧，
-    /// 播完即停（不回绕）。进度来自框架动画时钟，帧数只影响采样疏密。
-    fn schedule_reveal_frame(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
-        if !view.reveal.is_active() || view.reveal_scheduled {
-            return;
-        }
-        if !view.reveal_start_marked {
-            view.reveal_start_marked = true;
-            phase_marker("reveal:start");
-        }
-        view.reveal_scheduled = true;
-        cx.on_next_frame(window, |view, window, cx| {
-            view.reveal_scheduled = false;
-            let was_active = view.reveal.is_active();
-            view.reveal.set_progress(view.reveal_progress.get());
-            if was_active && view.reveal.is_finished() {
-                phase_marker("reveal:done");
-            } else if was_active && !view.reveal_mid_marked && view.reveal.overall_progress() >= 0.5
-            {
-                view.reveal_mid_marked = true;
-                phase_marker("reveal:mid");
-            }
-            if view.reveal.is_active() {
-                MapView::schedule_reveal_frame(view, window, cx);
-            }
-            cx.notify();
-        });
-    }
-}
-
-static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
-
-impl Render for MapView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 场景元素树构造：只依赖 `self` 与当帧相机参数，不注册事件、不读墙钟。
+    /// 单独成方法，供 ticket 21 路线 A 的缓存子视图复用（本提交仍由 render 直接调用）。
+    fn add_scene_elements(
+        &self,
+        mut root: Stateful<Div>,
+        scene: &Scene,
+        viewport: Viewport,
+        viewport_size: (f32, f32),
+    ) -> Stateful<Div> {
         let skip = RenderSkip::from_env();
-        let trace = frame_trace_enabled();
-        if trace {
-            phase_marker("frame");
-        }
-        self.frame_count = self.frame_count.saturating_add(1);
-        if self.keyboard_focus_pending {
-            self.keyboard_focus_pending = false;
-            // 等首帧把 `track_focus` 挂上后再交焦点，避免句柄尚未注册时被忽略。
-            let handle = self.focus_handle.clone();
-            window.on_next_frame(move |window, _cx| window.focus(&handle));
-        }
-        let tuning = self.current_tuning();
-        if trace && !self.ab_segments.is_empty() {
-            let ordinal = self.frame_count - 1;
-            if ordinal % self.ab_segment_frames == 0 {
-                let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
-                phase_marker(&format!("ab:segment={}", self.ab_segments[segment]));
-            }
-        }
-        if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
-            phase_marker("content:render");
-            window.on_next_frame(|_, _cx| phase_marker("content:presented"));
-        }
         let labels = self.state.labels_visible() && !skip.labels;
         let selected = self.state.selected().map(ToOwned::to_owned);
         let highlighted = self.state.highlighted();
-        let scene = match self.state.symbol_layout() {
-            Some(symbols) => Scene::Symbols(symbols.clone()),
-            None => Scene::Modules(self.state.map().clone()),
-        };
-        let can_go_back = self.state.can_go_back();
-        if trace && self.frame_count == 1 {
-            if let Scene::Modules(map) = &scene {
-                println!(
-                    "frame: nodes={} edges={} bands={} labels={}",
-                    map.nodes.len(),
-                    map.edges.len(),
-                    map.bands.len(),
-                    if labels { map.nodes.len() } else { 0 }
-                );
-                let _ = std::io::stdout().flush();
-            }
-        }
-        // 诊断平移：在取 viewport 前由帧回调推进，保证每帧都有真实位移。
-        if self.autopan_remaining.is_some() {
-            Self::schedule_autopan_step(self, window, cx);
-        }
+        let tuning = self.current_tuning();
         let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
         let fade_enabled = self
             .playback
             .as_ref()
             .map(|playback| playback.animation_enabled())
             .unwrap_or(false);
-        let transition_enabled = self.state.transition_enabled();
-        let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
-        let viewport_size = (
-            f32::from(window.viewport_size().width),
-            f32::from(window.viewport_size().height),
-        );
-        if self.reveal.is_active() {
-            Self::schedule_reveal_frame(self, window, cx);
-        }
         let reveal_overall = self.reveal.overall_progress();
-
-        let mut root = div()
-            .id("canvas")
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                this.handle_key(event, window, cx)
-            }))
-            .relative()
-            .size_full()
-            .overflow_hidden()
-            .bg(rgb(0x0d1117))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
-                    this.interrupt_reveal();
-                    let position = Self::screen_position(event.position);
-                    this.press_origin = Some(position);
-                    this.drag_last = Some(position);
-                    this.dragged = false;
-                }),
-            )
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                if !event.dragging() {
-                    return;
-                }
-                this.interrupt_reveal();
-                let position = Self::screen_position(event.position);
-                if let Some(last) = this.drag_last {
-                    let dx = position.x - last.x;
-                    let dy = position.y - last.y;
-                    this.state.pan_by(dx, dy);
-                    if let Some(origin) = this.press_origin {
-                        if (position.x - origin.x).abs() + (position.y - origin.y).abs() > 3.0 {
-                            this.dragged = true;
-                        }
-                    }
-                    cx.notify();
-                }
-                this.drag_last = Some(position);
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _window, cx| {
-                    this.finish_press(Self::screen_position(event.position));
-                    this.press_origin = None;
-                    this.drag_last = None;
-                    this.dragged = false;
-                    cx.notify();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                this.interrupt_reveal();
-                let anchor = Self::screen_position(event.position);
-                let delta = match event.delta {
-                    ScrollDelta::Pixels(delta) => f32::from(delta.y),
-                    ScrollDelta::Lines(delta) => delta.y * 20.0,
-                };
-                if delta.abs() > f32::EPSILON {
-                    let factor = if delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    this.state.zoom_at(anchor, factor);
-                    cx.notify();
-                }
-            }));
-
-        if self.reveal.is_active() {
-            root = root.child(
-                div()
-                    .id("reveal-hint")
-                    .absolute()
-                    .right(px(12.))
-                    .top(px(12.))
-                    .px(px(10.))
-                    .py(px(4.))
-                    .rounded(px(4.))
-                    .bg(rgb(0x161b22))
-                    .text_xs()
-                    .text_color(rgb(0x8b9bb0))
-                    .child("层归属为推断结果 · 点击/拖动立即跳过揭示"),
-            );
-        }
-
-        if can_go_back {
-            root = root.child(
-                div()
-                    .id("back")
-                    .absolute()
-                    .left(px(12.))
-                    .top(px(12.))
-                    .px(px(10.))
-                    .py(px(4.))
-                    .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
-                    .text_xs()
-                    .text_color(rgb(0xe6edf3))
-                    .child("← 返回地图")
-                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
-                        this.interrupt_reveal();
-                        this.state.go_back();
-                        this.press_origin = None;
-                        this.drag_last = None;
-                        cx.notify();
-                    })),
-            );
-        }
-
         match scene {
             Scene::Modules(map) => {
                 // 聚焦态：焦点集合内 1.0，其余沿用 P1 的 0.68；不改变绘制顺序。
@@ -2489,6 +2264,247 @@ impl Render for MapView {
                 }
             }
         }
+        root
+    }
+
+    /// 当前帧生效的渲染调优：无 A/B 周期时读环境变量，有周期时按帧段轮换。
+    fn current_tuning(&self) -> RenderTuning {
+        if self.ab_segments.is_empty() {
+            return RenderTuning::from_env();
+        }
+        let ordinal = self.frame_count.saturating_sub(1);
+        let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
+        RenderTuning::for_segment(&self.ab_segments[segment])
+    }
+
+    /// 诊断：逐帧平移，用于在外部测持续重绘的帧间隔；播完即停。
+    fn schedule_autopan_step(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
+        if view.autopan_scheduled {
+            return;
+        }
+        let Some(remaining) = view.autopan_remaining else {
+            return;
+        };
+        if remaining == 0 {
+            view.autopan_remaining = None;
+            return;
+        }
+        view.autopan_scheduled = true;
+        cx.on_next_frame(window, |view, window, cx| {
+            view.autopan_scheduled = false;
+            // 往返平移：位置在 0 / 8px 间交替，避免单向平移把内容移出屏幕后
+            // 让后段帧成本因可见内容变少而虚假下降（A/B 交替对照要求空间条件一致）。
+            let remaining = view.autopan_remaining.unwrap_or(0);
+            let step = if remaining % 2 == 0 { 8.0 } else { -8.0 };
+            view.state.pan_by(step, 0.0);
+            phase_marker("pan:frame");
+            let left = view.autopan_remaining.unwrap_or(1).saturating_sub(1);
+            if left == 0 {
+                view.autopan_remaining = None;
+                phase_marker("pan:done");
+            } else {
+                view.autopan_remaining = Some(left);
+                MapView::schedule_autopan_step(view, window, cx);
+            }
+            cx.notify();
+        });
+    }
+
+    /// 每个 GPUI 帧回调读取 `with_animation` 写下的进度；仍在揭示时续订下一帧，
+    /// 播完即停（不回绕）。进度来自框架动画时钟，帧数只影响采样疏密。
+    fn schedule_reveal_frame(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
+        if !view.reveal.is_active() || view.reveal_scheduled {
+            return;
+        }
+        if !view.reveal_start_marked {
+            view.reveal_start_marked = true;
+            phase_marker("reveal:start");
+        }
+        view.reveal_scheduled = true;
+        cx.on_next_frame(window, |view, window, cx| {
+            view.reveal_scheduled = false;
+            let was_active = view.reveal.is_active();
+            view.reveal.set_progress(view.reveal_progress.get());
+            if was_active && view.reveal.is_finished() {
+                phase_marker("reveal:done");
+            } else if was_active && !view.reveal_mid_marked && view.reveal.overall_progress() >= 0.5
+            {
+                view.reveal_mid_marked = true;
+                phase_marker("reveal:mid");
+            }
+            if view.reveal.is_active() {
+                MapView::schedule_reveal_frame(view, window, cx);
+            }
+            cx.notify();
+        });
+    }
+}
+
+static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+
+impl Render for MapView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let skip = RenderSkip::from_env();
+        let trace = frame_trace_enabled();
+        if trace {
+            phase_marker("frame");
+        }
+        self.frame_count = self.frame_count.saturating_add(1);
+        if self.keyboard_focus_pending {
+            self.keyboard_focus_pending = false;
+            // 等首帧把 `track_focus` 挂上后再交焦点，避免句柄尚未注册时被忽略。
+            let handle = self.focus_handle.clone();
+            window.on_next_frame(move |window, _cx| window.focus(&handle));
+        }
+        if trace && !self.ab_segments.is_empty() {
+            let ordinal = self.frame_count - 1;
+            if ordinal % self.ab_segment_frames == 0 {
+                let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
+                phase_marker(&format!("ab:segment={}", self.ab_segments[segment]));
+            }
+        }
+        if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
+            phase_marker("content:render");
+            window.on_next_frame(|_, _cx| phase_marker("content:presented"));
+        }
+        let labels = self.state.labels_visible() && !skip.labels;
+        let scene = match self.state.symbol_layout() {
+            Some(symbols) => Scene::Symbols(symbols.clone()),
+            None => Scene::Modules(self.state.map().clone()),
+        };
+        let can_go_back = self.state.can_go_back();
+        if trace && self.frame_count == 1 {
+            if let Scene::Modules(map) = &scene {
+                println!(
+                    "frame: nodes={} edges={} bands={} labels={}",
+                    map.nodes.len(),
+                    map.edges.len(),
+                    map.bands.len(),
+                    if labels { map.nodes.len() } else { 0 }
+                );
+                let _ = std::io::stdout().flush();
+            }
+        }
+        // 诊断平移：在取 viewport 前由帧回调推进，保证每帧都有真实位移。
+        if self.autopan_remaining.is_some() {
+            Self::schedule_autopan_step(self, window, cx);
+        }
+        let overlay = self.playback.as_ref().map(PlaybackOverlay::from_state);
+        let transition_enabled = self.state.transition_enabled();
+        let viewport = self.apply_fly_to_if_needed(&scene, window, cx);
+        let viewport_size = (
+            f32::from(window.viewport_size().width),
+            f32::from(window.viewport_size().height),
+        );
+        if self.reveal.is_active() {
+            Self::schedule_reveal_frame(self, window, cx);
+        }
+
+        let mut root = div()
+            .id("canvas")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_key(event, window, cx)
+            }))
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .bg(rgb(0x0d1117))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
+                    this.interrupt_reveal();
+                    let position = Self::screen_position(event.position);
+                    this.press_origin = Some(position);
+                    this.drag_last = Some(position);
+                    this.dragged = false;
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                if !event.dragging() {
+                    return;
+                }
+                this.interrupt_reveal();
+                let position = Self::screen_position(event.position);
+                if let Some(last) = this.drag_last {
+                    let dx = position.x - last.x;
+                    let dy = position.y - last.y;
+                    this.state.pan_by(dx, dy);
+                    if let Some(origin) = this.press_origin {
+                        if (position.x - origin.x).abs() + (position.y - origin.y).abs() > 3.0 {
+                            this.dragged = true;
+                        }
+                    }
+                    cx.notify();
+                }
+                this.drag_last = Some(position);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _window, cx| {
+                    this.finish_press(Self::screen_position(event.position));
+                    this.press_origin = None;
+                    this.drag_last = None;
+                    this.dragged = false;
+                    cx.notify();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+                this.interrupt_reveal();
+                let anchor = Self::screen_position(event.position);
+                let delta = match event.delta {
+                    ScrollDelta::Pixels(delta) => f32::from(delta.y),
+                    ScrollDelta::Lines(delta) => delta.y * 20.0,
+                };
+                if delta.abs() > f32::EPSILON {
+                    let factor = if delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    this.state.zoom_at(anchor, factor);
+                    cx.notify();
+                }
+            }));
+
+        if self.reveal.is_active() {
+            root = root.child(
+                div()
+                    .id("reveal-hint")
+                    .absolute()
+                    .right(px(12.))
+                    .top(px(12.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x161b22))
+                    .text_xs()
+                    .text_color(rgb(0x8b9bb0))
+                    .child("层归属为推断结果 · 点击/拖动立即跳过揭示"),
+            );
+        }
+
+        if can_go_back {
+            root = root.child(
+                div()
+                    .id("back")
+                    .absolute()
+                    .left(px(12.))
+                    .top(px(12.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .text_xs()
+                    .text_color(rgb(0xe6edf3))
+                    .child("← 返回地图")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
+                        this.state.go_back();
+                        this.press_origin = None;
+                        this.drag_last = None;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        root = self.add_scene_elements(root, &scene, viewport, viewport_size);
 
         if self.search.is_open() {
             root = root.child(search_panel_element(&self.search));
