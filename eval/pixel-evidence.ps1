@@ -1,7 +1,8 @@
 # ticket 11：本地像素证据链（人工证据，不进 CI）。
 #
 # 目的：把票 16/18/19 反复挂着的「只有模型断言、没有像素证据」补成一条可复跑的链路。
-# 覆盖五个状态：加载态非白屏、失败态错误文案、diff 三色、P1 上下文淡出前后帧、P3 播放相邻帧。
+# 覆盖八个状态：加载态非白屏、失败态错误文案、diff 三色、P1 上下文淡出前后帧、P3 播放相邻帧，
+# 以及 ticket 20 的模块搜索三态（有结果 / 无匹配 / 聚焦含标签）与清除后帧。
 #
 # 前置：
 #   cargo build --release -p arch-view
@@ -77,6 +78,30 @@ $Thresholds = [ordered]@{
     # 帧差判据统一口径：通道差 > 6 记为变化像素；热点单元 32x32。
     ChangeTolerance = 6
     CellSize = 32
+
+    # ticket 20：面板与标签都用不透明底色 #161b22(22,27,34)，场景里没有第二个同色块，
+    # 因此按「背景色块像素数 + 纵向范围」度量，不受底层节点文字干扰
+    # （先前的「正文白像素增量」被面板自身遮挡底层文字抵消，已废弃，理由记在票 20）。
+    SearchPanelBg = @(22, 27, 34)
+    SearchBgTolerance = 3
+    # 面板最小形态 420x51 逻辑 ≈ 945x115 物理 ≈ 108k 像素，纯背景占 2/3 以上；取 20000（约 1/5）。
+    SearchPanelBgMinPixels = 20000
+    # 面板宽 945 物理像素；一行至少 50 个背景像素才算「仍处于面板内」。
+    SearchPanelMinRowWidth = 50
+    # 6 行命中每行约 23 逻辑 ≈ 52 物理像素，最保守 6x23x2.25 = 310；取 200 作为「列表把面板撑高」的下限。
+    SearchPanelRowsMinHeightDiff = 200
+    # 标签 220x24 逻辑 ≈ 500x54 物理 ≈ 27k 像素，背景占 60% 以上；取 5000（约 1/3）。
+    SearchLabelBgMinPixels = 5000
+    # 标签内正文白像素；集合外模块已淡到 0.68（白字混合后亮度约 160），不计入近白；取 300。
+    SearchLabelMinTextPixels = 300
+    # 清除后 / 无面板时的背景色容差上限（允许抗锯齿残留）。
+    SearchClearedMaxBgPixels = 100
+
+    # 搜索区域口径。
+    SearchPanelX1 = 0.30
+    SearchPanelY1 = 0.25
+    SearchLabelX0 = 0.60
+    SearchLabelY0 = 0.90
 }
 
 $centerX0 = 0.20; $centerX1 = 0.80
@@ -189,6 +214,38 @@ public static class PixelMetrics {
             }
         }
         return count;
+    }
+
+    /// 区域内某颜色的纵向范围与总数：逐行统计匹配像素，行内匹配数 >= minRowCount 才计入范围。
+    /// 用于「面板/标签背景色」这类唯一色块，避免被底层内容干扰。
+    public static long[] ColorExtent(byte[] data, int width, int height, int stride,
+            int x0, int y0, int x1, int y1, int tr, int tg, int tb, int tolerance, int minRowCount) {
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > width) x1 = width;
+        if (y1 > height) y1 = height;
+        long total = 0;
+        int first = -1;
+        int last = -1;
+        for (int y = y0; y < y1; y++) {
+            int rowBase = y * stride;
+            int rowHits = 0;
+            for (int x = x0; x < x1; x++) {
+                int i = rowBase + x * 4;
+                int b = data[i];
+                int g = data[i + 1];
+                int r = data[i + 2];
+                if (Math.Abs(r - tr) <= tolerance && Math.Abs(g - tg) <= tolerance && Math.Abs(b - tb) <= tolerance) {
+                    rowHits++;
+                }
+            }
+            total += rowHits;
+            if (rowHits >= minRowCount) {
+                if (first < 0) first = y;
+                last = y;
+            }
+        }
+        return new long[] { first, last, total };
     }
 
     public static double MeanLuminance(byte[] data, int width, int height, int stride,
@@ -320,6 +377,50 @@ function Get-CenterRect {
     )
 }
 
+# 区域内的正文白像素（#e6edf3 ±20）；用于搜索面板与聚焦标签。
+function Get-TextPixels {
+    param($Img, [double]$X0, [double]$Y0, [double]$X1, [double]$Y1)
+    $r = @(
+        [int]($Img.Width * $X0), [int]($Img.Height * $Y0),
+        [int]($Img.Width * $X1), [int]($Img.Height * $Y1)
+    )
+    return [PixelMetrics]::CountNear($Img.Bytes, $Img.Width, $Img.Height, $Img.Stride, $r[0], $r[1], $r[2], $r[3], 230, 237, 243, 20)
+}
+
+function Get-PanelText {
+    param($Img)
+    return Get-TextPixels $Img 0 0 $Thresholds.SearchPanelX1 $Thresholds.SearchPanelY1
+}
+
+function Get-LabelText {
+    param($Img)
+    return Get-TextPixels $Img $Thresholds.SearchLabelX0 $Thresholds.SearchLabelY0 1.0 1.0
+}
+
+# 背景色块范围：返回 @(首行, 末行, 总像素数)。
+function Get-ColorExtent {
+    param($Img, [double]$X0, [double]$Y0, [double]$X1, [double]$Y1)
+    $r = @(
+        [int]($Img.Width * $X0), [int]($Img.Height * $Y0),
+        [int]($Img.Width * $X1), [int]($Img.Height * $Y1)
+    )
+    $bg = $Thresholds.SearchPanelBg
+    $extent = [PixelMetrics]::ColorExtent($Img.Bytes, $Img.Width, $Img.Height, $Img.Stride,
+        $r[0], $r[1], $r[2], $r[3], $bg[0], $bg[1], $bg[2], $Thresholds.SearchBgTolerance,
+        $Thresholds.SearchPanelMinRowWidth)
+    return @([int]$extent[0], [int]$extent[1], [long]$extent[2])
+}
+
+function Get-PanelExtent {
+    param($Img)
+    return Get-ColorExtent $Img 0 0 $Thresholds.SearchPanelX1 $Thresholds.SearchPanelY1
+}
+
+function Get-LabelExtent {
+    param($Img)
+    return Get-ColorExtent $Img $Thresholds.SearchLabelX0 $Thresholds.SearchLabelY0 1.0 1.0
+}
+
 function Select-Frames {
     param([string]$Name, [int[]]$Indices)
     $valid = @()
@@ -347,7 +448,8 @@ function Invoke-Capture {
     param(
         [string]$Name, [string[]]$AppArgs, [string]$Marker,
         [int]$WarmupMs, [int]$SettleMs, [int]$Frames, [int]$IntervalMs,
-        [switch]$StdoutAtMarker
+        [switch]$StdoutAtMarker,
+        [int]$KeysAfterFrame = 0, [string]$Keys = "", [int]$KeysSettleMs = 300
     )
     $png = Join-Path $OutDir "$Name.png"
     $stdoutFile = Join-Path $OutDir "$Name.stdout.txt"
@@ -365,6 +467,10 @@ function Invoke-Capture {
         SettleMs = $SettleMs
         StdoutFile = $stdoutFile
         StdoutAtMarker = $StdoutAtMarker
+        KeysAfterFrame = $KeysAfterFrame
+        Keys = $Keys
+        KeysSettleMs = $KeysSettleMs
+        KeysMethod = "post"
     }
     & $captureScript @splat | Out-Null
     return $stdoutFile
@@ -641,6 +747,126 @@ if ($sel.Valid.Count -lt 2) {
     Add-Assertion "static-baseline-noise" ("同状态两帧 changedRatio <= {0:P1}" -f $Thresholds.StaticMaxChangedRatio) `
         ("changed={0:P6} meanAbs={1:N6} maxCell={2:P2} hotCells={3}" -f $d.ChangedRatio, $d.MeanAbs, $d.MaxCellRatio, $d.HotCells) `
         ($d.ChangedRatio -le $Thresholds.StaticMaxChangedRatio)
+}
+
+# ---- 状态 6：模块搜索（ticket 20）------------------------------------------
+# 驱动方式：真实按键（PostMessage WM_KEYDOWN），与用户手动按键走同一条键盘链；
+# 判据见 docs/tickets/arch-tool/20-module-search-focus.md C1/C2/C9/C10。
+Write-Output "== state: search =="
+$env:STRATA_EVIDENCE_SEARCH = $null
+$env:STRATA_EVIDENCE_FOCUS = $null
+$searchArgs = @("map", "tests/fixtures/layers", "--no-reveal", "--auto-close-ms", "9000")
+
+$searchOffStdout = Invoke-Capture -Name "search-off" -AppArgs $searchArgs `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200
+$searchResultsStdout = Invoke-Capture -Name "search-results" -AppArgs $searchArgs `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -KeysAfterFrame 1 -Keys '/src' -KeysSettleMs 400
+$searchNoMatchStdout = Invoke-Capture -Name "search-nomatch" -AppArgs $searchArgs `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -KeysAfterFrame 1 -Keys '/zzzz' -KeysSettleMs 400
+$searchFocusStdout = Invoke-Capture -Name "search-focus" -AppArgs $searchArgs `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -KeysAfterFrame 1 -Keys '/src{ENTER}' -KeysSettleMs 900
+$searchClearStdout = Invoke-Capture -Name "search-clear" -AppArgs $searchArgs `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -KeysAfterFrame 1 -Keys '/src{ENTER}{ESC}' -KeysSettleMs 900
+
+$offSel = Select-Frames -Name "search-off" -Indices @(1, 2)
+$resSel = Select-Frames -Name "search-results" -Indices @(1, 2)
+$noMatchSel = Select-Frames -Name "search-nomatch" -Indices @(1, 2)
+$focusSel = Select-Frames -Name "search-focus" -Indices @(1, 2)
+$clearSel = Select-Frames -Name "search-clear" -Indices @(1, 2)
+$report.blankFrames.searchOff = $offSel.Blank
+$report.blankFrames.searchResults = $resSel.Blank
+$report.blankFrames.searchNoMatch = $noMatchSel.Blank
+$report.blankFrames.searchFocus = $focusSel.Blank
+$report.blankFrames.searchClear = $clearSel.Blank
+
+function Read-StdoutText {
+    param([string]$Path)
+    if ($Path -and (Test-Path $Path)) { return (Get-Content -Raw $Path) }
+    return ""
+}
+$resOut = Read-StdoutText $searchResultsStdout
+$focusOut = Read-StdoutText $searchFocusStdout
+$clearOut = Read-StdoutText $searchClearStdout
+
+Add-Assertion "search-open-by-slash" "输入 / 后 stdout 出现 phase: search:open 与 key:/" `
+    ("open={0} key={1}" -f $resOut.Contains("phase: search:open"), $resOut.Contains("phase: key:/")) `
+    ($resOut.Contains("phase: search:open") -and $resOut.Contains("phase: key:/"))
+
+if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Valid.Count -eq 0 -or
+    $focusSel.Valid.Count -eq 0 -or $clearSel.Valid.Count -eq 0) {
+    Add-Assertion "search-frames-valid" "五个搜索状态各至少一帧有效" `
+        ("off={0} res={1} nomatch={2} focus={3} clear={4}" -f ($offSel.Blank -join ','), ($resSel.Blank -join ','), ($noMatchSel.Blank -join ','), ($focusSel.Blank -join ','), ($clearSel.Blank -join ',')) $false
+} else {
+    $offImg = $offSel.Valid[0].Img
+    $resImg = $resSel.Valid[-1].Img
+    $noMatchImg = $noMatchSel.Valid[-1].Img
+    $focusImg = $focusSel.Valid[-1].Img
+    $clearImg = $clearSel.Valid[-1].Img
+
+    # 背景色块：@(首行, 末行, 总像素)
+    $offPanel = Get-PanelExtent $offImg
+    $resPanel = Get-PanelExtent $resImg
+    $noMatchPanel = Get-PanelExtent $noMatchImg
+    $focusPanel = Get-PanelExtent $focusImg
+    $clearPanel = Get-PanelExtent $clearImg
+    $focusLabel = Get-LabelExtent $focusImg
+    $clearLabel = Get-LabelExtent $clearImg
+    $offLabel = Get-LabelExtent $offImg
+    $focusLabelText = Get-LabelText $focusImg
+
+    $report.states.search = [ordered]@{
+        offFrame = $offSel.Valid[0].Index
+        resultsFrame = $resSel.Valid[-1].Index
+        noMatchFrame = $noMatchSel.Valid[-1].Index
+        focusFrame = $focusSel.Valid[-1].Index
+        clearFrame = $clearSel.Valid[-1].Index
+        panelBgOff = $offPanel[2]
+        panelBgResults = $resPanel[2]
+        panelBgNoMatch = $noMatchPanel[2]
+        panelRowsResults = @($resPanel[0], $resPanel[1])
+        panelRowsNoMatch = @($noMatchPanel[0], $noMatchPanel[1])
+        panelBgFocus = $focusPanel[2]
+        labelBgFocus = $focusLabel[2]
+        labelTextFocus = $focusLabelText
+        panelBgClear = $clearPanel[2]
+        labelBgClear = $clearLabel[2]
+        labelBgOff = $offLabel[2]
+        focusStdout = ($focusOut -split "`n" | Select-String "search:label" | ForEach-Object { $_.Line } | Select-Object -First 1)
+        blankFrames = [ordered]@{
+            off = $offSel.Blank; results = $resSel.Blank; noMatch = $noMatchSel.Blank
+            focus = $focusSel.Blank; clear = $clearSel.Blank
+        }
+    }
+
+    Add-Assertion "search-panel-with-results" ("左上角面板底色像素 >= {0}" -f $Thresholds.SearchPanelBgMinPixels) `
+        ("off={0} results={1}" -f $offPanel[2], $resPanel[2]) `
+        ($resPanel[2] -ge $Thresholds.SearchPanelBgMinPixels)
+    Add-Assertion "search-panel-no-match" ("左上角面板底色像素 >= {0}" -f $Thresholds.SearchPanelBgMinPixels) `
+        ("off={0} nomatch={1}" -f $offPanel[2], $noMatchPanel[2]) `
+        ($noMatchPanel[2] -ge $Thresholds.SearchPanelBgMinPixels)
+    Add-Assertion "search-results-list-taller" ("有结果面板底边比无匹配低 >= {0}px" -f $Thresholds.SearchPanelRowsMinHeightDiff) `
+        ("resultsBottom={0} nomatchBottom={1} diff={2}" -f $resPanel[1], $noMatchPanel[1], ($resPanel[1] - $noMatchPanel[1])) `
+        (($resPanel[1] - $noMatchPanel[1]) -ge $Thresholds.SearchPanelRowsMinHeightDiff)
+    Add-Assertion "search-focus-closes-panel" ("聚焦态左上角面板底色像素 <= {0}" -f $Thresholds.SearchClearedMaxBgPixels) `
+        ("focus={0}" -f $focusPanel[2]) `
+        ($focusPanel[2] -le $Thresholds.SearchClearedMaxBgPixels)
+    Add-Assertion "search-focus-label-visible" ("聚焦态右下角标签底色 >= {0} 且正文白 >= {1}" -f $Thresholds.SearchLabelBgMinPixels, $Thresholds.SearchLabelMinTextPixels) `
+        ("bg={0} text={1} rows={2}-{3}" -f $focusLabel[2], $focusLabelText, $focusLabel[0], $focusLabel[1]) `
+        ($focusLabel[2] -ge $Thresholds.SearchLabelBgMinPixels -and $focusLabelText -ge $Thresholds.SearchLabelMinTextPixels)
+    Add-Assertion "search-clear-removes-panel-and-label" ("清除后面板/标签底色 <= {0}，且与基线一致" -f $Thresholds.SearchClearedMaxBgPixels) `
+        ("panel={0} label={1} offLabel={2}" -f $clearPanel[2], $clearLabel[2], $offLabel[2]) `
+        ($clearPanel[2] -le $Thresholds.SearchClearedMaxBgPixels -and $clearLabel[2] -le $Thresholds.SearchClearedMaxBgPixels)
+    Add-Assertion "search-focus-marker" "stdout 出现 phase: search:focus" $(if ($focusOut.Contains("phase: search:focus")) { "seen" } else { "missing" }) ($focusOut.Contains("phase: search:focus"))
+    Add-Assertion "search-clear-marker" "stdout 出现 phase: search:focus 与 phase: search:clear" `
+        ("focus={0} clear={1}" -f $focusOut.Contains("phase: search:focus"), $clearOut.Contains("phase: search:clear")) `
+        ($clearOut.Contains("phase: search:focus") -and $clearOut.Contains("phase: search:clear"))
+
+    $focusSummary = ($focusOut -split "`n" | Select-String "search:label module=" | ForEach-Object { $_.Line } | Select-Object -First 1)
+    Add-Assertion "search-focus-stdout-counts" "聚焦态 stdout 给出 module 与 upstream/downstream 计数" $(if ($focusSummary) { $focusSummary.Trim() } else { "missing" }) ([bool]$focusSummary)
 }
 
 # ---- 汇总 ------------------------------------------------------------------

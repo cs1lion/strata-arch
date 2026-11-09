@@ -55,6 +55,16 @@ param(
     [int]$SettleMs = 300,
     # 可选：把子进程 stdout 落盘；用于核对「抓取时仍未就绪」等状态。
     [string]$StdoutFile = "",
+    # 可选：在第 N 帧抓取之后向窗口发送按键（SendKeys 语法，如 "/components{ENTER}"）。
+    # 窗口已在抓帧前置前台，因此按键会进入 GPUI 的键盘链；配合 Frames>=2 可对比按键前后。
+    [int]$KeysAfterFrame = 0,
+    [string]$Keys = "",
+    # 发送按键后等待窗口重绘的时间（毫秒）。
+    [int]$KeysSettleMs = 300,
+    # 发送方式：post = PostMessage(WM_KEYDOWN/WM_KEYUP)；sendkeys = SendKeys。
+    # 实测 SendKeys 在该 GPUI 0.2.2 窗口上不进键盘链（无 key 标记），故默认 post。
+    [ValidateSet("post", "sendkeys")]
+    [string]$KeysMethod = "post",
     # 置位时，在等待标记/句柄成功、开始抓帧之前冻结 stdout；
     # 否则在抓帧结束后写（默认行为）。加载态需要前者，避免「抓帧时 loading、
     # 写盘时已 load:done」的时序歧义。
@@ -88,6 +98,7 @@ $outFileName = [System.IO.Path]::GetFileNameWithoutExtension($absolutePng)
 $outExtension = [System.IO.Path]::GetExtension($absolutePng)
 
 Add-Type -AssemblyName System.Drawing
+if ($Keys -ne "") { Add-Type -AssemblyName System.Windows.Forms }
 
 if (-not ("AppRunner" -as [type])) {
     Add-Type -TypeDefinition @"
@@ -106,6 +117,66 @@ public static class CaptureWin32 {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, UIntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int MapVirtualKey(uint code, uint mapType);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern short VkKeyScanW(char ch);
+
+    /// 把 "{ENTER}" / "{ESC}" / "{UP}" / "{DOWN}" / "{BACKSPACE}" / "{TAB}" 等
+    /// 记为 (vk, scan)；其余字符用 VkKeyScanW 取当前布局的虚拟键。
+    private static void ResolveKey(char ch, out uint vk, out uint scan) {
+        switch (ch) {
+            case 'E': vk = 0x0D; scan = 0x1C; break;   // ENTER
+            case 'C': vk = 0x1B; scan = 0x01; break;   // ESC
+            case 'U': vk = 0x26; scan = 0x48; break;   // UP
+            case 'D': vk = 0x28; scan = 0x50; break;   // DOWN
+            case 'B': vk = 0x08; scan = 0x0E; break;   // BACKSPACE
+            case 'T': vk = 0x09; scan = 0x0F; break;   // TAB
+            default: {
+                short vks = VkKeyScanW(ch);
+                vk = (uint)(vks & 0xFF);
+                scan = (uint)MapVirtualKey(vk, 0);
+                break;
+            }
+        }
+    }
+
+    /// 用 PostMessage 发送一串按键；`{X}` 表示功能键，其他字符按文本逐字发送。
+    public static int PostKeys(IntPtr hwnd, string text) {
+        int sent = 0;
+        for (int i = 0; i < text.Length; i++) {
+            char ch = text[i];
+            uint vk; uint scan;
+            if (ch == '{') {
+                int close = text.IndexOf('}', i + 1);
+                if (close < 0) break;
+                string name = text.Substring(i + 1, close - i - 1).ToUpperInvariant();
+                char code;
+                switch (name) {
+                    case "ENTER": code = 'E'; break;
+                    case "ESC": code = 'C'; break;
+                    case "UP": code = 'U'; break;
+                    case "DOWN": code = 'D'; break;
+                    case "BACKSPACE": code = 'B'; break;
+                    case "TAB": code = 'T'; break;
+                    default: return sent;
+                }
+                ResolveKey(code, out vk, out scan);
+                i = close;
+            } else {
+                ResolveKey(ch, out vk, out scan);
+            }
+            IntPtr down = (IntPtr)(1 | ((long)scan << 16));
+            IntPtr up = (IntPtr)(1 | ((long)scan << 16) | (1L << 30) | (1L << 31));
+            PostMessage(hwnd, 0x0100, (UIntPtr)vk, down);
+            Thread.Sleep(5);
+            PostMessage(hwnd, 0x0101, (UIntPtr)vk, up);
+            Thread.Sleep(25);
+            sent++;
+        }
+        return sent;
+    }
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
@@ -321,6 +392,38 @@ try {
         }
         Get-FileHash -Algorithm SHA256 -Path $framePath | ForEach-Object {
             Write-Output ("sha256 {0}" -f $_.Hash)
+        }
+
+        if ($Keys -ne "" -and $index -eq $KeysAfterFrame) {
+            [CaptureWin32]::SetForegroundWindow($hwnd) | Out-Null
+            # SendKeys 需要窗口处于真实前台；实测仅 SetForegroundWindow 时按键不进 GPUI，
+            # 先在窗口左上角空白处点一下（同时激活窗口并让画布拿到键盘焦点）。
+            [CaptureWin32]::SetCursorPos(($rect.Left + 30), ($rect.Top + 60)) | Out-Null
+            [CaptureWin32]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
+            [CaptureWin32]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 150
+            # SendKeys 还要求发送进程自身处于前台；用 WScript.Shell 的 AppActivate 把目标
+            # 窗口拉到前台再发。失败不中止抓帧，由调用方按 stdout 判定按键是否生效。
+            if ($KeysMethod -eq "sendkeys") {
+                $activated = $false
+                try {
+                    $shell = New-Object -ComObject WScript.Shell
+                    $activated = [bool]$shell.AppActivate([int]$runner.Id)
+                    Start-Sleep -Milliseconds 200
+                } catch {
+                    Write-Output ("AppActivate 失败: {0}" -f $_.Exception.Message)
+                }
+                try {
+                    [System.Windows.Forms.SendKeys]::SendWait($Keys)
+                    Write-Output ("keys sent after frame {0}: {1} (sendkeys, appActivate={2})" -f $index, $Keys, $activated)
+                } catch {
+                    Write-Output ("SendKeys 失败: {0}" -f $_.Exception.Message)
+                }
+            } else {
+                $sent = [CaptureWin32]::PostKeys($hwnd, $Keys)
+                Write-Output ("keys sent after frame {0}: {1} (post, {2} keys)" -f $index, $Keys, $sent)
+            }
+            if ($KeysSettleMs -gt 0) { Start-Sleep -Milliseconds $KeysSettleMs }
         }
     }
 

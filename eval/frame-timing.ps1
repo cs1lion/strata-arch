@@ -8,14 +8,24 @@
 #   pwsh -File eval/frame-timing.ps1 -Mode pan -Frames 120
 #   pwsh -File eval/frame-timing.ps1 -Mode pan -Frames 120 -Skip "labels"
 #   pwsh -File eval/frame-timing.ps1 -Mode pan -Frames 120 -Skip "edges,labels"
+#   pwsh -File eval/frame-timing.ps1 -Mode search -SearchPrefix "/components"
+#
+# search 模式：外部线程向窗口 PostMessage 逐字输入，靠应用自己打的 `phase: key:*`
+# 界定输入窗口，读该窗口内 `phase: frame` 的间隔（输入期间帧）。仅 Windows 实现；
+# 其他平台直接报错退出，不产假读数。
 #
 # 输出：stdout 读数表 + JSON 明细（含原始帧间隔）。
 
 [CmdletBinding()]
 param(
     [string]$Repo = "tests/corpus/excalidraw",
-    [ValidateSet("pan", "reveal", "idle", "ab")]
+    [ValidateSet("pan", "reveal", "idle", "ab", "search")]
     [string]$Mode = "pan",
+    # search 模式：输入内容与逐字间隔（毫秒）。
+    [string]$SearchPrefix = "/components",
+    [int]$SearchKeyDelayMs = 25,
+    # 从进程启动到开始输入前的等待；必须大于语料加载时间，否则按键落在加载态上。
+    [int]$SearchStartDelayMs = 4000,
     [int]$Frames = 120,
     [string]$Skip = "",
     [string]$AbCycle = "base,B,BA",
@@ -59,6 +69,16 @@ switch ($Mode) {
         $autoCloseMs = 2500 + $IdleMs + 5000
         $windowTag = "idle"
     }
+    "search" {
+        if (-not $IsWindows) {
+            Write-Output "frame timing: mode=search 仅实现 Windows 按键注入（PostMessage）；本平台未测"
+            exit 2
+        }
+        $arguments += "--no-reveal"
+        # 输入窗口约 SearchPrefix.Length * (延迟 + 处理) 毫秒；起点由 SearchStartDelayMs 控制。
+        $autoCloseMs = $SearchStartDelayMs + ($SearchPrefix.Length * ($SearchKeyDelayMs + 40)) + 4000
+        $windowTag = "search"
+    }
     "ab" {
         # 交替测的是稳态帧率，揭示动画会把前 80 帧混进来，显式关闭。
         $arguments += "--no-reveal"
@@ -87,6 +107,73 @@ $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $psi
 $process.Start() | Out-Null
 
+# search 模式：独立线程按固定间隔 PostMessage 逐字输入，不改应用侧任何逻辑。
+$injector = $null
+if ($Mode -eq "search") {
+    $injector = Start-ThreadJob -ArgumentList @($process.Id, $SearchPrefix, $SearchKeyDelayMs, $SearchStartDelayMs) -ScriptBlock {
+        param($TargetPid, $Keys, $DelayMs, $StartDelayMs)
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public class SearchKeyInject {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, UIntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern int MapVirtualKey(uint c, uint t);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern short VkKeyScanW(char c);
+
+    private static void PostChar(IntPtr hwnd, uint vk, uint scan) {
+        IntPtr down = (IntPtr)(1 | ((long)scan << 16));
+        IntPtr up = (IntPtr)(1 | ((long)scan << 16) | (1L << 30) | (1L << 31));
+        PostMessage(hwnd, 0x0100, (UIntPtr)vk, down);
+        Thread.Sleep(5);
+        PostMessage(hwnd, 0x0101, (UIntPtr)vk, up);
+    }
+
+    public static int TypeText(IntPtr hwnd, string text, int delayMs) {
+        int sent = 0;
+        foreach (char ch in text) {
+            short vks = VkKeyScanW(ch);
+            uint vk = (uint)(vks & 0xFF);
+            uint scan = (uint)MapVirtualKey(vk, 0);
+            PostChar(hwnd, vk, scan);
+            Thread.Sleep(delayMs);
+            sent++;
+        }
+        return sent;
+    }
+}
+'@
+        $hwnd = [IntPtr]::Zero
+        for ($i = 0; $i -lt 150; $i++) {
+            $proc = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
+            if (-not $proc) { return "process-gone" }
+            if ($proc.MainWindowHandle -ne 0) { $hwnd = [IntPtr]$proc.MainWindowHandle; break }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($hwnd -eq [IntPtr]::Zero) { return "no-window" }
+        # 等首屏就绪（内容加载完成）后激活窗口、点一下画布让画布拿到键盘焦点，再逐字输入。
+        Start-Sleep -Milliseconds $StartDelayMs
+        [SearchKeyInject]::SetForegroundWindow($hwnd) | Out-Null
+        $rect = New-Object SearchKeyInject+RECT
+        if ([SearchKeyInject]::GetWindowRect($hwnd, [ref]$rect)) {
+            [SearchKeyInject]::SetCursorPos(($rect.Left + 30), ($rect.Top + 60)) | Out-Null
+            [SearchKeyInject]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
+            [SearchKeyInject]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+        }
+        Start-Sleep -Milliseconds 150
+        $sent = [SearchKeyInject]::TypeText($hwnd, $Keys, $DelayMs)
+        return "sent=$sent"
+    }
+}
+
 $marks = [ordered]@{}
 $frameTimes = New-Object System.Collections.Generic.List[double]
 $panFrameTimes = New-Object System.Collections.Generic.List[double]
@@ -95,6 +182,7 @@ $abRows = @()
 $abSummary = @()
 $firstLine = ""
 $counters = ""
+$lastKeyMark = $null
 $line = $process.StandardOutput.ReadLine()
 while ($null -ne $line) {
     $elapsed = [double]$watch.Elapsed.TotalMilliseconds
@@ -103,6 +191,7 @@ while ($null -ne $line) {
         if (-not $marks.Contains($label)) { $marks[$label] = $elapsed }
         if ($label -eq "frame") { $frameTimes.Add($elapsed) }
         if ($label -eq "pan:frame") { $panFrameTimes.Add($elapsed) }
+        if ($label.StartsWith("key:")) { $lastKeyMark = $elapsed }
         if ($label.StartsWith("ab:segment=")) {
             $abMarks.Add([pscustomobject]@{ name = $label.Substring(11); at = $elapsed })
         }
@@ -116,6 +205,13 @@ while ($null -ne $line) {
 $stderr = $process.StandardError.ReadToEnd()
 $process.WaitForExit()
 $watch.Stop()
+
+$injectorResult = ""
+if ($injector) {
+    $injector | Wait-Job -Timeout 10 | Out-Null
+    $injectorResult = (@($injector | Receive-Job) -join " ")
+    $injector | Remove-Job -Force -ErrorAction SilentlyContinue
+}
 
 function Get-Stats {
     param([double[]]$Values)
@@ -169,6 +265,15 @@ switch ($Mode) {
         $revealStart = if ($marks.Contains("reveal:start")) { $marks["reveal:start"] } else { $startMark }
         $revealEnd = if ($marks.Contains("reveal:done")) { $marks["reveal:done"] } else { $watch.Elapsed.TotalMilliseconds }
         $intervals = Get-Intervals (Get-WindowTimes $frameTimes $revealStart $revealEnd)
+    }
+    "search" {
+        # 输入窗口由应用自己打的 `phase: key:/` 与最后一次 `phase: key:*` 界定。
+        $keyStart = $marks["key:/"]
+        if ($null -ne $keyStart -and $null -ne $lastKeyMark -and $lastKeyMark -gt $keyStart) {
+            $intervals = Get-Intervals (Get-WindowTimes $frameTimes $keyStart $lastKeyMark)
+        } else {
+            $intervals = @()
+        }
     }
     "idle" {
         $idleStart = $startMark + 500
@@ -239,6 +344,13 @@ $detail = [pscustomobject]@{
         meanMs = $stats.mean
         fpsFromMedian = $fps
     }
+    search = [ordered]@{
+        keys = $SearchPrefix
+        keyDelayMs = $SearchKeyDelayMs
+        keyStartMs = $marks["key:/"]
+        lastKeyMs = $lastKeyMark
+        injected = $injectorResult
+    }
     rawIntervalsMs = @($intervals | ForEach-Object { [math]::Round($_, 2) })
     abSegments = @($abRows)
     abSummary = @($abSummary)
@@ -279,6 +391,12 @@ if ($Mode -eq "idle") {
 } else {
     Write-Output ("  interval median={0}ms p95={1}ms min={2}ms max={3}ms mean={4}ms (~{5}fps)" -f `
             $stats.median, $stats.p95, $stats.min, $stats.max, $stats.mean, $fps)
+    if ($Mode -eq "search") {
+        Write-Output ("  keys={0} injected={1}" -f $SearchPrefix, $injectorResult)
+        Write-Output ("  keyWindow={0}ms keyStart={1}ms lastKey={2}ms" -f `
+                $(if ($null -ne $marks["key:/"] -and $null -ne $lastKeyMark) { [math]::Round($lastKeyMark - $marks["key:/"], 1) } else { "-" }), `
+                $marks["key:/"], $lastKeyMark)
+    }
     Write-Output ("  reveal={0}ms prepDone={1}ms contentPresented={2}ms panDone={3}ms" -f `
             $(if ($null -ne $detail.revealDoneMs -and $null -ne $detail.revealStartMs) { $detail.revealDoneMs - $detail.revealStartMs } else { "-" }), `
             $detail.prepDoneMs, $detail.contentPresentedMs, $detail.panDoneMs)
