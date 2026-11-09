@@ -1879,7 +1879,8 @@ impl MapView {
                 self.fly_to_anchor = None;
                 self.state.cancel_transition();
             }
-        } else {
+        } else if !self.search.is_focused() {
+            // 无播放时相机归用户；但搜索聚焦自己发起的转场不能被这里清掉。
             self.fly_to_anchor = None;
             self.state.cancel_transition();
         }
@@ -1936,6 +1937,7 @@ impl MapView {
 
     /// ticket 20：键盘入口。任何按键先结束揭示；有 `--from/--to` 时搜索整体禁用。
     fn handle_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        phase_marker(&format!("key:{}", event.keystroke.key));
         self.interrupt_reveal();
         if self.playback.is_some() {
             return;
@@ -1955,31 +1957,32 @@ impl MapView {
         );
         match self.search.handle(key, self.state.viewport()) {
             SearchAction::None => {}
-            SearchAction::Opened => {
-                phase_marker("search:open");
-                cx.notify();
-            }
-            SearchAction::Closed => {
-                phase_marker("search:close");
-                cx.notify();
-            }
+            SearchAction::Opened => phase_marker("search:open"),
+            SearchAction::Closed => phase_marker("search:close"),
             SearchAction::Focused(request) => {
+                // 标签计数直接来自一跳集合，供像素证据与人工核对。
+                if let Some(label) = self.search.focus_label() {
+                    phase_marker(&format!(
+                        "search:label module={} upstream={} downstream={}",
+                        label.module, label.upstream, label.downstream
+                    ));
+                }
                 phase_marker("search:focus");
                 if self.state.begin_fly_to(Some(request.target), viewport_size) {
                     self.transition_generation += 1;
                     self.transition_delta = Rc::new(Cell::new(0.0));
                     Self::schedule_transition_step(self, window, cx);
                 }
-                cx.notify();
             }
             SearchAction::Cleared(snapshot) => {
                 // 复原是精确的：中断进行中的转场后逐字段写回快照。
                 self.state.cancel_transition();
                 self.state.set_viewport(snapshot);
                 phase_marker("search:clear");
-                cx.notify();
             }
         }
+        // 输入、选中移动、开合、聚焦都会改变面板内容，统一要求重绘。
+        cx.notify();
     }
 
     /// 当前帧生效的渲染调优：无 A/B 周期时读环境变量，有周期时按帧段轮换。
