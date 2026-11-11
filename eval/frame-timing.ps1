@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [string]$Repo = "tests/corpus/excalidraw",
-    [ValidateSet("pan", "reveal", "idle", "ab", "search")]
+    [ValidateSet("pan", "reveal", "idle", "ab", "search", "stability")]
     [string]$Mode = "pan",
     # search 模式：输入内容与逐字间隔（毫秒）。
     [string]$SearchPrefix = "/components",
@@ -27,6 +27,9 @@ param(
     # 从进程启动到开始输入前的等待；必须大于语料加载时间，否则按键落在加载态上。
     [int]$SearchStartDelayMs = 4000,
     [int]$Frames = 120,
+    # stability 模式：固定负载（同进程、同配置、往返平移）下重复的分段数；每分段 Frames 帧。
+    # 段间差异即「测量噪声地板」，用于判断 20% / 33ms / 路线收益是否可分辨。
+    [int]$StabilitySegments = 12,
     [string]$Skip = "",
     [string]$AbCycle = "base,B,BA",
     [int]$AbSegmentFrames = 60,
@@ -89,6 +92,14 @@ switch ($Mode) {
         $envVars["STRATA_AUTOPAN_FRAMES"] = "$($segments.Count * $AbSegmentFrames + $AbSegmentFrames)"
         $autoCloseMs = 2500 + (($segments.Count + 1) * $AbSegmentFrames * 120) + 8000
         $windowTag = "ab"
+    }
+    "stability" {
+        # 稳定性测量：同进程、同配置、往返平移，切成 Segments 段，每段 Frames 帧。
+        # 段间差异即「测量噪声地板」（无真实效应时的随机波动），用于判断 20% / 33ms / 路线收益是否可分辨。
+        $arguments += "--no-reveal"
+        $envVars["STRATA_AUTOPAN_FRAMES"] = "$($StabilitySegments * $Frames)"
+        $autoCloseMs = 2500 + ($StabilitySegments * $Frames * 120) + 8000
+        $windowTag = "stability"
     }
 }
 if ($Skip) { $envVars["STRATA_RENDER_SKIP"] = $Skip }
@@ -245,6 +256,54 @@ function Get-Intervals {
     return $intervals.ToArray()
 }
 
+function Get-StdDev {
+    param([double[]]$Values)
+    $n = $Values.Count
+    if ($n -lt 2) { return $null }
+    $mean = ($Values | Measure-Object -Average).Average
+    $sumSq = 0.0
+    foreach ($v in $Values) { $sumSq += ($v - $mean) * ($v - $mean) }
+    return [math]::Round([math]::Sqrt($sumSq / ($n - 1)), 3)
+}
+
+# 稳定性摘要：把同一配置、同进程、多分段的读数当作「无效应时的噪声分布」，
+# 给出段间离散度与据此推导的噪声地板（约 95% 置信下可分辨的最小效应）。
+function Get-StabilitySummary {
+    param([double[]]$Medians, [double[]]$P95s)
+    $meanMed = ($Medians | Measure-Object -Average).Average
+    $stdMed = Get-StdDev $Medians
+    $cvPct = if ($meanMed -and $stdMed -ne $null) { [math]::Round($stdMed / $meanMed * 100, 2) } else { $null }
+    $minMed = ($Medians | Measure-Object -Minimum).Minimum
+    $maxMed = ($Medians | Measure-Object -Maximum).Maximum
+    $spread = [math]::Round($maxMed - $minMed, 2)
+    $spreadPct = if ($meanMed) { [math]::Round($spread / $meanMed * 100, 2) } else { $null }
+    $meanP95 = ($P95s | Measure-Object -Average).Average
+    $stdP95 = Get-StdDev $P95s
+    $cvP95Pct = if ($meanP95 -and $stdP95 -ne $null) { [math]::Round($stdP95 / $meanP95 * 100, 2) } else { $null }
+    $minP95 = ($P95s | Measure-Object -Minimum).Minimum
+    $maxP95 = ($P95s | Measure-Object -Maximum).Maximum
+    $spreadP95 = [math]::Round($maxP95 - $minP95, 2)
+    # 噪声地板：取「2×标准差（约 95% 置信半宽）」与「段间极差」的较大者，作为保守下界。
+    $floorMs = if ($stdMed -ne $null) { [math]::Round([math]::Max(2 * $stdMed, $spread), 2) } else { $spread }
+    return [pscustomobject]@{
+        segments = $Medians.Count
+        medianMeanMs = [math]::Round($meanMed, 2)
+        medianStdMs = $stdMed
+        medianCvPct = $cvPct
+        medianMinMs = [math]::Round($minMed, 2)
+        medianMaxMs = [math]::Round($maxMed, 2)
+        medianSpreadMs = $spread
+        medianSpreadPct = $spreadPct
+        p95MeanMs = [math]::Round($meanP95, 2)
+        p95StdMs = $stdP95
+        p95CvPct = $cvP95Pct
+        p95MinMs = [math]::Round($minP95, 2)
+        p95MaxMs = [math]::Round($maxP95, 2)
+        p95SpreadMs = $spreadP95
+        noiseFloorMs = $floorMs
+    }
+}
+
 function Get-WindowTimes {
     param([double[]]$Times, $Start, $End)
     return @($Times | Where-Object { $_ -ge $Start -and $_ -le $End })
@@ -315,6 +374,28 @@ switch ($Mode) {
             }
         }
     }
+    "stability" {
+        # 固定负载：同进程、同配置、往返平移，切成 Segments 段，每段 Frames 帧。
+        # 整段 pooled 间隔用于 `intervals` 块；段间离散度用于稳定性摘要。
+        $intervals = Get-Intervals $frameTimes
+        $segRows = @()
+        $frameArray = $frameTimes.ToArray()
+        for ($seg = 0; $seg -lt $StabilitySegments; $seg += 1) {
+            $from = $seg * $Frames
+            $to = [math]::Min($from + $Frames, $frameArray.Count)
+            if (($to - $from) -lt $Frames) { break }
+            $segIntervals = Get-Intervals @($frameArray[$from..($to - 1)])
+            $segStats = Get-Stats $segIntervals
+            $segRows += [pscustomobject]@{
+                segment = $seg + 1
+                intervalsMs = @($segIntervals | ForEach-Object { [math]::Round($_, 2) })
+                stats = $segStats
+            }
+        }
+        $segMedians = @($segRows | ForEach-Object { $_.stats.median })
+        $segP95 = @($segRows | ForEach-Object { $_.stats.p95 })
+        $stabilitySummary = Get-StabilitySummary -Medians $segMedians -P95s $segP95
+    }
 }
 
 if ($Mode -notin @("idle", "ab")) { $stats = Get-Stats $intervals }
@@ -354,6 +435,8 @@ $detail = [pscustomobject]@{
     rawIntervalsMs = @($intervals | ForEach-Object { [math]::Round($_, 2) })
     abSegments = @($abRows)
     abSummary = @($abSummary)
+    stabilitySegments = @($segRows)
+    stabilitySummary = $stabilitySummary
     stderrTail = @(($stderr -split "`n") | Where-Object { $_ -and $_.Trim() } | Select-Object -Last 3)
 }
 $outDir = Split-Path -Parent $OutJson
@@ -387,6 +470,27 @@ if ($Mode -eq "idle") {
             Write-Output ("  {0,-10} {1,7} {2,16} {3,14}" -f `
                     $row.segment, $row.batches, $row.medianOfMediansMs, $row.medianOfP95Ms)
         }
+    }
+} elseif ($Mode -eq "stability") {
+    if ($segRows.Count -eq 0) {
+        Write-Output "  未读到足够的 phase: frame 打点（检查 STRATA_FRAME_TRACE / STRATA_AUTOPAN_FRAMES）"
+    } else {
+        Write-Output ("  {0,-8} {1,7} {2,9} {3,9} {4,9} {5,9} {6,9}" -f `
+                "segment", "samples", "median", "p95", "min", "max", "mean")
+        foreach ($row in $segRows) {
+            Write-Output ("  {0,-8} {1,7} {2,9} {3,9} {4,9} {5,9} {6,9}" -f `
+                    $row.segment, $row.stats.count, $row.stats.median, $row.stats.p95, `
+                    $row.stats.min, $row.stats.max, $row.stats.mean)
+        }
+        Write-Output ""
+        $s = $stabilitySummary
+        Write-Output ("  segments={0} medianMean={1}ms medianStd={2}ms medianCV={3}%" -f `
+                $s.segments, $s.medianMeanMs, $s.medianStdMs, $s.medianCvPct)
+        Write-Output ("  medianMin={0}ms medianMax={1}ms medianSpread={2}ms ({3}%)" -f `
+                $s.medianMinMs, $s.medianMaxMs, $s.medianSpreadMs, $s.medianSpreadPct)
+        Write-Output ("  p95Mean={0}ms p95CV={1}% p95Spread={2}ms" -f `
+                $s.p95MeanMs, $s.p95CvPct, $s.p95SpreadMs)
+        Write-Output ("  => noise floor (>=2x std or segment range) = {0}ms" -f $s.noiseFloorMs)
     }
 } else {
     Write-Output ("  interval median={0}ms p95={1}ms min={2}ms max={3}ms mean={4}ms (~{5}fps)" -f `
