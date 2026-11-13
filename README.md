@@ -1,5 +1,5 @@
 # Strata
-
+![Rust GPUI](https://img.shields.io/badge/Rust-GPUI-blue) ![License Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue)
 本地优先的 TypeScript/JavaScript 架构解析与可视化工具：静态分析得到模块分层、依赖与调用图，再把它们放进原生桌面窗口里看。Rust workspace，`arch-core` 负责解析与图模型，`arch-cli` 输出 JSON，`arch-view` 提供 GPUI 桌面视图。
 
 ## 前置条件
