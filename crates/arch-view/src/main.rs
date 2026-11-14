@@ -2618,6 +2618,26 @@ impl MapView {
                 } else {
                     (0..symbols.nodes.len()).collect::<Vec<_>>()
                 };
+                #[derive(Clone)]
+                struct SymbolNodeDraw {
+                    rect: arch_view::layout::Rect,
+                    bg: gpui::Hsla,
+                    border: gpui::Hsla,
+                    accent: gpui::Hsla,
+                    opacity: f32,
+                }
+                #[derive(Clone)]
+                struct SymbolNodeOverlay {
+                    rect: arch_view::layout::Rect,
+                    opacity: f32,
+                    badge_bg: gpui::Hsla,
+                    badge_fg: gpui::Hsla,
+                    label_color: gpui::Hsla,
+                    kind: &'static str,
+                    name: String,
+                }
+                let mut draw_items: Vec<SymbolNodeDraw> = Vec::new();
+                let mut overlays: Vec<SymbolNodeOverlay> = Vec::new();
                 for index in indices {
                     let node = &symbols.nodes[index];
                     let opacity = match &self.playback {
@@ -2626,24 +2646,89 @@ impl MapView {
                         None => 1.0,
                     };
                     let opacity = opacity * reveal_overall;
-                    if tuning.cull_viewport
-                        && rect_fully_outside(
-                            viewport.screen_rect(node.rect),
-                            viewport_size,
-                            CULL_MARGIN,
-                        )
-                    {
+                    let rect = viewport.screen_rect(node.rect);
+                    if tuning.cull_viewport && rect_fully_outside(rect, viewport_size, CULL_MARGIN) {
                         continue;
                     }
-                    root = root.child(symbol_node_element(
-                        node,
-                        opacity,
-                        focus,
-                        viewport,
-                        labels,
-                        selected.as_deref(),
-                        &highlighted,
-                    ));
+                    let is_selected = selected.as_deref() == Some(node.id.as_str()) || focus == Some(node.id.as_str());
+                    let is_highlighted = highlighted.contains(&node.id);
+                    let style = theme.resolve_symbol_node_style(node, is_selected, false, is_highlighted, is_selected || is_highlighted);
+                    let border = selection_border(&node.id, theme.card_border_default, selected.as_deref(), &highlighted, focus);
+                    draw_items.push(SymbolNodeDraw { rect, bg: style.bg, border, accent: style.accent_bar, opacity });
+                    if labels {
+                        overlays.push(SymbolNodeOverlay {
+                            rect,
+                            opacity,
+                            badge_bg: style.badge_bg,
+                            badge_fg: style.badge_fg,
+                            label_color: style.label_color,
+                            kind: node.kind,
+                            name: node.name.clone(),
+                        });
+                    }
+                }
+                if !draw_items.is_empty() {
+                    let items = draw_items.clone();
+                    let sym_theme = theme.clone();
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(0.))
+                            .top(px(0.))
+                            .size_full()
+                            .child(canvas(
+                                move |bounds, _, _| bounds,
+                                move |bounds, _, window, _| {
+                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                    for item in &items {
+                                        let mut bg = item.bg; bg.a *= item.opacity;
+                                        let mut border = item.border; border.a *= item.opacity;
+                                        let mut accent = item.accent; accent.a *= item.opacity;
+                                        let b = gpui::Bounds {
+                                            origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
+                                            size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
+                                        };
+                                        window.paint_quad(quad(b, Corners::all(sym_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
+                                        let accent_bar = gpui::Bounds {
+                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
+                                            size: size(sym_theme.accent_bar_width, px((f32::from(b.size.height) - 8.0).max(0.0))),
+                                        };
+                                        window.paint_quad(quad(accent_bar, Corners::all(px(2.0)), accent, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                                    }
+                                },
+                            )),
+                    );
+                }
+                for item in overlays {
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(item.rect.x + 10.))
+                            .top(px(item.rect.y))
+                            .w(px((item.rect.width - 16.0).max(0.0)))
+                            .h(px(item.rect.height))
+                            .opacity(item.opacity)
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .px(px(4.))
+                                    .py(px(1.))
+                                    .rounded(px(3.))
+                                    .bg(item.badge_bg)
+                                    .text_xs()
+                                    .text_color(item.badge_fg)
+                                    .child(item.kind),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(item.label_color)
+                                    .child(item.name),
+                            ),
+                    );
                 }
             }
         }
@@ -3335,71 +3420,4 @@ fn band_element(
                 .text_color(header)
                 .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
         )
-}
-fn symbol_node_element(
-    node: &arch_view::view::SymbolNodeLayout,
-    opacity: f32,
-    focus: Option<&str>,
-    viewport: Viewport,
-    labels: bool,
-    selected: Option<&str>,
-    highlighted: &std::collections::BTreeSet<String>,
-) -> impl IntoElement {
-    let rect = scaled_rect(node.rect, viewport);
-    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
-    let is_selected = selected == Some(node.id.as_str()) || focus == Some(node.id.as_str());
-    let is_highlighted = highlighted.contains(&node.id);
-    let style = theme.resolve_symbol_node_style(node, is_selected, false, is_highlighted, is_selected || is_highlighted);
-    let border = selection_border(&node.id, theme.card_border_default, selected, highlighted, focus);
-
-    let mut element = div()
-        .absolute()
-        .left(px(rect.x))
-        .top(px(rect.y))
-        .w(px(rect.width))
-        .h(px(rect.height))
-        .overflow_hidden()
-        .rounded(theme.card_radius)
-        .border_1()
-        .border_color(border)
-        .bg(style.bg)
-        .opacity(opacity)
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .pl(px(10.))
-        .pr(px(6.));
-
-    element = element.child(
-        div()
-            .absolute()
-            .left(px(1.))
-            .top(px(4.))
-            .bottom(px(4.))
-            .w(theme.accent_bar_width)
-            .rounded(px(2.))
-            .bg(style.accent_bar),
-    );
-
-    if labels {
-        element = element
-            .child(
-                div()
-                    .px(px(4.))
-                    .py(px(1.))
-                    .rounded(px(3.))
-                    .bg(style.badge_bg)
-                    .text_xs()
-                    .text_color(style.badge_fg)
-                    .child(node.kind),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(style.label_color)
-                    .child(node.name.clone()),
-            );
-    }
-
-    element
 }
