@@ -15,7 +15,7 @@ use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::commit_diff::{diff_commits_cancellable, CommitDiffError, DiffProgress};
 use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
-use arch_view::diff::{DiffFade, DiffModel, DIFF_LABEL, FADE_DURATION_MS};
+use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
 use arch_view::layout::{
     layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
 };
@@ -223,6 +223,29 @@ impl<T: Render> LoadingShell<T> {
         for line in self.status.visible_lines() {
             panel = panel.child(div().text_sm().text_color(color).child(line));
         }
+        if let LoadStatus::Loading(loading) = &self.status {
+            let progress = match loading.stage() {
+                LoadingStage::ReadingCommits => 0.2,
+                LoadingStage::SamplingHistory { .. } => 0.5,
+                LoadingStage::BuildingLayers => 0.75,
+                LoadingStage::ComputingLayout => 0.9,
+                LoadingStage::Custom(_) => 0.6,
+            };
+            panel = panel.child(
+                div()
+                    .w(px(280.))
+                    .h(px(4.))
+                    .rounded(px(2.))
+                    .bg(rgb(0x2c3a4a))
+                    .child(
+                        div()
+                            .w(px(280.0 * progress))
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(rgb(0x58a6ff)),
+                    ),
+            );
+        }
         if !failed {
             panel = panel.child(
                 div()
@@ -241,7 +264,7 @@ impl<T: Render> LoadingShell<T> {
                                 cancel.store(true, Ordering::SeqCst);
                                 if let LoadStatus::Loading(loading) = &mut this.status {
                                     loading.set_stage(LoadingStage::Custom(
-                                        "正在取消：等待当前阶段收尾".to_string(),
+                                        "正在取消，等待当前阶段收尾".to_string(),
                                     ));
                                 }
                             } else {
@@ -416,6 +439,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     // 长操作期间窗口显示阶段文案，用户可随时关闭或点取消。
     phase_marker("app:created");
     Application::new().run(move |cx: &mut App| {
+        arch_view::arch_view_theme::StrataTheme::init_global(cx);
         phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let window_repo = repo;
@@ -850,6 +874,7 @@ fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     // 超过 2 秒的路径不能再让用户面对「没有窗口」的静止画面。
     phase_marker("app:created");
     Application::new().run(move |cx: &mut App| {
+        arch_view::arch_view_theme::StrataTheme::init_global(cx);
         phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
         let window_repo = repo;
@@ -1010,6 +1035,11 @@ impl Render for DiffView {
         }
         let fade = DiffFade::new(self.fade_enabled);
         let generation = self.fade_generation;
+        let theme = cx
+            .try_global::<arch_view::arch_view_theme::StrataTheme>()
+            .cloned()
+            .unwrap_or_default();
+
         let header = format!(
             "{} → {} · 新增 {} / 删除 {} / 修改 {} · 疑似重命名 {}",
             short_commit(&self.model.from_commit),
@@ -1020,19 +1050,30 @@ impl Render for DiffView {
             self.model.renames
         );
 
+        let badge = |label: String, color: u32| {
+            div()
+                .px(px(8.))
+                .py(px(2.))
+                .rounded(px(999.))
+                .bg(rgb(color))
+                .text_xs()
+                .text_color(rgb(0xe6edf3))
+                .child(label)
+        };
+
         let mut root = div()
             .id("diff-root")
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(8.))
             .size_full()
             .p(px(14.))
-            .bg(rgb(0x0d1117))
+            .bg(theme.canvas_bg)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
+                    .gap(px(10.))
                     .child(div().text_sm().text_color(rgb(0xe6edf3)).child(header))
                     .child(
                         div()
@@ -1040,14 +1081,12 @@ impl Render for DiffView {
                             .px(px(8.))
                             .py(px(3.))
                             .rounded(px(4.))
-                            .bg(rgb(0x1f2937))
+                            .bg(theme.hud_panel_bg)
+                            .border_1()
+                            .border_color(theme.hud_border)
                             .text_xs()
                             .text_color(rgb(0xe6edf3))
-                            .child(if self.fade_enabled {
-                                "淡入: 开"
-                            } else {
-                                "淡入: 关"
-                            })
+                            .child(if self.fade_enabled { "淡入: 开" } else { "淡入: 关" })
                             .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                                 this.fade_enabled = !this.fade_enabled;
                                 if this.fade_enabled {
@@ -1056,6 +1095,16 @@ impl Render for DiffView {
                                 cx.notify();
                             })),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(badge(format!("+{}", self.model.added), 0x2f6b3f))
+                    .child(badge(format!("-{}", self.model.removed), 0x7a3138))
+                    .child(badge(format!("~{}", self.model.modified), 0x7a5b24))
+                    .child(badge(format!("renames {}", self.model.renames), 0x1f4e79)),
             );
 
         if self.model.rows.is_empty() {
@@ -1069,28 +1118,55 @@ impl Render for DiffView {
         }
 
         for row in &self.model.rows {
-            let text = match &row.rename_hint {
-                Some(hint) => format!(
-                    "{} {} · {} · 疑似重命名 ↔ {}",
-                    row.kind.label(),
-                    row.path,
-                    row.detail,
-                    hint
-                ),
-                None => format!("{} {} · {}", row.kind.label(), row.path, row.detail),
+            let (bg, accent, text_color) = theme.resolve_diff_row_colors(row.kind, 1.0);
+            let kind_label = match row.kind {
+                arch_view::diff::DiffKind::Added => "新增",
+                arch_view::diff::DiffKind::Removed => "删除",
+                arch_view::diff::DiffKind::Modified => "修改",
             };
             let index = row.z_index;
+            let mut middle = div().flex().flex_1().items_center().gap(px(8.)).min_w(px(0.));
+            middle = middle.child(div().text_xs().text_color(text_color).child(row.path.clone()));
+            if let Some(hint) = &row.rename_hint {
+                middle = middle.child(
+                    div()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(999.))
+                        .bg(rgb(0x1f2937))
+                        .text_xs()
+                        .text_color(rgb(0x8b9bb0))
+                        .child(format!("← {}", hint)),
+                );
+            }
+
             let element = div()
                 .id(("diff-row", index as usize))
                 .flex()
                 .items_center()
+                .gap(px(8.))
+                .w_full()
                 .px(px(10.))
-                .py(px(5.))
-                .rounded(px(4.))
-                .bg(rgb(row.kind.tint()))
-                .text_xs()
-                .text_color(rgb(DIFF_LABEL))
-                .child(text);
+                .py(px(6.))
+                .rounded(px(6.))
+                .bg(bg)
+                .child(div().w(px(3.)).h(px(18.)).rounded(px(2.)).bg(accent))
+                .child(
+                    div()
+                        .w(px(44.))
+                        .flex()
+                        .justify_center()
+                        .px(px(6.))
+                        .py(px(2.))
+                        .rounded(px(999.))
+                        .bg(rgb(0x161b22))
+                        .text_xs()
+                        .text_color(text_color)
+                        .child(kind_label),
+                )
+                .child(middle)
+                .child(div().text_xs().text_color(rgb(0x8b9bb0)).child(row.detail.clone()));
+
             if self.fade_enabled {
                 root = root.child(element.with_animation(
                     ("diff-fade-row", (generation << 16) | index as u64),
@@ -1425,11 +1501,13 @@ impl TimelineView {
     }
 
     /// 加载/失败态：整窗居中显示非空文案，避免白屏或静默。
+    /// 加载/失败态：保留原有状态文案，并在加载时显示进度条
     fn render_status_panel(&self) -> impl IntoElement {
         let failed = matches!(self.content, TimelineContent::Failed(_));
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let mut panel = div()
             .size_full()
-            .bg(rgb(0x0d1117))
+            .bg(theme.canvas_bg)
             .flex()
             .flex_col()
             .items_center()
@@ -1440,9 +1518,31 @@ impl TimelineView {
             let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
             panel = panel.child(div().text_sm().text_color(color).child(line));
         }
+        if let TimelineContent::Loading(loading) = &self.content {
+            let progress = match loading.stage() {
+                LoadingStage::ReadingCommits => 0.2,
+                LoadingStage::SamplingHistory { .. } => 0.55,
+                LoadingStage::BuildingLayers => 0.75,
+                LoadingStage::ComputingLayout => 0.9,
+                LoadingStage::Custom(_) => 0.6,
+            };
+            panel = panel.child(
+                div()
+                    .w(px(280.))
+                    .h(px(4.))
+                    .rounded(px(2.))
+                    .bg(rgb(0x2c3a4a))
+                    .child(
+                        div()
+                            .w(px(280.0 * progress))
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(rgb(0x58a6ff)),
+                    ),
+            );
+        }
         panel
-    }
-}
+    }}
 
 static TIMELINE_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 static TIMELINE_CONTENT_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
@@ -1487,11 +1587,33 @@ impl Render for TimelineView {
             })
             .unwrap_or_else(|| "无提交".to_string());
 
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let mut root = div()
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x0d1117));
+            .bg(theme.canvas_bg);
+
+        let grid_viewport = Viewport::default();
+        let grid_theme = theme.clone();
+        root = root.child(
+            div()
+                .absolute()
+                .left(px(0.))
+                .top(px(0.))
+                .size_full()
+                .child(canvas(
+                    move |bounds, _, _| bounds,
+                    move |bounds, _, window, _| {
+                        arch_view::arch_view_canvas::paint_dot_grid(
+                            window,
+                            bounds,
+                            &grid_viewport,
+                            &grid_theme,
+                        );
+                    },
+                )),
+        );
 
         for band in &layout.bands {
             root = root.child(band_element(band, Viewport::default(), 1.0, 0.0));
@@ -1503,11 +1625,11 @@ impl Render for TimelineView {
                 | ((heat.color[1] as u32) << 8)
                 | heat.color[2] as u32);
             let border = if selected.as_deref() == Some(node.id.as_str()) {
-                rgb(0xf2f5f8)
+                theme.card_border_selected
             } else if heat.neutral {
-                rgb(0x8a7a5a)
+                rgb(0x8a7a5a).into()
             } else {
-                rgb(0x2c3a4a)
+                theme.card_border_default
             };
             let node_id = node.id.clone();
             root = root.child(
@@ -1519,14 +1641,14 @@ impl Render for TimelineView {
                     .w(px(node.rect.width))
                     .h(px(node.rect.height))
                     .overflow_hidden()
-                    .rounded(px(4.))
+                    .rounded(theme.card_radius)
                     .border_1()
                     .border_color(border)
                     .bg(background)
                     .opacity(if full_scale { 1.0 } else { 0.55 })
                     .flex()
                     .items_center()
-                    .px(px(6.))
+                    .px(px(8.))
                     .text_xs()
                     .text_color(rgb(0xe6edf3))
                     .child(node.id.clone())
@@ -1548,7 +1670,7 @@ impl Render for TimelineView {
                     .w(px(10.))
                     .h(px(if active { 12. } else { 8. }))
                     .rounded(px(2.))
-                    .bg(if active { rgb(0xf2f5f8) } else { rgb(0x3d4b5c) })
+                    .bg(if active { rgb(0x58a6ff) } else { rgb(0x3d4b5c) })
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                         let accepted = this
                             .timeline_mut()
@@ -1567,8 +1689,14 @@ impl Render for TimelineView {
         let ended = self.playback.is_ended();
         let speed = self.playback.speed();
         let position = if ticks > 0 { current + 1 } else { 0 };
+        let progress_ratio = if ticks > 1 {
+            current as f32 / (ticks.saturating_sub(1)) as f32
+        } else if ticks == 1 {
+            1.0
+        } else {
+            0.0
+        };
 
-        // 离散播放控制：只在刻度间跳变，不提供刻度内进度条（避免暗示连续变化）。
         let controls = div()
             .flex()
             .items_center()
@@ -1579,16 +1707,8 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(if playback_enabled {
-                        rgb(0x2c3a4a)
-                    } else {
-                        rgb(0x50241f)
-                    })
-                    .child(if playback_enabled {
-                        "播放:开"
-                    } else {
-                        "播放:关"
-                    })
+                    .bg(if playback_enabled { rgb(0x2c3a4a) } else { rgb(0x50241f) })
+                    .child(if playback_enabled { "动画:开" } else { "动画:关" })
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.playback.set_enabled(!this.playback.enabled());
                         cx.notify();
@@ -1618,7 +1738,7 @@ impl Render for TimelineView {
                     .py(px(2.))
                     .rounded(px(3.))
                     .bg(rgb(0x2c3a4a))
-                    .child("上一步")
+                    .child("前一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_back() {
                             let index = this.playback.current();
@@ -1636,7 +1756,7 @@ impl Render for TimelineView {
                     .py(px(2.))
                     .rounded(px(3.))
                     .bg(rgb(0x2c3a4a))
-                    .child("下一步")
+                    .child("后一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_forward() {
                             let index = this.playback.current();
@@ -1696,7 +1816,45 @@ impl Render for TimelineView {
                         cx.notify();
                     })),
             )
-            .child(div().child(format!("第 {position}/{ticks} 刻度")));
+            .child(div().child(format!("共 {position}/{ticks} 刻度")));
+
+        let mut badges = div().flex().items_center().gap(px(6.));
+        if let Some(label) = degradation_label(flags) {
+            badges = badges.child(
+                div()
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(999.))
+                    .bg(rgb(0x5a2d23))
+                    .text_color(rgb(0xffd0c2))
+                    .child(format!("降级: {label}")),
+            );
+        }
+        let mut markers = Vec::new();
+        if flags.sampled { markers.push("sampled"); }
+        if flags.truncated { markers.push("truncated"); }
+        if flags.shallow { markers.push("shallow"); }
+        if !markers.is_empty() {
+            badges = badges.child(
+                div()
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(999.))
+                    .bg(rgb(0x3a2f1a))
+                    .text_color(rgb(0xd98a3d))
+                    .child(format!("状态: {}", markers.join(" / "))),
+            );
+        }
+        if let Some(notice) = ready.timeline.gap_notice() {
+            badges = badges.child(
+                div()
+                    .text_color(rgb(0xe07b39))
+                    .child(format!("采样空洞: {notice}")),
+            );
+        }
+        if ended {
+            badges = badges.child(div().text_color(rgb(0xd98a3d)).child("播放结束"));
+        }
 
         let mut footer = div()
             .absolute()
@@ -1704,62 +1862,55 @@ impl Render for TimelineView {
             .right(px(12.))
             .bottom(px(12.))
             .flex()
-            .items_center()
-            .gap(px(12.))
+            .flex_col()
+            .gap(px(6.))
             .px(px(10.))
-            .py(px(6.))
-            .rounded(px(6.))
-            .bg(rgb(0x161b22))
+            .py(px(8.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(theme.hud_border)
+            .bg(theme.hud_panel_bg)
             .text_xs()
             .text_color(rgb(0xe6edf3))
-            .child(commit)
             .child(
                 div()
-                    .text_color(rgb(0x8b9bb0))
-                    .child(ready.timeline.sampling_label()),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(div().child(commit).child(format!("  [{position}/{ticks}]")))
+                    .child(div().text_color(rgb(0x8b9bb0)).child(ready.timeline.sampling_label())),
             )
-            .child(ticks_row)
-            .child(controls)
-            .child("灰=无历史 · 蓝→橙=churn 0→11+")
-            .child(if ended {
-                div().text_color(rgb(0xd98a3d)).child("播放结束")
-            } else {
+            .child(
                 div()
-            });
-
-        if let Some(label) = degradation_label(flags) {
-            footer = footer.child(
+                    .w_full()
+                    .h(px(4.))
+                    .rounded(px(2.))
+                    .bg(rgb(0x2c3a4a))
+                    .child(
+                        div()
+                            .w(gpui::relative(progress_ratio))
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(rgb(0x58a6ff)),
+                    ),
+            )
+            .child(
                 div()
-                    .text_color(rgb(0xe07b39))
-                    .child(format!("退化标记: {label}")),
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(ticks_row)
+                    .child(controls),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child("蓝=无历史 · 热度=churn 0→11+")
+                    .child(badges),
             );
-        }
-
-        if let Some(notice) = ready.timeline.gap_notice() {
-            footer = footer.child(
-                div()
-                    .text_color(rgb(0xe07b39))
-                    .child(format!("采样空洞: {notice}")),
-            );
-        }
-
-        let mut markers = Vec::new();
-        if flags.sampled {
-            markers.push("sampled");
-        }
-        if flags.truncated {
-            markers.push("truncated");
-        }
-        if flags.shallow {
-            markers.push("shallow");
-        }
-        if !markers.is_empty() {
-            footer = footer.child(
-                div()
-                    .text_color(rgb(0xd98a3d))
-                    .child(format!("状态: {}", markers.join(" / "))),
-            );
-        }
 
         if let Some(selected) = &selected {
             let text = match ready.timeline.module_metric(selected) {
@@ -2006,6 +2157,27 @@ impl MapView {
             .map(|playback| playback.animation_enabled())
             .unwrap_or(false);
         let reveal_overall = self.reveal.overall_progress();
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let grid_viewport = viewport;
+        let grid_theme = theme.clone();
+        root = root.child(
+            div()
+                .absolute()
+                .left(px(0.))
+                .top(px(0.))
+                .size_full()
+                .child(canvas(
+                    move |bounds, _, _| bounds,
+                    move |bounds, _, window, _| {
+                        arch_view::arch_view_canvas::paint_dot_grid(
+                            window,
+                            bounds,
+                            &grid_viewport,
+                            &grid_theme,
+                        );
+                    },
+                )),
+        );
         match scene {
             Scene::Modules(map) => {
                 // 聚焦态：焦点集合内 1.0，其余沿用 P1 的 0.68；不改变绘制顺序。
@@ -2733,6 +2905,7 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
     } else {
         search.query().to_string()
     };
+    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
     let mut panel = div()
         .id("search-panel")
         .absolute()
@@ -2741,11 +2914,13 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
         .w(px(420.))
         .flex()
         .flex_col()
-        .gap(px(3.))
+        .gap(px(4.))
         .px(px(10.))
         .py(px(8.))
         .rounded(px(6.))
-        .bg(rgb(0x161b22))
+        .border_1()
+        .border_color(theme.hud_border)
+        .bg(theme.hud_panel_bg)
         .text_xs()
         .text_color(rgb(0xe6edf3))
         .child(format!("搜索模块 · {query}"))
@@ -2758,11 +2933,7 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
                 .px(px(6.))
                 .py(px(2.))
                 .rounded(px(4.))
-                .bg(if selected {
-                    rgb(0x1f3a5f)
-                } else {
-                    rgb(0x0d1117)
-                })
+                .bg(if selected { rgb(0x1f3a5f) } else { rgb(0x0d1117) })
                 .child(hit.id.clone()),
         );
     }
@@ -2771,6 +2942,7 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
 
 /// 聚焦态角落标签：聚焦模块 id + 上游 / 下游一跳计数。
 fn focus_label_element(label: &FocusLabel) -> AnyElement {
+    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
     div()
         .id("focus-label")
         .absolute()
@@ -2779,13 +2951,14 @@ fn focus_label_element(label: &FocusLabel) -> AnyElement {
         .px(px(10.))
         .py(px(6.))
         .rounded(px(6.))
-        .bg(rgb(0x161b22))
+        .border_1()
+        .border_color(theme.hud_border)
+        .bg(theme.hud_panel_bg)
         .text_xs()
         .text_color(rgb(0xe6edf3))
         .child(label.text())
         .into_any_element()
 }
-
 struct PlaybackOverlay {
     path_modules: BTreeSet<String>,
     current_module: Option<String>,
@@ -2827,16 +3000,6 @@ fn edge_color_at(base: u32, opacity: f32) -> gpui::Rgba {
     }
 }
 
-fn edge_base_color(strong: bool, adjusted: bool) -> u32 {
-    if strong {
-        0xf2f5f8
-    } else if adjusted {
-        0xd98a3d
-    } else {
-        0x3d4b5c
-    }
-}
-
 fn edge_canvas(
     edges: Vec<EdgeDraw>,
     width: f32,
@@ -2852,50 +3015,72 @@ fn edge_canvas(
         .child(canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
-                // A：按原始顺序合并「连续且同风格」的边为一个 path；风格/透明度变化即 flush。
-                // 虚线边逐条绘制：同一 path 内多个子路径的 dash 相位与单独绘制不一致（实测会改像素）。
+                let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
                 for run in group_edges(&edges, batch_edges) {
-                    let mut builder = PathBuilder::stroke(if run.strong { px(2.) } else { px(1.) });
-                    if run.adjusted {
-                        builder = builder.dash_array(&[px(4.), px(2.)]);
+                    let stroke_w = if run.strong { px(2.15) } else if run.adjusted { px(1.75) } else { px(1.25) };
+                    let color = if run.strong {
+                        edge_color_at(0x58a6ff, run.opacity)
+                    } else if run.adjusted {
+                        edge_color_at(0xf85149, run.opacity)
+                    } else {
+                        edge_color_at(0x484f58, run.opacity)
+                    };
+                    let mut batched = PathBuilder::stroke(stroke_w);
+                    let mut has_batched = false;
+                    for index in &run.edges {
+                        let edge = &edges[*index];
+                        let start = point(bounds.origin.x + px(edge.from.x), bounds.origin.y + px(edge.from.y));
+                        let end = point(bounds.origin.x + px(edge.to.x), bounds.origin.y + px(edge.to.y));
+                        let dy = f32::from(end.y) - f32::from(start.y);
+                        let offset_y = (dy.abs() * 0.45).clamp(24.0, 140.0);
+                        let sign_y = if dy >= 0.0 { 1.0 } else { -1.0 };
+                        let ctrl1 = point(start.x, start.y + px(offset_y * sign_y));
+                        let ctrl2 = point(end.x, end.y - px(offset_y * sign_y));
+                        if run.strong || run.adjusted || !batch_edges {
+                            let mut b = PathBuilder::stroke(stroke_w);
+                            b.move_to(start);
+                            b.cubic_bezier_to(end, ctrl1, ctrl2);
+                            if let Ok(path) = b.build() { window.paint_path(path, color); }
+                            let vx = f32::from(end.x) - f32::from(ctrl2.x);
+                            let vy = f32::from(end.y) - f32::from(ctrl2.y);
+                            let len = vx.hypot(vy).max(0.001);
+                            let ux = vx / len; let uy = vy / len;
+                            let base_x = f32::from(end.x) - ux * 7.0;
+                            let base_y = f32::from(end.y) - uy * 7.0;
+                            let left = point(px(base_x - uy * 3.5), px(base_y + ux * 3.5));
+                            let right = point(px(base_x + uy * 3.5), px(base_y - ux * 3.5));
+                            let mut arrow = PathBuilder::fill();
+                            arrow.move_to(end); arrow.line_to(left); arrow.line_to(right); arrow.close();
+                            if let Ok(ap) = arrow.build() { window.paint_path(ap, color); }
+                        } else {
+                            batched.move_to(start);
+                            batched.cubic_bezier_to(end, ctrl1, ctrl2);
+                            has_batched = true;
+                        }
                     }
-                    for index in run.edges {
-                        let edge = &edges[index];
-                        builder.move_to(point(
-                            bounds.origin.x + px(edge.from.x),
-                            bounds.origin.y + px(edge.from.y),
-                        ));
-                        builder.line_to(point(
-                            bounds.origin.x + px(edge.to.x),
-                            bounds.origin.y + px(edge.to.y),
-                        ));
-                    }
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(
-                            path,
-                            edge_color_at(edge_base_color(run.strong, run.adjusted), run.opacity),
-                        );
+                    if has_batched {
+                        if let Ok(path) = batched.build() { window.paint_path(path, color); }
                     }
                 }
+                let _ = theme;
             },
         ))
 }
-
 fn scaled_rect(rect: arch_view::layout::Rect, viewport: Viewport) -> arch_view::layout::Rect {
     viewport.screen_rect(rect)
 }
 
 fn selection_border(
     id: &str,
-    default: gpui::Rgba,
+    default: gpui::Hsla,
     selected: Option<&str>,
     highlighted: &std::collections::BTreeSet<String>,
     focus: Option<&str>,
-) -> gpui::Rgba {
+) -> gpui::Hsla {
     if focus == Some(id) || selected == Some(id) {
-        rgb(0xf2f5f8)
+        rgb(0xf2f5f8).into()
     } else if highlighted.contains(id) {
-        rgb(0xd98a3d)
+        rgb(0xd98a3d).into()
     } else {
         default
     }
@@ -2908,17 +3093,8 @@ fn band_element(
     offset_y: f32,
 ) -> impl IntoElement {
     let rect = scaled_rect(band.rect, viewport);
-    let background = rgb(band_background_palette(
-        band.is_unclassified,
-        band.is_external,
-    ));
-    let (border, label) = if band.is_unclassified {
-        (rgb(0x6b552f), rgb(0xd98a3d))
-    } else if band.is_external {
-        (rgb(0x2f5a60), rgb(0x6fb3b8))
-    } else {
-        (rgb(0x1c2633), rgb(0x8b9bb0))
-    };
+    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+    let (fill, border_c, header) = theme.band_style(band.layer, band.is_unclassified, band.is_external, 1.0);
     div()
         .absolute()
         .left(px(rect.x))
@@ -2926,19 +3102,29 @@ fn band_element(
         .w(px(rect.width))
         .h(px(rect.height))
         .opacity(opacity)
-        .bg(background)
-        .border_b_1()
-        .border_color(border)
+        .rounded(theme.band_radius)
+        .bg(fill)
+        .border_1()
+        .border_color(border_c)
         .child(
             div()
-                .pl(px(8.))
+                .absolute()
+                .left(px(1.))
+                .top(px(6.))
+                .w(px(3.5))
+                .h(px(16.))
+                .rounded(px(2.))
+                .bg(header),
+        )
+        .child(
+            div()
+                .pl(px(10.))
                 .pt(px(4.))
                 .text_xs()
-                .text_color(label)
-                .child(format!("{} · {}", band.layer, band.node_count)),
+                .text_color(header)
+                .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
         )
 }
-
 fn node_element(
     node: &NodeLayout,
     viewport: Viewport,
@@ -2951,15 +3137,28 @@ fn node_element(
 ) -> impl IntoElement {
     let visual = node_visual_geometry(node, &viewport);
     let rect = visual.rect;
-    let background = layer_color(node.layer, node.is_unclassified);
-    let border = if node.is_unclassified {
-        rgb(0xd98a3d)
-    } else if node.is_external {
-        rgb(0x6fb3b8)
+    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+    let accent = theme.layer_accent(node.layer, node.is_unclassified, node.is_external);
+    let bg = if focus == Some(node.id.as_str()) || selected == Some(node.id.as_str()) {
+        theme.card_selected_bg
+    } else if highlighted.contains(&node.id) {
+        theme.card_neighbor_bg
     } else {
-        rgb(0x2c3a4a)
+        let palette_hex = layer_palette(node.layer, node.is_unclassified);
+        let mut tint: gpui::Hsla = rgb(palette_hex).into();
+        tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
+        tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+        tint
     };
-    let border = selection_border(&node.id, border, selected, highlighted, focus);
+    let border = if focus == Some(node.id.as_str()) || selected == Some(node.id.as_str()) {
+        theme.card_border_selected
+    } else if highlighted.contains(&node.id) {
+        let mut b = accent;
+        b.a = 0.65;
+        b
+    } else {
+        theme.card_border_default
+    };
 
     let mut element = div()
         .absolute()
@@ -2968,14 +3167,26 @@ fn node_element(
         .w(px(rect.width))
         .h(px(rect.height))
         .overflow_hidden()
-        .rounded(px(4.))
+        .rounded(theme.card_radius)
         .border_1()
         .border_color(border)
-        .bg(background)
+        .bg(bg)
         .opacity(opacity)
         .flex()
         .items_center()
-        .px(px(6.));
+        .pl(px(10.))
+        .pr(px(6.));
+
+    element = element.child(
+        div()
+            .absolute()
+            .left(px(1.))
+            .top(px(4.))
+            .bottom(px(4.))
+            .w(theme.accent_bar_width)
+            .rounded(px(2.))
+            .bg(accent),
+    );
 
     if labels {
         element = element.child(
@@ -2994,17 +3205,12 @@ fn node_element(
                 .right(px(3.))
                 .size(px(6.))
                 .rounded_full()
-                .bg(if node.is_unclassified {
-                    rgb(0xd98a3d)
-                } else {
-                    rgb(0x6fb3b8)
-                }),
+                .bg(if node.is_unclassified { rgb(0xd98a3d) } else { rgb(0x6fb3b8) }),
         );
     }
 
     element
 }
-
 fn symbol_node_element(
     node: &arch_view::view::SymbolNodeLayout,
     opacity: f32,
@@ -3015,8 +3221,11 @@ fn symbol_node_element(
     highlighted: &std::collections::BTreeSet<String>,
 ) -> impl IntoElement {
     let rect = scaled_rect(node.rect, viewport);
-    let background = symbol_kind_color(node.kind);
-    let border = selection_border(&node.id, rgb(0x2c3a4a), selected, highlighted, focus);
+    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+    let is_selected = selected == Some(node.id.as_str()) || focus == Some(node.id.as_str());
+    let is_highlighted = highlighted.contains(&node.id);
+    let style = theme.resolve_symbol_node_style(node, is_selected, false, is_highlighted, is_selected || is_highlighted);
+    let border = selection_border(&node.id, theme.card_border_default, selected, highlighted, focus);
 
     let mut element = div()
         .absolute()
@@ -3025,47 +3234,47 @@ fn symbol_node_element(
         .w(px(rect.width))
         .h(px(rect.height))
         .overflow_hidden()
-        .rounded(px(4.))
+        .rounded(theme.card_radius)
         .border_1()
         .border_color(border)
-        .bg(background)
+        .bg(style.bg)
         .opacity(opacity)
         .flex()
         .items_center()
-        .px(px(6.));
+        .gap(px(6.))
+        .pl(px(10.))
+        .pr(px(6.));
+
+    element = element.child(
+        div()
+            .absolute()
+            .left(px(1.))
+            .top(px(4.))
+            .bottom(px(4.))
+            .w(theme.accent_bar_width)
+            .rounded(px(2.))
+            .bg(style.accent_bar),
+    );
 
     if labels {
-        element = element.child(
-            div()
-                .text_xs()
-                .text_color(rgb(0xe6edf3))
-                .child(node.name.clone()),
-        );
+        element = element
+            .child(
+                div()
+                    .px(px(4.))
+                    .py(px(1.))
+                    .rounded(px(3.))
+                    .bg(style.badge_bg)
+                    .text_xs()
+                    .text_color(style.badge_fg)
+                    .child(node.kind),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(style.label_color)
+                    .child(node.name.clone()),
+            );
     }
 
     element
-}
-
-fn symbol_kind_color(kind: &str) -> gpui::Rgba {
-    rgb(symbol_kind_palette(kind))
-}
-
-fn layer_color(layer: &str, is_unclassified: bool) -> gpui::Rgba {
-    rgb(layer_palette(layer, is_unclassified))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::reveal_default_on;
-
-    #[test]
-    fn reveal_is_on_by_default() {
-        assert!(reveal_default_on(false), "未给开关时必须默认开启");
-    }
-
-    #[test]
-    fn explicit_no_reveal_turns_reveal_off() {
-        // `--reveal` 不参与决定，所以与 `--no-reveal` 同时出现时、无论顺序都以关闭为准。
-        assert!(!reveal_default_on(true), "--no-reveal 必须关闭揭示");
-    }
 }
