@@ -28,8 +28,8 @@ use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
 use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
-    band_background_palette, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
-    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, symbol_kind_palette,
+    group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
+    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside,
     CanvasState, EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM,
     MIN_ZOOM,
 };
