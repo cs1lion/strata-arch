@@ -2412,6 +2412,24 @@ impl MapView {
                 } else {
                     (0..map.nodes.len()).collect::<Vec<_>>()
                 };
+                // conservative TASK-2: paint module node cards in canvas, keep text/marker DOM overlays
+                #[derive(Clone)]
+                struct ModuleNodeDraw {
+                    rect: arch_view::layout::Rect,
+                    accent: gpui::Hsla,
+                    bg: gpui::Hsla,
+                    border: gpui::Hsla,
+                    opacity: f32,
+                }
+                #[derive(Clone)]
+                struct ModuleNodeOverlay {
+                    rect: arch_view::layout::Rect,
+                    opacity: f32,
+                    label: Option<String>,
+                    marker: Option<u32>,
+                }
+                let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
+                let mut node_overlays: Vec<ModuleNodeOverlay> = Vec::new();
                 for index in indices {
                     if skip.nodes {
                         break;
@@ -2436,29 +2454,114 @@ impl MapView {
                     let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
                     let opacity = opacity * self.reveal.opacity_for_stage(stage);
                     let offset_y = self.reveal.offset_for_stage(stage);
-                    // B：只剪完全在视口外的节点（含揭示动画的位移），部分可见一律照画。
-                    if tuning.cull_viewport {
-                        let rect = viewport.screen_rect(node.rect);
-                        let drawn = arch_view::layout::Rect::new(
-                            rect.x,
-                            rect.y + offset_y,
-                            rect.width,
-                            rect.height,
-                        );
-                        if rect_fully_outside(drawn, viewport_size, CULL_MARGIN) {
-                            continue;
-                        }
+                    let visual = node_visual_geometry(node, &viewport);
+                    let drawn_rect = arch_view::layout::Rect::new(
+                        visual.rect.x,
+                        visual.rect.y + offset_y,
+                        visual.rect.width,
+                        visual.rect.height,
+                    );
+                    if tuning.cull_viewport && rect_fully_outside(drawn_rect, viewport_size, CULL_MARGIN) {
+                        continue;
                     }
-                    root = root.child(node_element(
-                        node,
-                        viewport,
-                        labels,
-                        selected.as_deref(),
-                        &highlighted,
+                    let accent = theme.layer_accent(node.layer, node.is_unclassified, node.is_external);
+                    let bg = if focus == Some(node.id.as_str()) || selected.as_deref() == Some(node.id.as_str()) {
+                        theme.card_selected_bg
+                    } else if highlighted.contains(&node.id) {
+                        theme.card_neighbor_bg
+                    } else {
+                        let palette_hex = layer_palette(node.layer, node.is_unclassified);
+                        let mut tint: gpui::Hsla = rgb(palette_hex).into();
+                        tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
+                        tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+                        tint
+                    };
+                    let border = if focus == Some(node.id.as_str()) || selected.as_deref() == Some(node.id.as_str()) {
+                        theme.card_border_selected
+                    } else if highlighted.contains(&node.id) {
+                        let mut b = accent;
+                        b.a = 0.65;
+                        b
+                    } else {
+                        theme.card_border_default
+                    };
+                    node_draws.push(ModuleNodeDraw { rect: drawn_rect, accent, bg, border, opacity });
+                    let marker = if node.is_unclassified {
+                        Some(0xd98a3d)
+                    } else if node.is_external {
+                        Some(0x6fb3b8)
+                    } else {
+                        None
+                    };
+                    node_overlays.push(ModuleNodeOverlay {
+                        rect: drawn_rect,
                         opacity,
-                        focus,
-                        offset_y,
-                    ));
+                        label: if labels { Some(visual.label) } else { None },
+                        marker,
+                    });
+                }
+                if !node_draws.is_empty() {
+                    let nd = node_draws.clone();
+                    let node_theme = theme.clone();
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(0.))
+                            .top(px(0.))
+                            .size_full()
+                            .child(canvas(
+                                move |bounds, _, _| bounds,
+                                move |bounds, _, window, _| {
+                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                    for item in &nd {
+                                        let mut bg = item.bg; bg.a *= item.opacity;
+                                        let mut border = item.border; border.a *= item.opacity;
+                                        let mut accent = item.accent; accent.a *= item.opacity;
+                                        let b = gpui::Bounds {
+                                            origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
+                                            size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
+                                        };
+                                        window.paint_quad(quad(b, Corners::all(node_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
+                                        let accent_bar = gpui::Bounds {
+                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
+                                            size: size(node_theme.accent_bar_width, px((f32::from(b.size.height) - 8.0).max(0.0))),
+                                        };
+                                        window.paint_quad(quad(accent_bar, Corners::all(px(2.0)), accent, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                                    }
+                                },
+                            )),
+                    );
+                }
+                for overlay_item in &node_overlays {
+                    if let Some(label) = &overlay_item.label {
+                        root = root.child(
+                            div()
+                                .absolute()
+                                .left(px(overlay_item.rect.x + 10.))
+                                .top(px(overlay_item.rect.y))
+                                .w(px((overlay_item.rect.width - 16.0).max(0.0)))
+                                .h(px(overlay_item.rect.height))
+                                .opacity(overlay_item.opacity)
+                                .flex()
+                                .items_center()
+                                .overflow_hidden()
+                                .text_xs()
+                                .text_color(rgb(0xe6edf3))
+                                .child(label.clone()),
+                        );
+                    }
+                    if let Some(color) = overlay_item.marker {
+                        root = root.child(
+                            div()
+                                .absolute()
+                                .left(px(overlay_item.rect.x + overlay_item.rect.width - 9.))
+                                .top(px(overlay_item.rect.y + 3.))
+                                .size(px(6.))
+                                .rounded_full()
+                                .opacity(overlay_item.opacity)
+                                .bg(rgb(color)),
+                        );
+                    }
                 }
             }
             Scene::Symbols(symbols) => {
@@ -3232,92 +3335,6 @@ fn band_element(
                 .text_color(header)
                 .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
         )
-}
-fn node_element(
-    node: &NodeLayout,
-    viewport: Viewport,
-    labels: bool,
-    selected: Option<&str>,
-    highlighted: &std::collections::BTreeSet<String>,
-    opacity: f32,
-    focus: Option<&str>,
-    offset_y: f32,
-) -> impl IntoElement {
-    let visual = node_visual_geometry(node, &viewport);
-    let rect = visual.rect;
-    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
-    let accent = theme.layer_accent(node.layer, node.is_unclassified, node.is_external);
-    let bg = if focus == Some(node.id.as_str()) || selected == Some(node.id.as_str()) {
-        theme.card_selected_bg
-    } else if highlighted.contains(&node.id) {
-        theme.card_neighbor_bg
-    } else {
-        let palette_hex = layer_palette(node.layer, node.is_unclassified);
-        let mut tint: gpui::Hsla = rgb(palette_hex).into();
-        tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
-        tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
-        tint
-    };
-    let border = if focus == Some(node.id.as_str()) || selected == Some(node.id.as_str()) {
-        theme.card_border_selected
-    } else if highlighted.contains(&node.id) {
-        let mut b = accent;
-        b.a = 0.65;
-        b
-    } else {
-        theme.card_border_default
-    };
-
-    let mut element = div()
-        .absolute()
-        .left(px(rect.x))
-        .top(px(rect.y + offset_y))
-        .w(px(rect.width))
-        .h(px(rect.height))
-        .overflow_hidden()
-        .rounded(theme.card_radius)
-        .border_1()
-        .border_color(border)
-        .bg(bg)
-        .opacity(opacity)
-        .flex()
-        .items_center()
-        .pl(px(10.))
-        .pr(px(6.));
-
-    element = element.child(
-        div()
-            .absolute()
-            .left(px(1.))
-            .top(px(4.))
-            .bottom(px(4.))
-            .w(theme.accent_bar_width)
-            .rounded(px(2.))
-            .bg(accent),
-    );
-
-    if labels {
-        element = element.child(
-            div()
-                .text_xs()
-                .text_color(rgb(0xe6edf3))
-                .child(visual.label),
-        );
-    }
-
-    if node.is_unclassified || node.is_external {
-        element = element.child(
-            div()
-                .absolute()
-                .top(px(3.))
-                .right(px(3.))
-                .size(px(6.))
-                .rounded_full()
-                .bg(if node.is_unclassified { rgb(0xd98a3d) } else { rgb(0x6fb3b8) }),
-        );
-    }
-
-    element
 }
 fn symbol_node_element(
     node: &arch_view::view::SymbolNodeLayout,
