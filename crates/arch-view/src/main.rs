@@ -2188,16 +2188,81 @@ impl MapView {
                     .enumerate()
                     .map(|(index, band)| (band.layer, index))
                     .collect::<std::collections::BTreeMap<&str, usize>>();
-                for (index, band) in map.bands.iter().enumerate() {
-                    if skip.bands {
-                        break;
+                if !skip.bands {
+                    let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, f32, f32, usize, String)> = map
+                        .bands
+                        .iter()
+                        .enumerate()
+                        .map(|(index, band)| {
+                            (
+                                band.rect,
+                                band.layer.to_string(),
+                                band.is_unclassified,
+                                band.is_external,
+                                self.reveal.opacity_for_stage(index),
+                                self.reveal.offset_for_stage(index),
+                                band.node_count,
+                                format!("{} · {}", band.layer.to_uppercase(), band.node_count),
+                            )
+                        })
+                        .collect();
+                    let band_vp = viewport;
+                    let band_vp_size = viewport_size;
+                    let band_cull = tuning.cull_viewport;
+                    let band_theme = theme.clone();
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(0.))
+                            .top(px(0.))
+                            .size_full()
+                            .child(canvas(
+                                move |bounds, _, _| bounds,
+                                move |bounds, _, window, _| {
+                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                    for (rect, layer, is_unclassified, is_external, opacity, offset_y, _count, _label) in &band_draws {
+                                        let sr = band_vp.screen_rect(*rect);
+                                        let sr = arch_view::layout::Rect { x: sr.x, y: sr.y + offset_y, width: sr.width, height: sr.height };
+                                        if band_cull && arch_view::view::rect_fully_outside(sr, band_vp_size, CULL_MARGIN) {
+                                            continue;
+                                        }
+                                        let (fill_c, border_c, header_c) = band_theme.band_style(layer, *is_unclassified, *is_external, 1.0);
+                                        let b = gpui::Bounds {
+                                            origin: point(bounds.origin.x + px(sr.x), bounds.origin.y + px(sr.y)),
+                                            size: size(px(sr.width.max(0.0)), px(sr.height.max(0.0))),
+                                        };
+                                        // apply opacity by drawing with alpha; gpui quads take colors (Hsla) - adjust alpha
+                                        let mut fill_c = fill_c; fill_c.a *= opacity;
+                                        let mut border_c = border_c; border_c.a *= opacity;
+                                        let mut header_c = header_c; header_c.a *= opacity;
+                                        window.paint_quad(quad(b, Corners::all(band_theme.band_radius * band_vp.zoom.clamp(0.6, 1.2)), fill_c, Edges::all(px(1.0)), border_c, BorderStyle::default()));
+                                        let header_bar = gpui::Bounds {
+                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
+                                            size: size(px(3.5), px((16.0 * band_vp.zoom).clamp(10.0, 22.0))),
+                                        };
+                                        window.paint_quad(quad(header_bar, Corners::all(px(2.0)), header_c, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                                    }
+                                },
+                            )),
+                    );
+                    // keep layer labels as lightweight DOM overlay for readability (text not painted in canvas)
+                    for (index, band) in map.bands.iter().enumerate() {
+                        let sr = viewport.screen_rect(band.rect);
+                        let oy = self.reveal.offset_for_stage(index);
+                        let op = self.reveal.opacity_for_stage(index);
+                        if tuning.cull_viewport && rect_fully_outside(arch_view::layout::Rect { x: sr.x, y: sr.y + oy, width: sr.width, height: sr.height }, viewport_size, CULL_MARGIN) { continue; }
+                        let header = theme.layer_accent(band.layer, band.is_unclassified, band.is_external);
+                        root = root.child(
+                            div()
+                                .absolute()
+                                .left(px(sr.x + 10.))
+                                .top(px(sr.y + oy + 4.))
+                                .opacity(op)
+                                .text_xs()
+                                .text_color(header)
+                                .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
+                        );
                     }
-                    root = root.child(band_element(
-                        band,
-                        viewport,
-                        self.reveal.opacity_for_stage(index),
-                        self.reveal.offset_for_stage(index),
-                    ));
                 }
                 let base_opacity =
                     (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
