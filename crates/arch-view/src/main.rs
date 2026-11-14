@@ -17,7 +17,7 @@ use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
 use arch_view::layout::{
-    layout_map, BandLayout, LayoutConfig, MapLayout, NodeLayout, Point as LayoutPoint,
+    layout_map, BandLayout, LayoutConfig, MapLayout, Point as LayoutPoint,
 };
 use arch_view::loading::{
     build_layer_artifact, compute_layout, list_first_parent_commits, sample_history, LoadStatus,
