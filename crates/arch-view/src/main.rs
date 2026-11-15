@@ -1662,46 +1662,81 @@ impl Render for TimelineView {
             }
         }
 
-        for (index, node) in layout.nodes.iter().enumerate() {
-            let heat = ready.timeline.heat(&node.id);
-            let background = rgb(((heat.color[0] as u32) << 16)
-                | ((heat.color[1] as u32) << 8)
-                | heat.color[2] as u32);
-            let border = if selected.as_deref() == Some(node.id.as_str()) {
-                theme.card_border_selected
-            } else if heat.neutral {
-                rgb(0x8a7a5a).into()
-            } else {
-                theme.card_border_default
-            };
-            let node_id = node.id.clone();
+        {
+            #[derive(Clone)]
+            struct TimelineNodeDraw {
+                rect: arch_view::layout::Rect,
+                bg: gpui::Hsla,
+                border: gpui::Hsla,
+                opacity: f32,
+            }
+            let node_opacity = if full_scale { 1.0 } else { 0.55 };
+            let mut draws: Vec<TimelineNodeDraw> = Vec::with_capacity(layout.nodes.len());
+            for node in &layout.nodes {
+                let heat = ready.timeline.heat(&node.id);
+                let background: gpui::Hsla = rgb(((heat.color[0] as u32) << 16)
+                    | ((heat.color[1] as u32) << 8)
+                    | heat.color[2] as u32)
+                    .into();
+                let border = if selected.as_deref() == Some(node.id.as_str()) {
+                    theme.card_border_selected
+                } else if heat.neutral {
+                    rgb(0x8a7a5a).into()
+                } else {
+                    theme.card_border_default
+                };
+                draws.push(TimelineNodeDraw { rect: node.rect, bg: background, border, opacity: node_opacity });
+            }
+            let tl_theme = theme.clone();
             root = root.child(
                 div()
-                    .id(("timeline-node", index))
                     .absolute()
-                    .left(px(node.rect.x))
-                    .top(px(node.rect.y))
-                    .w(px(node.rect.width))
-                    .h(px(node.rect.height))
-                    .overflow_hidden()
-                    .rounded(theme.card_radius)
-                    .border_1()
-                    .border_color(border)
-                    .bg(background)
-                    .opacity(if full_scale { 1.0 } else { 0.55 })
-                    .flex()
-                    .items_center()
-                    .px(px(8.))
-                    .text_xs()
-                    .text_color(rgb(0xe6edf3))
-                    .child(node.id.clone())
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        if let Some(timeline) = this.timeline_mut() {
-                            timeline.select(&node_id);
-                        }
-                        cx.notify();
-                    })),
+                    .left(px(0.))
+                    .top(px(0.))
+                    .size_full()
+                    .child(canvas(
+                        move |bounds, _, _| bounds,
+                        move |bounds, _, window, _| {
+                            use gpui::{quad, size, BorderStyle, Corners, Edges};
+                            for item in &draws {
+                                let mut bg = item.bg; bg.a *= item.opacity;
+                                let mut border = item.border; border.a *= item.opacity;
+                                let b = gpui::Bounds {
+                                    origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
+                                    size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
+                                };
+                                window.paint_quad(quad(b, Corners::all(tl_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
+                            }
+                        },
+                    )),
             );
+            for (index, node) in layout.nodes.iter().enumerate() {
+                let node_id = node.id.clone();
+                root = root.child(
+                    div()
+                        .id(("timeline-node", index))
+                        .absolute()
+                        .left(px(node.rect.x))
+                        .top(px(node.rect.y))
+                        .w(px(node.rect.width))
+                        .h(px(node.rect.height))
+                        .overflow_hidden()
+                        .rounded(theme.card_radius)
+                        .opacity(node_opacity)
+                        .flex()
+                        .items_center()
+                        .px(px(8.))
+                        .text_xs()
+                        .text_color(rgb(0xe6edf3))
+                        .child(node.id.clone())
+                        .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                            if let Some(timeline) = this.timeline_mut() {
+                                timeline.select(&node_id);
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
         }
 
         let mut ticks_row = div().flex().items_center().gap(px(2.));
