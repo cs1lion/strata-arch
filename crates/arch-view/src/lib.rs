@@ -1,3 +1,5 @@
+pub mod arch_view_canvas;
+pub mod arch_view_theme;
 pub mod diff;
 pub mod layout;
 pub mod loading;
