@@ -148,14 +148,17 @@ pub fn build_index(root: &Path, tool_version: &str) -> Result<IndexArtifact, Sca
 
         let source = String::from_utf8_lossy(&bytes);
         for import in scan_imports(&source) {
+            let mut resolution = ImportResolution {
+                edges: &mut edges,
+                unresolved: &mut unresolved,
+            };
             resolve_import(
                 &config,
                 &root,
                 &relative,
                 path,
                 &import,
-                &mut edges,
-                &mut unresolved,
+                &mut resolution,
                 &mut externals,
             );
         }
@@ -215,21 +218,25 @@ pub fn build_index(root: &Path, tool_version: &str) -> Result<IndexArtifact, Sca
 type EdgeKey = (String, String, String);
 type UnresolvedKey = (String, String, String);
 
+struct ImportResolution<'a, 'b> {
+    edges: &'a mut BTreeSet<(String, String, String)>,
+    unresolved: &'b mut BTreeSet<(String, String, String)>,
+}
+
 fn resolve_import(
     config: &ProjectConfig,
     root: &Path,
     source_id: &str,
     source_path: &Path,
     import: &ScannedImport,
-    edges: &mut BTreeSet<EdgeKey>,
-    unresolved: &mut BTreeSet<UnresolvedKey>,
+    resolution: &mut ImportResolution,
     externals: &mut BTreeSet<String>,
 ) {
     let ScannedImport::Literal { specifier, kind } = import else {
         let ScannedImport::Expression { expression, .. } = import else {
             return;
         };
-        unresolved.insert((
+        resolution.unresolved.insert((
             source_id.to_string(),
             expression.clone(),
             "dynamic-import".to_string(),
@@ -239,7 +246,7 @@ fn resolve_import(
     let edge_kind = kind.edge_kind();
 
     if specifier.is_empty() {
-        unresolved.insert((
+        resolution.unresolved.insert((
             source_id.to_string(),
             specifier.clone(),
             "syntax-error".to_string(),
@@ -256,8 +263,8 @@ fn resolve_import(
             specifier,
             edge_kind,
             "relative-missing",
-            edges,
-            unresolved,
+            resolution.edges,
+            resolution.unresolved,
         );
         return;
     }
@@ -271,8 +278,8 @@ fn resolve_import(
             specifier,
             edge_kind,
             "relative-missing",
-            edges,
-            unresolved,
+            resolution.edges,
+            resolution.unresolved,
         );
         return;
     }
@@ -283,10 +290,10 @@ fn resolve_import(
                 FileLookup::Found(file) => {
                     match relative_module_id(root, &file) {
                         Some(target_id) => {
-                            edges.insert((source_id.to_string(), target_id, edge_kind.to_string()));
+                            resolution.edges.insert((source_id.to_string(), target_id, edge_kind.to_string()));
                         }
                         None => {
-                            unresolved.insert((
+                            resolution.unresolved.insert((
                                 source_id.to_string(),
                                 specifier.clone(),
                                 "alias-missing".to_string(),
@@ -296,7 +303,7 @@ fn resolve_import(
                     return;
                 }
                 FileLookup::UnsupportedExtension => {
-                    unresolved.insert((
+                    resolution.unresolved.insert((
                         source_id.to_string(),
                         specifier.clone(),
                         "unsupported-extension".to_string(),
@@ -306,7 +313,7 @@ fn resolve_import(
                 FileLookup::Missing => {}
             }
         }
-        unresolved.insert((
+        resolution.unresolved.insert((
             source_id.to_string(),
             specifier.clone(),
             "alias-missing".to_string(),
@@ -322,18 +329,18 @@ fn resolve_import(
             specifier,
             edge_kind,
             "alias-missing",
-            edges,
-            unresolved,
+            resolution.edges,
+            resolution.unresolved,
         ),
         WorkspaceLookup::UnsupportedExtension => {
-            unresolved.insert((
+            resolution.unresolved.insert((
                 source_id.to_string(),
                 specifier.clone(),
                 "unsupported-extension".to_string(),
             ));
         }
         WorkspaceLookup::Missing => {
-            unresolved.insert((
+            resolution.unresolved.insert((
                 source_id.to_string(),
                 specifier.clone(),
                 "alias-missing".to_string(),
@@ -342,13 +349,13 @@ fn resolve_import(
         WorkspaceLookup::Unknown => {
             if let Some(package) = external_package_name(specifier) {
                 externals.insert(package.clone());
-                edges.insert((
+                resolution.edges.insert((
                     source_id.to_string(),
                     format!("external:{package}"),
                     edge_kind.to_string(),
                 ));
             } else {
-                unresolved.insert((
+                resolution.unresolved.insert((
                     source_id.to_string(),
                     specifier.clone(),
                     "syntax-error".to_string(),
@@ -410,7 +417,7 @@ pub(crate) fn external_package_name(specifier: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn walk(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
+pub(crate) fn walk(_root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
     let entries = fs::read_dir(current)
         .map_err(|error| ScanError::Io(format!("{}（{error}）", display_path(current))))?;
     for entry in entries {
@@ -429,7 +436,7 @@ pub(crate) fn walk(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Res
             if is_ignored_dir(entry.file_name().to_string_lossy().as_ref()) {
                 continue;
             }
-            walk(root, &path, files)?;
+            walk(_root, &path, files)?;
             continue;
         }
 

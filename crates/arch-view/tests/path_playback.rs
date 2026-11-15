@@ -139,7 +139,7 @@ fn animation_off_schedules_zero_frames_but_keeps_static_path() {
 #[test]
 fn non_path_nodes_are_dimmer_than_path_nodes() {
     let path = fixture_path();
-    let mut state = PlaybackState::new(&path);
+    let state = PlaybackState::new(&path);
 
     let on_path = path.steps[0].symbol.as_str();
     assert_eq!(state.node_opacity(on_path), PATH_OPACITY);
@@ -147,10 +147,12 @@ fn non_path_nodes_are_dimmer_than_path_nodes() {
         state.node_opacity("src/isolated.ts#function:isolated"),
         NON_PATH_OPACITY
     );
-    assert!(
-        NON_PATH_OPACITY < 0.5,
-        "non-path baseline must be a real fade"
-    );
+    const {
+        assert!(
+            NON_PATH_OPACITY < 0.5,
+            "non-path baseline must be a real fade"
+        )
+    };
 }
 
 #[test]

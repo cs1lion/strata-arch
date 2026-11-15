@@ -2229,6 +2229,17 @@ struct MapView {
     keyboard_focus_pending: bool,
 }
 
+type MapBandDraw = (
+    arch_view::layout::Rect,
+    String,
+    bool,
+    bool,
+    f32,
+    f32,
+    usize,
+    String,
+);
+
 impl MapView {
     /// fly-to 接线：只在启用且当前步骤变化时把相机移到当前节点；
     /// 关闭时清空锚点，避免再次打开时沿用旧状态。
@@ -2435,16 +2446,7 @@ impl MapView {
                     .map(|(index, band)| (band.layer, index))
                     .collect::<std::collections::BTreeMap<&str, usize>>();
                 if !skip.bands {
-                    let band_draws: Vec<(
-                        arch_view::layout::Rect,
-                        String,
-                        bool,
-                        bool,
-                        f32,
-                        f32,
-                        usize,
-                        String,
-                    )> = map
+                    let band_draws: Vec<MapBandDraw> = map
                         .bands
                         .iter()
                         .enumerate()
@@ -2882,9 +2884,9 @@ impl MapView {
                     .and_then(|overlay| overlay.current_edge.as_ref());
                 let painted = match (&self.playback, fade_enabled) {
                     (Some(playback), true) => {
-                        paint_symbol_edges_with_roles(&symbols, &viewport, playback)
+                        paint_symbol_edges_with_roles(symbols, &viewport, playback)
                     }
-                    _ => paint_symbol_edges(&symbols, &viewport, current_edge),
+                    _ => paint_symbol_edges(symbols, &viewport, current_edge),
                 };
                 let edges = painted
                     .into_iter()
@@ -3181,7 +3183,7 @@ impl Render for MapView {
         }
         if trace && !self.ab_segments.is_empty() {
             let ordinal = self.frame_count - 1;
-            if ordinal % self.ab_segment_frames == 0 {
+            if ordinal.is_multiple_of(self.ab_segment_frames) {
                 let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
                 phase_marker(&format!("ab:segment={}", self.ab_segments[segment]));
             }
@@ -3740,9 +3742,9 @@ fn selection_border(
     focus: Option<&str>,
 ) -> gpui::Hsla {
     if focus == Some(id) || selected == Some(id) {
-        theme.selection_border.clone()
+        theme.selection_border
     } else if highlighted.contains(id) {
-        theme.selection_highlight_border.clone()
+        theme.selection_highlight_border
     } else {
         default
     }

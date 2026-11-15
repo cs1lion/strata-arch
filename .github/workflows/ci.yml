@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -132,6 +133,26 @@ jobs:
             echo "== linux smoke: FAIL (exit ${status}) =="
             exit 1
           fi
+
+  clippy:
+    name: clippy gate (workspace, all targets, -D warnings)
+    runs-on: ubuntu-latest
+    # 门禁：workspace 全目标以 `-D warnings` 跑 clippy；arch-core / arch-view 的既有与本次引入的 lint
+    # 必须在清理后全绿，否则本 job 判红。
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: install gpu window deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: cache rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - name: clippy gate
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   reveal-budget:
     name: reveal budget (software rendering)

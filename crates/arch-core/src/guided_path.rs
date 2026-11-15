@@ -785,10 +785,8 @@ fn exported_names(source: &str) -> BTreeSet<String> {
                             break;
                         }
                     }
-                    TokenKind::Ident(name) => {
-                        if !matches!(name.as_str(), "as" | "type") {
-                            names.insert(name.clone());
-                        }
+                    TokenKind::Ident(name) if !matches!(name.as_str(), "as" | "type") => {
+                        names.insert(name.clone());
                     }
                     _ => {}
                 }
@@ -798,10 +796,8 @@ fn exported_names(source: &str) -> BTreeSet<String> {
             while cursor < tokens.len() {
                 match &tokens[cursor].kind {
                     TokenKind::Punct('{') | TokenKind::Punct(';') => break,
-                    TokenKind::Ident(name) => {
-                        if !EXPORT_KEYWORDS.contains(&name.as_str()) {
-                            names.insert(name.clone());
-                        }
+                    TokenKind::Ident(name) if !EXPORT_KEYWORDS.contains(&name.as_str()) => {
+                        names.insert(name.clone());
                     }
                     _ => {}
                 }

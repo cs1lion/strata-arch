@@ -83,23 +83,23 @@ pub fn paint_dot_grid(
     // 仅在点数远超上限时按等比比例收敛，正常视口保持原有点阵密度。
     let uncapped_cells = rows_per_step * cols_per_step;
     let factor = if uncapped_cells > 16_000.0 {
-        MAX_DOT_GRID_CELLS as f32 / uncapped_cells as f32
+        MAX_DOT_GRID_CELLS as f32 / uncapped_cells
     } else {
         1.0
     };
-    let max_rows = (rows_per_step as f32 * factor)
+    let max_rows = (rows_per_step * factor)
         .floor()
-        .clamp(1.0, rows_per_step as f32) as usize;
-    let max_cols = (cols_per_step as f32 * factor)
+        .clamp(1.0, rows_per_step) as usize;
+    let max_cols = (cols_per_step * factor)
         .floor()
-        .clamp(1.0, cols_per_step as f32) as usize;
+        .clamp(1.0, cols_per_step) as usize;
     let mut row_idx = 0usize;
     let mut y = offset_y;
     while y < height && row_idx < max_rows {
         let mut col_idx = 0usize;
         let mut x = offset_x;
         while x < width && col_idx < max_cols {
-            let is_major = row_idx % 4 == 0 && col_idx % 4 == 0;
+            let is_major = row_idx.is_multiple_of(4) && col_idx.is_multiple_of(4);
             let color = if is_major {
                 theme.dot_grid_major
             } else {
@@ -238,7 +238,7 @@ pub fn paint_cubic_bezier_arrow(
 fn curve_cull_margin(zoom: f32, dy: f32) -> f32 {
     // 曲线控制点外扩量（与 `paint_cubic_bezier_arrow` 的控制点偏移同量级）：
     // 视口裁剪时用它对齐固定 `CULL_MARGIN`，避免起止点在视口外侧、曲线中段向视口内弯曲时整条曲线被提前裁剪。
-    let offset = (f32::from(dy).abs() * 0.45).clamp(24.0 * zoom, 140.0 * zoom);
+    let offset = (dy.abs() * 0.45).clamp(24.0 * zoom, 140.0 * zoom);
     CULL_MARGIN.max(offset)
 }
 

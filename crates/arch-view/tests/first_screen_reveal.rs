@@ -136,14 +136,14 @@ fn stages_reveal_in_layer_order_without_reordering() {
         .collect::<Vec<_>>();
     for step in 31..=100 {
         reveal.set_progress(step as f32 / 100.0);
-        for stage in 0..5 {
+        for (stage, item) in previous.iter_mut().enumerate().take(5) {
             let current = reveal.opacity_for_stage(stage);
             assert!(
-                current >= previous[stage],
-                "第 {stage} 层不透明度必须单调不减: {} -> {current}",
-                previous[stage]
+                current >= *item,
+                                "第 {stage} 层不透明度必须单调不减: {} -> {current}",
+                *item,
             );
-            previous[stage] = current;
+            *item = current;
         }
     }
     all_final(&reveal);

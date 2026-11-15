@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 
 use arch_core::history::{build_history_prefixes, HistoryOptions};
@@ -31,11 +32,11 @@ fn tick_times(repo: &PathBuf) -> Vec<u64> {
         .collect()
 }
 
-fn timeline_from(repo: &PathBuf, times: &[u64]) -> TimelineState {
+fn timeline_from(repo: &Path, times: &[u64]) -> TimelineState {
     TimelineState::new(entries_from(repo, times))
 }
 
-fn entries_from(repo: &PathBuf, times: &[u64]) -> Vec<TimelineEntry> {
+fn entries_from(repo: &Path, times: &[u64]) -> Vec<TimelineEntry> {
     let artifacts =
         build_history_prefixes(repo, "test", HistoryOptions::default(), times).expect("history");
     artifacts
@@ -500,7 +501,7 @@ fn budget_times(repo: &PathBuf) -> Vec<u64> {
 }
 
 /// 3 次运行 × 19 步，返回每轮 p95（毫秒）；计时只包模型更新，不包样本准备。
-fn measure_model_frame_p95(repo: &PathBuf, times: &[u64]) -> Vec<f64> {
+fn measure_model_frame_p95(repo: &Path, times: &[u64]) -> Vec<f64> {
     let ids = union_ids(&timeline_from(repo, times));
     let mut run_p95 = Vec::new();
     for run in 0..3 {

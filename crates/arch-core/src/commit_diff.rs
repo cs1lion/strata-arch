@@ -509,7 +509,7 @@ fn is_materialized_path(path: &str) -> bool {
     {
         return false;
     }
-    if path.split('/').any(|segment| is_ignored_dir(segment)) {
+    if path.split('/').any(is_ignored_dir) {
         return false;
     }
     if is_source_file(candidate) {
