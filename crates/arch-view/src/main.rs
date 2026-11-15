@@ -17,7 +17,7 @@ use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
 use arch_view::layout::{
-    layout_map, BandLayout, LayoutConfig, MapLayout, Point as LayoutPoint,
+    layout_map, LayoutConfig, MapLayout, Point as LayoutPoint,
 };
 use arch_view::loading::{
     build_layer_artifact, compute_layout, list_first_parent_commits, sample_history, LoadStatus,
@@ -1348,8 +1348,52 @@ impl Render for SmokeView {
             .size_full()
             .overflow_hidden()
             .bg(rgb(0x0d1117));
-        for band in &self.layout.bands {
-            root = root.child(band_element(band, Viewport::default(), 1.0, 0.0));
+        {
+            let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+            let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = self.layout
+                .bands
+                .iter()
+                .map(|band| (band.rect, band.layer.to_string(), band.is_unclassified, band.is_external, band.node_count))
+                .collect();
+            let band_theme = theme.clone();
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .size_full()
+                    .child(canvas(
+                        move |bounds, _, _| bounds,
+                        move |bounds, _, window, _| {
+                            use gpui::{quad, size, BorderStyle, Corners, Edges};
+                            for (rect, layer, is_unclassified, is_external, _count) in &band_draws {
+                                let (fill_c, border_c, header_c) = band_theme.band_style(layer, *is_unclassified, *is_external, 1.0);
+                                let b = gpui::Bounds {
+                                    origin: point(bounds.origin.x + px(rect.x), bounds.origin.y + px(rect.y)),
+                                    size: size(px(rect.width.max(0.0)), px(rect.height.max(0.0))),
+                                };
+                                window.paint_quad(quad(b, Corners::all(band_theme.band_radius), fill_c, Edges::all(px(1.0)), border_c, BorderStyle::default()));
+                                let header_bar = gpui::Bounds {
+                                    origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
+                                    size: size(px(3.5), px(16.0)),
+                                };
+                                window.paint_quad(quad(header_bar, Corners::all(px(2.0)), header_c, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                            }
+                        },
+                    )),
+            );
+            for band in &self.layout.bands {
+                let header = theme.layer_accent(band.layer, band.is_unclassified, band.is_external);
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(band.rect.x + 10.))
+                        .top(px(band.rect.y + 4.))
+                        .text_xs()
+                        .text_color(header)
+                        .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
+                );
+            }
         }
         for node in &self.layout.nodes {
             root = root.child(
@@ -3397,10 +3441,6 @@ fn edge_canvas(
             },
         ))
 }
-fn scaled_rect(rect: arch_view::layout::Rect, viewport: Viewport) -> arch_view::layout::Rect {
-    viewport.screen_rect(rect)
-}
-
 fn selection_border(
     id: &str,
     default: gpui::Hsla,
@@ -3417,42 +3457,3 @@ fn selection_border(
     }
 }
 
-fn band_element(
-    band: &BandLayout,
-    viewport: Viewport,
-    opacity: f32,
-    offset_y: f32,
-) -> impl IntoElement {
-    let rect = scaled_rect(band.rect, viewport);
-    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
-    let (fill, border_c, header) = theme.band_style(band.layer, band.is_unclassified, band.is_external, 1.0);
-    div()
-        .absolute()
-        .left(px(rect.x))
-        .top(px(rect.y + offset_y))
-        .w(px(rect.width))
-        .h(px(rect.height))
-        .opacity(opacity)
-        .rounded(theme.band_radius)
-        .bg(fill)
-        .border_1()
-        .border_color(border_c)
-        .child(
-            div()
-                .absolute()
-                .left(px(1.))
-                .top(px(6.))
-                .w(px(3.5))
-                .h(px(16.))
-                .rounded(px(2.))
-                .bg(header),
-        )
-        .child(
-            div()
-                .pl(px(10.))
-                .pt(px(4.))
-                .text_xs()
-                .text_color(header)
-                .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
-        )
-}
