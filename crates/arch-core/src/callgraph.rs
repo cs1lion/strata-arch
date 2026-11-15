@@ -662,22 +662,21 @@ fn parse_variable(tokens: &[Token], index: usize) -> Option<(RawSymbol, usize)> 
 
 fn parse_default_arrow(tokens: &[Token], index: usize) -> Option<(RawSymbol, usize)> {
     let mut cursor = index + 1;
-    let body_start;
-    if punct_at(tokens, cursor, '(') {
+    let body_start = if punct_at(tokens, cursor, '(') {
         let params_close = matching(tokens, cursor, '(', ')')?;
         if !punct_at(tokens, params_close + 1, '=') || !punct_at(tokens, params_close + 2, '>') {
             return None;
         }
-        body_start = params_close + 3;
+        params_close + 3
     } else if ident_at(tokens, cursor).is_some() {
         if !punct_at(tokens, cursor + 1, '=') || !punct_at(tokens, cursor + 2, '>') {
             return None;
         }
         cursor += 3;
-        body_start = cursor;
+        cursor
     } else {
         return None;
-    }
+    };
 
     let end = if punct_at(tokens, body_start, '{') {
         matching(tokens, body_start, '{', '}')?
