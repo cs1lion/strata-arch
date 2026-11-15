@@ -2,8 +2,12 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -19,6 +23,10 @@ jobs:
           # arch-core 的 commit_diff 测试要对仓内历史提交 2b66deb..29f8e27 求差，浅克隆会报 UnknownCommit。
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      - name: cache rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
       - name: install gpu window deps (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools x11-utils openbox
@@ -213,6 +221,10 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      - name: cache rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
       - name: plan
         id: plan
         shell: pwsh
