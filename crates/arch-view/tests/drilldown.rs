@@ -144,7 +144,7 @@ fn symbol_edges_stay_inside_module_and_highlight_matches_callgraph() {
     assert!(
         state
             .highlighted()
-            .contains(&"src/util.ts#function:helper".to_string()),
+            .contains("src/util.ts#function:helper"),
         "cross-module neighbors stay highlighted even when not drawn"
     );
 }

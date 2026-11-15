@@ -133,6 +133,17 @@ jobs:
             exit 1
           fi
 
+  clippy:
+    name: clippy gate (workspace, all targets, -D warnings)
+    runs-on: ubuntu-latest
+    # 门禁：workspace 全目标以 `-D warnings` 跑 clippy；arch-core / arch-view 的既有与本次引入的 lint
+    # 必须在清理后全绿，否则本 job 判红。
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: clippy gate
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   reveal-budget:
     name: reveal budget (software rendering)
     # 只在手动 dispatch 时跑：这是取证 job（软件渲染 / 单核低端代理下的揭示时长），

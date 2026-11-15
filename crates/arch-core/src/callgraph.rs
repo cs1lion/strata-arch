@@ -97,7 +97,7 @@ pub struct CallUnresolved {
 /// v2：04b/04c（拆分统计字段、`external-call`、默认聚合 `call-unattributed`）。
 pub const CALLGRAPH_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct CallGraphOptions {
     /// 是否在 `unresolved` 中保留 `call-unattributed` 明细。
     ///
@@ -106,13 +106,7 @@ pub struct CallGraphOptions {
     pub include_unattributed: bool,
 }
 
-impl Default for CallGraphOptions {
-    fn default() -> Self {
-        Self {
-            include_unattributed: false,
-        }
-    }
-}
+
 
 #[derive(Debug, Clone)]
 struct RawSymbol {
@@ -631,20 +625,19 @@ fn parse_variable(tokens: &[Token], index: usize) -> Option<(RawSymbol, usize)> 
         return None;
     }
 
-    let body_start;
-    if punct_at(tokens, cursor, '(') {
+    let body_start = if punct_at(tokens, cursor, '(') {
         let params_close = matching(tokens, cursor, '(', ')')?;
         if !punct_at(tokens, params_close + 1, '=') || !punct_at(tokens, params_close + 2, '>') {
             return None;
         }
-        body_start = params_close + 3;
+        params_close + 3
     } else {
         ident_at(tokens, cursor)?;
         if !punct_at(tokens, cursor + 1, '=') || !punct_at(tokens, cursor + 2, '>') {
             return None;
         }
-        body_start = cursor + 3;
-    }
+        cursor + 3
+    };
 
     let end = if punct_at(tokens, body_start, '{') {
         matching(tokens, body_start, '{', '}')?
@@ -721,8 +714,8 @@ fn declaration_start(tokens: &[Token], index: usize) -> usize {
 
 fn statement_end(tokens: &[Token], start: usize) -> usize {
     let mut depth = 0usize;
-    for index in start..tokens.len() {
-        match &tokens[index].kind {
+    for (index, token) in tokens.iter().enumerate().skip(start) {
+        match &token.kind {
             TokenKind::Punct('(' | '[' | '{') => depth += 1,
             TokenKind::Punct(')' | ']' | '}') => depth = depth.saturating_sub(1),
             TokenKind::Punct(';') if depth == 0 => return index,
@@ -745,18 +738,17 @@ fn statement_end(tokens: &[Token], start: usize) -> usize {
 fn body_has_jsx(tokens: &[Token], start: usize, end: usize) -> bool {
     let end = end.min(tokens.len().saturating_sub(1));
     for index in start..end {
-        if punct_at(tokens, index, '<') {
-            if ident_at(tokens, index + 1).is_some()
-                && matches!(
-                    token_kind(tokens, index + 2),
-                    Some(TokenKind::Punct('>'))
-                        | Some(TokenKind::Punct('/'))
-                        | Some(TokenKind::Ident(_))
-                        | Some(TokenKind::Punct('{'))
-                )
-            {
-                return true;
-            }
+        if punct_at(tokens, index, '<')
+            && ident_at(tokens, index + 1).is_some()
+            && matches!(
+                token_kind(tokens, index + 2),
+                Some(TokenKind::Punct('>'))
+                    | Some(TokenKind::Punct('/'))
+                    | Some(TokenKind::Ident(_))
+                    | Some(TokenKind::Punct('{'))
+            )
+        {
+            return true;
         }
     }
     false
