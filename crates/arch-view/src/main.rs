@@ -16,26 +16,23 @@ use arch_core::commit_diff::{diff_commits_cancellable, CommitDiffError, DiffProg
 use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
 use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
-use arch_view::layout::{
-    layout_map, LayoutConfig, MapLayout, Point as LayoutPoint,
-};
+use arch_view::layout::{layout_map, LayoutConfig, MapLayout, Point as LayoutPoint};
 use arch_view::loading::{
     build_layer_artifact, compute_layout, list_first_parent_commits, sample_history, LoadStatus,
     LoadingStage, LoadingState,
 };
-use arch_view::playback::{opacity_alpha_byte, PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
+use arch_view::playback::{PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
 use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
-    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside,
-    CanvasState, EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM,
-    MIN_ZOOM,
+    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState,
+    EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM, MIN_ZOOM,
 };
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, rgba, size, Animation, AnimationExt, AnyElement,
-    AnyView, App, Application, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement,
+    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt, AnyElement, AnyView,
+    App, Application, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render,
     ScrollDelta, ScrollWheelEvent, Stateful, Timer, Window, WindowBounds, WindowOptions,
 };
@@ -1086,7 +1083,11 @@ impl Render for DiffView {
                             .border_color(theme.hud_border)
                             .text_xs()
                             .text_color(rgb(0xe6edf3))
-                            .child(if self.fade_enabled { "淡入: 开" } else { "淡入: 关" })
+                            .child(if self.fade_enabled {
+                                "淡入: 开"
+                            } else {
+                                "淡入: 关"
+                            })
                             .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                                 this.fade_enabled = !this.fade_enabled;
                                 if this.fade_enabled {
@@ -1125,8 +1126,18 @@ impl Render for DiffView {
                 arch_view::diff::DiffKind::Modified => "修改",
             };
             let index = row.z_index;
-            let mut middle = div().flex().flex_1().items_center().gap(px(8.)).min_w(px(0.));
-            middle = middle.child(div().text_xs().text_color(text_color).child(row.path.clone()));
+            let mut middle = div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .gap(px(8.))
+                .min_w(px(0.));
+            middle = middle.child(
+                div()
+                    .text_xs()
+                    .text_color(text_color)
+                    .child(row.path.clone()),
+            );
             if let Some(hint) = &row.rename_hint {
                 middle = middle.child(
                     div()
@@ -1165,7 +1176,12 @@ impl Render for DiffView {
                         .child(kind_label),
                 )
                 .child(middle)
-                .child(div().text_xs().text_color(rgb(0x8b9bb0)).child(row.detail.clone()));
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x8b9bb0))
+                        .child(row.detail.clone()),
+                );
 
             if self.fade_enabled {
                 root = root.child(element.with_animation(
@@ -1350,10 +1366,19 @@ impl Render for SmokeView {
             .bg(rgb(0x0d1117));
         {
             let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
-            let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = self.layout
+            let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = self
+                .layout
                 .bands
                 .iter()
-                .map(|band| (band.rect, band.layer.to_string(), band.is_unclassified, band.is_external, band.node_count))
+                .map(|band| {
+                    (
+                        band.rect,
+                        band.layer.to_string(),
+                        band.is_unclassified,
+                        band.is_external,
+                        band.node_count,
+                    )
+                })
                 .collect();
             let band_theme = theme.clone();
             root = root.child(
@@ -1367,17 +1392,39 @@ impl Render for SmokeView {
                         move |bounds, _, window, _| {
                             use gpui::{quad, size, BorderStyle, Corners, Edges};
                             for (rect, layer, is_unclassified, is_external, _count) in &band_draws {
-                                let (fill_c, border_c, header_c) = band_theme.band_style(layer, *is_unclassified, *is_external, 1.0);
+                                let (fill_c, border_c, header_c) = band_theme.band_style(
+                                    layer,
+                                    *is_unclassified,
+                                    *is_external,
+                                    1.0,
+                                );
                                 let b = gpui::Bounds {
-                                    origin: point(bounds.origin.x + px(rect.x), bounds.origin.y + px(rect.y)),
+                                    origin: point(
+                                        bounds.origin.x + px(rect.x),
+                                        bounds.origin.y + px(rect.y),
+                                    ),
                                     size: size(px(rect.width.max(0.0)), px(rect.height.max(0.0))),
                                 };
-                                window.paint_quad(quad(b, Corners::all(band_theme.band_radius), fill_c, Edges::all(px(1.0)), border_c, BorderStyle::default()));
+                                window.paint_quad(quad(
+                                    b,
+                                    Corners::all(band_theme.band_radius),
+                                    fill_c,
+                                    Edges::all(px(1.0)),
+                                    border_c,
+                                    BorderStyle::default(),
+                                ));
                                 let header_bar = gpui::Bounds {
                                     origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
                                     size: size(px(3.5), px(16.0)),
                                 };
-                                window.paint_quad(quad(header_bar, Corners::all(px(2.0)), header_c, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                                window.paint_quad(quad(
+                                    header_bar,
+                                    Corners::all(px(2.0)),
+                                    header_c,
+                                    Edges::all(px(0.0)),
+                                    gpui::transparent_black(),
+                                    BorderStyle::default(),
+                                ));
                             }
                         },
                     )),
@@ -1391,7 +1438,11 @@ impl Render for SmokeView {
                         .top(px(band.rect.y + 4.))
                         .text_xs()
                         .text_color(header)
-                        .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
+                        .child(format!(
+                            "{} · {}",
+                            band.layer.to_uppercase(),
+                            band.node_count
+                        )),
                 );
             }
         }
@@ -1586,7 +1637,8 @@ impl TimelineView {
             );
         }
         panel
-    }}
+    }
+}
 
 static TIMELINE_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 static TIMELINE_CONTENT_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
@@ -1663,7 +1715,15 @@ impl Render for TimelineView {
             let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = layout
                 .bands
                 .iter()
-                .map(|band| (band.rect, band.layer.to_string(), band.is_unclassified, band.is_external, band.node_count))
+                .map(|band| {
+                    (
+                        band.rect,
+                        band.layer.to_string(),
+                        band.is_unclassified,
+                        band.is_external,
+                        band.node_count,
+                    )
+                })
                 .collect();
             let band_theme = theme.clone();
             root = root.child(
@@ -1677,17 +1737,39 @@ impl Render for TimelineView {
                         move |bounds, _, window, _| {
                             use gpui::{quad, size, BorderStyle, Corners, Edges};
                             for (rect, layer, is_unclassified, is_external, _count) in &band_draws {
-                                let (fill_c, border_c, header_c) = band_theme.band_style(layer, *is_unclassified, *is_external, 1.0);
+                                let (fill_c, border_c, header_c) = band_theme.band_style(
+                                    layer,
+                                    *is_unclassified,
+                                    *is_external,
+                                    1.0,
+                                );
                                 let b = gpui::Bounds {
-                                    origin: point(bounds.origin.x + px(rect.x), bounds.origin.y + px(rect.y)),
+                                    origin: point(
+                                        bounds.origin.x + px(rect.x),
+                                        bounds.origin.y + px(rect.y),
+                                    ),
                                     size: size(px(rect.width.max(0.0)), px(rect.height.max(0.0))),
                                 };
-                                window.paint_quad(quad(b, Corners::all(band_theme.band_radius), fill_c, Edges::all(px(1.0)), border_c, BorderStyle::default()));
+                                window.paint_quad(quad(
+                                    b,
+                                    Corners::all(band_theme.band_radius),
+                                    fill_c,
+                                    Edges::all(px(1.0)),
+                                    border_c,
+                                    BorderStyle::default(),
+                                ));
                                 let header_bar = gpui::Bounds {
                                     origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
                                     size: size(px(3.5), px(16.0)),
                                 };
-                                window.paint_quad(quad(header_bar, Corners::all(px(2.0)), header_c, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                                window.paint_quad(quad(
+                                    header_bar,
+                                    Corners::all(px(2.0)),
+                                    header_c,
+                                    Edges::all(px(0.0)),
+                                    gpui::transparent_black(),
+                                    BorderStyle::default(),
+                                ));
                             }
                         },
                     )),
@@ -1701,7 +1783,11 @@ impl Render for TimelineView {
                         .top(px(band.rect.y + 4.))
                         .text_xs()
                         .text_color(header)
-                        .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
+                        .child(format!(
+                            "{} · {}",
+                            band.layer.to_uppercase(),
+                            band.node_count
+                        )),
                 );
             }
         }
@@ -1721,7 +1807,7 @@ impl Render for TimelineView {
                 let background: gpui::Hsla = rgb(((heat.color[0] as u32) << 16)
                     | ((heat.color[1] as u32) << 8)
                     | heat.color[2] as u32)
-                    .into();
+                .into();
                 let border = if selected.as_deref() == Some(node.id.as_str()) {
                     theme.card_border_selected
                 } else if heat.neutral {
@@ -1729,7 +1815,12 @@ impl Render for TimelineView {
                 } else {
                     theme.card_border_default
                 };
-                draws.push(TimelineNodeDraw { rect: node.rect, bg: background, border, opacity: node_opacity });
+                draws.push(TimelineNodeDraw {
+                    rect: node.rect,
+                    bg: background,
+                    border,
+                    opacity: node_opacity,
+                });
             }
             let tl_theme = theme.clone();
             root = root.child(
@@ -1743,13 +1834,28 @@ impl Render for TimelineView {
                         move |bounds, _, window, _| {
                             use gpui::{quad, size, BorderStyle, Corners, Edges};
                             for item in &draws {
-                                let mut bg = item.bg; bg.a *= item.opacity;
-                                let mut border = item.border; border.a *= item.opacity;
+                                let mut bg = item.bg;
+                                bg.a *= item.opacity;
+                                let mut border = item.border;
+                                border.a *= item.opacity;
                                 let b = gpui::Bounds {
-                                    origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
-                                    size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
+                                    origin: point(
+                                        bounds.origin.x + px(item.rect.x),
+                                        bounds.origin.y + px(item.rect.y),
+                                    ),
+                                    size: size(
+                                        px(item.rect.width.max(0.0)),
+                                        px(item.rect.height.max(0.0)),
+                                    ),
                                 };
-                                window.paint_quad(quad(b, Corners::all(tl_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
+                                window.paint_quad(quad(
+                                    b,
+                                    Corners::all(tl_theme.card_radius),
+                                    bg,
+                                    Edges::all(px(1.0)),
+                                    border,
+                                    BorderStyle::default(),
+                                ));
                             }
                         },
                     )),
@@ -1829,8 +1935,16 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(if playback_enabled { rgb(0x2c3a4a) } else { rgb(0x50241f) })
-                    .child(if playback_enabled { "动画:开" } else { "动画:关" })
+                    .bg(if playback_enabled {
+                        rgb(0x2c3a4a)
+                    } else {
+                        rgb(0x50241f)
+                    })
+                    .child(if playback_enabled {
+                        "动画:开"
+                    } else {
+                        "动画:关"
+                    })
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.playback.set_enabled(!this.playback.enabled());
                         cx.notify();
@@ -1953,9 +2067,15 @@ impl Render for TimelineView {
             );
         }
         let mut markers = Vec::new();
-        if flags.sampled { markers.push("sampled"); }
-        if flags.truncated { markers.push("truncated"); }
-        if flags.shallow { markers.push("shallow"); }
+        if flags.sampled {
+            markers.push("sampled");
+        }
+        if flags.truncated {
+            markers.push("truncated");
+        }
+        if flags.shallow {
+            markers.push("shallow");
+        }
         if !markers.is_empty() {
             badges = badges.child(
                 div()
@@ -2001,7 +2121,11 @@ impl Render for TimelineView {
                     .justify_between()
                     .gap(px(12.))
                     .child(div().child(commit).child(format!("  [{position}/{ticks}]")))
-                    .child(div().text_color(rgb(0x8b9bb0)).child(ready.timeline.sampling_label())),
+                    .child(
+                        div()
+                            .text_color(rgb(0x8b9bb0))
+                            .child(ready.timeline.sampling_label()),
+                    ),
             )
             .child(
                 div()
@@ -2311,7 +2435,16 @@ impl MapView {
                     .map(|(index, band)| (band.layer, index))
                     .collect::<std::collections::BTreeMap<&str, usize>>();
                 if !skip.bands {
-                    let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, f32, f32, usize, String)> = map
+                    let band_draws: Vec<(
+                        arch_view::layout::Rect,
+                        String,
+                        bool,
+                        bool,
+                        f32,
+                        f32,
+                        usize,
+                        String,
+                    )> = map
                         .bands
                         .iter()
                         .enumerate()
@@ -2332,48 +2465,108 @@ impl MapView {
                     let band_vp_size = viewport_size;
                     let band_cull = tuning.cull_viewport;
                     let band_theme = theme.clone();
-                    root = root.child(
-                        div()
-                            .absolute()
-                            .left(px(0.))
-                            .top(px(0.))
-                            .size_full()
-                            .child(canvas(
-                                move |bounds, _, _| bounds,
-                                move |bounds, _, window, _| {
-                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
-                                    for (rect, layer, is_unclassified, is_external, opacity, offset_y, _count, _label) in &band_draws {
-                                        let sr = band_vp.screen_rect(*rect);
-                                        let sr = arch_view::layout::Rect { x: sr.x, y: sr.y + offset_y, width: sr.width, height: sr.height };
-                                        if band_cull && arch_view::view::rect_fully_outside(sr, band_vp_size, CULL_MARGIN) {
-                                            continue;
-                                        }
-                                        let (fill_c, border_c, header_c) = band_theme.band_style(layer, *is_unclassified, *is_external, 1.0);
-                                        let b = gpui::Bounds {
-                                            origin: point(bounds.origin.x + px(sr.x), bounds.origin.y + px(sr.y)),
-                                            size: size(px(sr.width.max(0.0)), px(sr.height.max(0.0))),
-                                        };
-                                        // apply opacity by drawing with alpha; gpui quads take colors (Hsla) - adjust alpha
-                                        let mut fill_c = fill_c; fill_c.a *= opacity;
-                                        let mut border_c = border_c; border_c.a *= opacity;
-                                        let mut header_c = header_c; header_c.a *= opacity;
-                                        window.paint_quad(quad(b, Corners::all(band_theme.band_radius * band_vp.zoom.clamp(0.6, 1.2)), fill_c, Edges::all(px(1.0)), border_c, BorderStyle::default()));
-                                        let header_bar = gpui::Bounds {
-                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
-                                            size: size(px(3.5), px((16.0 * band_vp.zoom).clamp(10.0, 22.0))),
-                                        };
-                                        window.paint_quad(quad(header_bar, Corners::all(px(2.0)), header_c, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
+                    root = root.child(div().absolute().left(px(0.)).top(px(0.)).size_full().child(
+                        canvas(
+                            move |bounds, _, _| bounds,
+                            move |bounds, _, window, _| {
+                                use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                for (
+                                    rect,
+                                    layer,
+                                    is_unclassified,
+                                    is_external,
+                                    opacity,
+                                    offset_y,
+                                    _count,
+                                    _label,
+                                ) in &band_draws
+                                {
+                                    let sr = band_vp.screen_rect(*rect);
+                                    let sr = arch_view::layout::Rect {
+                                        x: sr.x,
+                                        y: sr.y + offset_y,
+                                        width: sr.width,
+                                        height: sr.height,
+                                    };
+                                    if band_cull
+                                        && arch_view::view::rect_fully_outside(
+                                            sr,
+                                            band_vp_size,
+                                            CULL_MARGIN,
+                                        )
+                                    {
+                                        continue;
                                     }
-                                },
-                            )),
-                    );
+                                    let (fill_c, border_c, header_c) = band_theme.band_style(
+                                        layer,
+                                        *is_unclassified,
+                                        *is_external,
+                                        1.0,
+                                    );
+                                    let b = gpui::Bounds {
+                                        origin: point(
+                                            bounds.origin.x + px(sr.x),
+                                            bounds.origin.y + px(sr.y),
+                                        ),
+                                        size: size(px(sr.width.max(0.0)), px(sr.height.max(0.0))),
+                                    };
+                                    // apply opacity by drawing with alpha; gpui quads take colors (Hsla) - adjust alpha
+                                    let mut fill_c = fill_c;
+                                    fill_c.a *= opacity;
+                                    let mut border_c = border_c;
+                                    border_c.a *= opacity;
+                                    let mut header_c = header_c;
+                                    header_c.a *= opacity;
+                                    window.paint_quad(quad(
+                                        b,
+                                        Corners::all(
+                                            band_theme.band_radius * band_vp.zoom.clamp(0.6, 1.2),
+                                        ),
+                                        fill_c,
+                                        Edges::all(px(1.0)),
+                                        border_c,
+                                        BorderStyle::default(),
+                                    ));
+                                    let header_bar = gpui::Bounds {
+                                        origin: point(b.origin.x + px(1.0), b.origin.y + px(6.0)),
+                                        size: size(
+                                            px(3.5),
+                                            px((16.0 * band_vp.zoom).clamp(10.0, 22.0)),
+                                        ),
+                                    };
+                                    window.paint_quad(quad(
+                                        header_bar,
+                                        Corners::all(px(2.0)),
+                                        header_c,
+                                        Edges::all(px(0.0)),
+                                        gpui::transparent_black(),
+                                        BorderStyle::default(),
+                                    ));
+                                }
+                            },
+                        ),
+                    ));
                     // keep layer labels as lightweight DOM overlay for readability (text not painted in canvas)
                     for (index, band) in map.bands.iter().enumerate() {
                         let sr = viewport.screen_rect(band.rect);
                         let oy = self.reveal.offset_for_stage(index);
                         let op = self.reveal.opacity_for_stage(index);
-                        if tuning.cull_viewport && rect_fully_outside(arch_view::layout::Rect { x: sr.x, y: sr.y + oy, width: sr.width, height: sr.height }, viewport_size, CULL_MARGIN) { continue; }
-                        let header = theme.layer_accent(band.layer, band.is_unclassified, band.is_external);
+                        if tuning.cull_viewport
+                            && rect_fully_outside(
+                                arch_view::layout::Rect {
+                                    x: sr.x,
+                                    y: sr.y + oy,
+                                    width: sr.width,
+                                    height: sr.height,
+                                },
+                                viewport_size,
+                                CULL_MARGIN,
+                            )
+                        {
+                            continue;
+                        }
+                        let header =
+                            theme.layer_accent(band.layer, band.is_unclassified, band.is_external);
                         root = root.child(
                             div()
                                 .absolute()
@@ -2382,7 +2575,11 @@ impl MapView {
                                 .opacity(op)
                                 .text_xs()
                                 .text_color(header)
-                                .child(format!("{} · {}", band.layer.to_uppercase(), band.node_count)),
+                                .child(format!(
+                                    "{} · {}",
+                                    band.layer.to_uppercase(),
+                                    band.node_count
+                                )),
                         );
                     }
                 }
@@ -2419,6 +2616,7 @@ impl MapView {
                         edges,
                         map.width * viewport.zoom,
                         map.height * viewport.zoom,
+                        viewport.zoom,
                         tuning.batch_edges,
                     ));
                 }
@@ -2468,6 +2666,7 @@ impl MapView {
                             path_edges,
                             map.width * viewport.zoom,
                             map.height * viewport.zoom,
+                            viewport.zoom,
                             tuning.batch_edges,
                         ));
                     }
@@ -2540,11 +2739,16 @@ impl MapView {
                         visual.rect.width,
                         visual.rect.height,
                     );
-                    if tuning.cull_viewport && rect_fully_outside(drawn_rect, viewport_size, CULL_MARGIN) {
+                    if tuning.cull_viewport
+                        && rect_fully_outside(drawn_rect, viewport_size, CULL_MARGIN)
+                    {
                         continue;
                     }
-                    let accent = theme.layer_accent(node.layer, node.is_unclassified, node.is_external);
-                    let bg = if focus == Some(node.id.as_str()) || selected.as_deref() == Some(node.id.as_str()) {
+                    let accent =
+                        theme.layer_accent(node.layer, node.is_unclassified, node.is_external);
+                    let bg = if focus == Some(node.id.as_str())
+                        || selected.as_deref() == Some(node.id.as_str())
+                    {
                         theme.card_selected_bg
                     } else if highlighted.contains(&node.id) {
                         theme.card_neighbor_bg
@@ -2555,7 +2759,9 @@ impl MapView {
                         tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
                         tint
                     };
-                    let border = if focus == Some(node.id.as_str()) || selected.as_deref() == Some(node.id.as_str()) {
+                    let border = if focus == Some(node.id.as_str())
+                        || selected.as_deref() == Some(node.id.as_str())
+                    {
                         theme.card_border_selected
                     } else if highlighted.contains(&node.id) {
                         let mut b = accent;
@@ -2564,7 +2770,13 @@ impl MapView {
                     } else {
                         theme.card_border_default
                     };
-                    node_draws.push(ModuleNodeDraw { rect: drawn_rect, accent, bg, border, opacity });
+                    node_draws.push(ModuleNodeDraw {
+                        rect: drawn_rect,
+                        accent,
+                        bg,
+                        border,
+                        opacity,
+                    });
                     let marker = if node.is_unclassified {
                         Some(0xd98a3d)
                     } else if node.is_external {
@@ -2582,34 +2794,55 @@ impl MapView {
                 if !node_draws.is_empty() {
                     let nd = node_draws.clone();
                     let node_theme = theme.clone();
-                    root = root.child(
-                        div()
-                            .absolute()
-                            .left(px(0.))
-                            .top(px(0.))
-                            .size_full()
-                            .child(canvas(
-                                move |bounds, _, _| bounds,
-                                move |bounds, _, window, _| {
-                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
-                                    for item in &nd {
-                                        let mut bg = item.bg; bg.a *= item.opacity;
-                                        let mut border = item.border; border.a *= item.opacity;
-                                        let mut accent = item.accent; accent.a *= item.opacity;
-                                        let b = gpui::Bounds {
-                                            origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
-                                            size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
-                                        };
-                                        window.paint_quad(quad(b, Corners::all(node_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
-                                        let accent_bar = gpui::Bounds {
-                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
-                                            size: size(node_theme.accent_bar_width, px((f32::from(b.size.height) - 8.0).max(0.0))),
-                                        };
-                                        window.paint_quad(quad(accent_bar, Corners::all(px(2.0)), accent, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
-                                    }
-                                },
-                            )),
-                    );
+                    root = root.child(div().absolute().left(px(0.)).top(px(0.)).size_full().child(
+                        canvas(
+                            move |bounds, _, _| bounds,
+                            move |bounds, _, window, _| {
+                                use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                for item in &nd {
+                                    let mut bg = item.bg;
+                                    bg.a *= item.opacity;
+                                    let mut border = item.border;
+                                    border.a *= item.opacity;
+                                    let mut accent = item.accent;
+                                    accent.a *= item.opacity;
+                                    let b = gpui::Bounds {
+                                        origin: point(
+                                            bounds.origin.x + px(item.rect.x),
+                                            bounds.origin.y + px(item.rect.y),
+                                        ),
+                                        size: size(
+                                            px(item.rect.width.max(0.0)),
+                                            px(item.rect.height.max(0.0)),
+                                        ),
+                                    };
+                                    window.paint_quad(quad(
+                                        b,
+                                        Corners::all(node_theme.card_radius),
+                                        bg,
+                                        Edges::all(px(1.0)),
+                                        border,
+                                        BorderStyle::default(),
+                                    ));
+                                    let accent_bar = gpui::Bounds {
+                                        origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
+                                        size: size(
+                                            node_theme.accent_bar_width,
+                                            px((f32::from(b.size.height) - 8.0).max(0.0)),
+                                        ),
+                                    };
+                                    window.paint_quad(quad(
+                                        accent_bar,
+                                        Corners::all(px(2.0)),
+                                        accent,
+                                        Edges::all(px(0.0)),
+                                        gpui::transparent_black(),
+                                        BorderStyle::default(),
+                                    ));
+                                }
+                            },
+                        ),
+                    ));
                 }
                 for overlay_item in &node_overlays {
                     if let Some(label) = &overlay_item.label {
@@ -2676,6 +2909,7 @@ impl MapView {
                     edges,
                     symbols.width * viewport.zoom,
                     symbols.height * viewport.zoom,
+                    viewport.zoom,
                     tuning.batch_edges,
                 ));
 
@@ -2726,14 +2960,35 @@ impl MapView {
                     };
                     let opacity = opacity * reveal_overall;
                     let rect = viewport.screen_rect(node.rect);
-                    if tuning.cull_viewport && rect_fully_outside(rect, viewport_size, CULL_MARGIN) {
+                    if tuning.cull_viewport && rect_fully_outside(rect, viewport_size, CULL_MARGIN)
+                    {
                         continue;
                     }
-                    let is_selected = selected.as_deref() == Some(node.id.as_str()) || focus == Some(node.id.as_str());
+                    let is_selected = selected.as_deref() == Some(node.id.as_str())
+                        || focus == Some(node.id.as_str());
                     let is_highlighted = highlighted.contains(&node.id);
-                    let style = theme.resolve_symbol_node_style(node, is_selected, false, is_highlighted, is_selected || is_highlighted);
-                    let border = selection_border(&node.id, theme.card_border_default, selected.as_deref(), &highlighted, focus);
-                    draw_items.push(SymbolNodeDraw { rect, bg: style.bg, border, accent: style.accent_bar, opacity });
+                    let style = theme.resolve_symbol_node_style(
+                        node,
+                        is_selected,
+                        false,
+                        is_highlighted,
+                        is_selected || is_highlighted,
+                    );
+                    let border = selection_border(
+                        &node.id,
+                        &theme,
+                        theme.card_border_default,
+                        selected.as_deref(),
+                        &highlighted,
+                        focus,
+                    );
+                    draw_items.push(SymbolNodeDraw {
+                        rect,
+                        bg: style.bg,
+                        border,
+                        accent: style.accent_bar,
+                        opacity,
+                    });
                     if labels {
                         overlays.push(SymbolNodeOverlay {
                             rect,
@@ -2749,34 +3004,55 @@ impl MapView {
                 if !draw_items.is_empty() {
                     let items = draw_items.clone();
                     let sym_theme = theme.clone();
-                    root = root.child(
-                        div()
-                            .absolute()
-                            .left(px(0.))
-                            .top(px(0.))
-                            .size_full()
-                            .child(canvas(
-                                move |bounds, _, _| bounds,
-                                move |bounds, _, window, _| {
-                                    use gpui::{quad, size, BorderStyle, Corners, Edges};
-                                    for item in &items {
-                                        let mut bg = item.bg; bg.a *= item.opacity;
-                                        let mut border = item.border; border.a *= item.opacity;
-                                        let mut accent = item.accent; accent.a *= item.opacity;
-                                        let b = gpui::Bounds {
-                                            origin: point(bounds.origin.x + px(item.rect.x), bounds.origin.y + px(item.rect.y)),
-                                            size: size(px(item.rect.width.max(0.0)), px(item.rect.height.max(0.0))),
-                                        };
-                                        window.paint_quad(quad(b, Corners::all(sym_theme.card_radius), bg, Edges::all(px(1.0)), border, BorderStyle::default()));
-                                        let accent_bar = gpui::Bounds {
-                                            origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
-                                            size: size(sym_theme.accent_bar_width, px((f32::from(b.size.height) - 8.0).max(0.0))),
-                                        };
-                                        window.paint_quad(quad(accent_bar, Corners::all(px(2.0)), accent, Edges::all(px(0.0)), gpui::transparent_black(), BorderStyle::default()));
-                                    }
-                                },
-                            )),
-                    );
+                    root = root.child(div().absolute().left(px(0.)).top(px(0.)).size_full().child(
+                        canvas(
+                            move |bounds, _, _| bounds,
+                            move |bounds, _, window, _| {
+                                use gpui::{quad, size, BorderStyle, Corners, Edges};
+                                for item in &items {
+                                    let mut bg = item.bg;
+                                    bg.a *= item.opacity;
+                                    let mut border = item.border;
+                                    border.a *= item.opacity;
+                                    let mut accent = item.accent;
+                                    accent.a *= item.opacity;
+                                    let b = gpui::Bounds {
+                                        origin: point(
+                                            bounds.origin.x + px(item.rect.x),
+                                            bounds.origin.y + px(item.rect.y),
+                                        ),
+                                        size: size(
+                                            px(item.rect.width.max(0.0)),
+                                            px(item.rect.height.max(0.0)),
+                                        ),
+                                    };
+                                    window.paint_quad(quad(
+                                        b,
+                                        Corners::all(sym_theme.card_radius),
+                                        bg,
+                                        Edges::all(px(1.0)),
+                                        border,
+                                        BorderStyle::default(),
+                                    ));
+                                    let accent_bar = gpui::Bounds {
+                                        origin: point(b.origin.x + px(1.0), b.origin.y + px(4.0)),
+                                        size: size(
+                                            sym_theme.accent_bar_width,
+                                            px((f32::from(b.size.height) - 8.0).max(0.0)),
+                                        ),
+                                    };
+                                    window.paint_quad(quad(
+                                        accent_bar,
+                                        Corners::all(px(2.0)),
+                                        accent,
+                                        Edges::all(px(0.0)),
+                                        gpui::transparent_black(),
+                                        BorderStyle::default(),
+                                    ));
+                                }
+                            },
+                        ),
+                    ));
                 }
                 for item in overlays {
                     root = root.child(
@@ -3308,7 +3584,11 @@ fn search_panel_element(search: &SearchState) -> AnyElement {
                 .px(px(6.))
                 .py(px(2.))
                 .rounded(px(4.))
-                .bg(if selected { rgb(0x1f3a5f) } else { rgb(0x0d1117) })
+                .bg(if selected {
+                    theme.search_hit_bg
+                } else {
+                    theme.canvas_bg
+                })
                 .child(hit.id.clone()),
         );
     }
@@ -3367,18 +3647,11 @@ impl PlaybackOverlay {
     }
 }
 
-fn edge_color_at(base: u32, opacity: f32) -> gpui::Rgba {
-    if opacity >= 1.0 {
-        rgb(base)
-    } else {
-        rgba((base << 8) | u32::from(opacity_alpha_byte(opacity)))
-    }
-}
-
 fn edge_canvas(
     edges: Vec<EdgeDraw>,
     width: f32,
     height: f32,
+    zoom: f32,
     batch_edges: bool,
 ) -> impl IntoElement {
     div()
@@ -3389,25 +3662,25 @@ fn edge_canvas(
         .h(px(height))
         .child(canvas(
             |_, _, _| (),
-            move |bounds, _, window, _| {
+            move |bounds, _, window, _cx| {
                 let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
                 for run in group_edges(&edges, batch_edges) {
-                    let stroke_w = if run.strong { px(2.15) } else if run.adjusted { px(1.75) } else { px(1.25) };
-                    let color = if run.strong {
-                        edge_color_at(0x58a6ff, run.opacity)
-                    } else if run.adjusted {
-                        edge_color_at(0xf85149, run.opacity)
-                    } else {
-                        edge_color_at(0x484f58, run.opacity)
-                    };
+                    let (color, stroke_w) =
+                        theme.resolve_edge_style(run.strong, run.adjusted, run.opacity, zoom);
                     let mut batched = PathBuilder::stroke(stroke_w);
                     let mut has_batched = false;
                     for index in &run.edges {
                         let edge = &edges[*index];
-                        let start = point(bounds.origin.x + px(edge.from.x), bounds.origin.y + px(edge.from.y));
-                        let end = point(bounds.origin.x + px(edge.to.x), bounds.origin.y + px(edge.to.y));
+                        let start = point(
+                            bounds.origin.x + px(edge.from.x),
+                            bounds.origin.y + px(edge.from.y),
+                        );
+                        let end = point(
+                            bounds.origin.x + px(edge.to.x),
+                            bounds.origin.y + px(edge.to.y),
+                        );
                         let dy = f32::from(end.y) - f32::from(start.y);
-                        let offset_y = (dy.abs() * 0.45).clamp(24.0, 140.0);
+                        let offset_y = (dy.abs() * 0.45).clamp(24.0 * zoom, 140.0 * zoom);
                         let sign_y = if dy >= 0.0 { 1.0 } else { -1.0 };
                         let ctrl1 = point(start.x, start.y + px(offset_y * sign_y));
                         let ctrl2 = point(end.x, end.y - px(offset_y * sign_y));
@@ -3415,18 +3688,34 @@ fn edge_canvas(
                             let mut b = PathBuilder::stroke(stroke_w);
                             b.move_to(start);
                             b.cubic_bezier_to(end, ctrl1, ctrl2);
-                            if let Ok(path) = b.build() { window.paint_path(path, color); }
+                            if let Ok(path) = b.build() {
+                                window.paint_path(path, color);
+                            }
                             let vx = f32::from(end.x) - f32::from(ctrl2.x);
                             let vy = f32::from(end.y) - f32::from(ctrl2.y);
                             let len = vx.hypot(vy).max(0.001);
-                            let ux = vx / len; let uy = vy / len;
-                            let base_x = f32::from(end.x) - ux * 7.0;
-                            let base_y = f32::from(end.y) - uy * 7.0;
-                            let left = point(px(base_x - uy * 3.5), px(base_y + ux * 3.5));
-                            let right = point(px(base_x + uy * 3.5), px(base_y - ux * 3.5));
+                            let ux = vx / len;
+                            let uy = vy / len;
+                            let arrow_len = 7.0 * zoom.clamp(0.65, 1.3);
+                            let arrow_half_w = 3.5 * zoom.clamp(0.65, 1.3);
+                            let base_x = f32::from(end.x) - ux * arrow_len;
+                            let base_y = f32::from(end.y) - uy * arrow_len;
+                            let left = point(
+                                px(base_x - uy * arrow_half_w),
+                                px(base_y + ux * arrow_half_w),
+                            );
+                            let right = point(
+                                px(base_x + uy * arrow_half_w),
+                                px(base_y - ux * arrow_half_w),
+                            );
                             let mut arrow = PathBuilder::fill();
-                            arrow.move_to(end); arrow.line_to(left); arrow.line_to(right); arrow.close();
-                            if let Ok(ap) = arrow.build() { window.paint_path(ap, color); }
+                            arrow.move_to(end);
+                            arrow.line_to(left);
+                            arrow.line_to(right);
+                            arrow.close();
+                            if let Ok(ap) = arrow.build() {
+                                window.paint_path(ap, color);
+                            }
                         } else {
                             batched.move_to(start);
                             batched.cubic_bezier_to(end, ctrl1, ctrl2);
@@ -3434,26 +3723,42 @@ fn edge_canvas(
                         }
                     }
                     if has_batched {
-                        if let Ok(path) = batched.build() { window.paint_path(path, color); }
+                        if let Ok(path) = batched.build() {
+                            window.paint_path(path, color);
+                        }
                     }
                 }
-                let _ = theme;
             },
         ))
 }
 fn selection_border(
     id: &str,
+    theme: &arch_view::arch_view_theme::StrataTheme,
     default: gpui::Hsla,
     selected: Option<&str>,
     highlighted: &std::collections::BTreeSet<String>,
     focus: Option<&str>,
 ) -> gpui::Hsla {
     if focus == Some(id) || selected == Some(id) {
-        rgb(0xf2f5f8).into()
+        theme.selection_border.clone()
     } else if highlighted.contains(id) {
-        rgb(0xd98a3d).into()
+        theme.selection_highlight_border.clone()
     } else {
         default
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::reveal_default_on;
 
+    #[test]
+    fn reveal_is_on_by_default() {
+        assert!(reveal_default_on(false), "未给开关时必须默认开启");
+    }
+
+    #[test]
+    fn explicit_no_reveal_turns_reveal_off() {
+        // `--reveal` 不参与决定，所以与 `--no-reveal` 同时出现时、无论顺序都以关闭为准。
+        assert!(!reveal_default_on(true), "--no-reveal 必须关闭揭示");
+    }
+}

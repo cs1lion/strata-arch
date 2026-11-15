@@ -39,6 +39,12 @@ pub struct StrataTheme {
     pub dot_grid_major: Hsla,
     pub hud_panel_bg: Hsla,
     pub hud_border: Hsla,
+    /// 搜索面板命中项选中背景（收敛自 main.rs 硬编码 `rgb(0x1f3a5f)`）
+    pub search_hit_bg: Hsla,
+    /// 选中边框（收敛自 main.rs `selection_border` 硬编码 `rgb(0xf2f5f8)`）
+    pub selection_border: Hsla,
+    /// 命中高亮边框（收敛自 main.rs `selection_border` 硬编码 `rgb(0xd98a3d)`）
+    pub selection_highlight_border: Hsla,
 
     // 2. 节点卡片表面层级 (Node Card Surfaces)
     pub card_bg: Hsla,
@@ -86,6 +92,9 @@ impl StrataTheme {
             dot_grid_major: rgba(0x38415299).into(),
             hud_panel_bg: rgba(0x161b22e6).into(),
             hud_border: rgb(0x30363d).into(),
+            search_hit_bg: rgb(0x1f3a5f).into(),
+            selection_border: rgb(0xf2f5f8).into(),
+            selection_highlight_border: rgb(0xd98a3d).into(),
 
             card_bg: rgb(0x161b22).into(),
             card_selected_bg: rgb(0x1f2937).into(),
@@ -135,11 +144,11 @@ impl StrataTheme {
             return rgb(0x39c5cf).into(); // 外部依赖包：青色标识
         }
         match layer {
-            "ui" | "components" => rgb(0xa371f7).into(),     // 表现层：紫罗兰
+            "ui" | "components" => rgb(0xa371f7).into(), // 表现层：紫罗兰
             "app" | "commands" | "cli" => rgb(0x58a6ff).into(), // 应用/命令层：电光蓝
-            "domain" => rgb(0x3fb950).into(),                // 领域核心层：翠绿
+            "domain" => rgb(0x3fb950).into(),            // 领域核心层：翠绿
             "infra" | "server" | "utils" => rgb(0xd29922).into(), // 基础设施层：暖金
-            "tests" => rgb(0xf778ba).into(),                 // 测试层：珊瑚粉
+            "tests" => rgb(0xf778ba).into(),             // 测试层：珊瑚粉
             _ => {
                 // 回退复用 `view::layer_palette` 既有调色板并提亮明度
                 let base_hex = layer_palette(layer, is_unclassified);
