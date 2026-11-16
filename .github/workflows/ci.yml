@@ -168,6 +168,25 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File eval/paired-ab-selftest.ps1 -Fixture eval/baseline/paired-ab-selftest.json
 
+  cite-check:
+    name: citation consistency check (docs numbers vs source data)
+    runs-on: ubuntu-latest
+    # 守票 26：文档里的数字必须与源数据字段/算式一致，登记表为 eval/baseline/citations.json。
+    # 三条边界必须在此写明，否则本 job 的绿会被误读为「所有文档数字都可信」：
+    #   1) 只覆盖已登记项（首批 36 条，其中 30 条 ciVisible=true），未登记数字不受保护；
+    #   2) 源在 gitignored out/** 的 6 条在本 job 下记 SKIP、不计入通过；默认**不启用**
+    #      -RequireAllResolved（一启用即上线即红），待 out/ 源入仓或由入仓夹具替代覆盖后再升级；
+    #   3) 工具自身的 negative control（-SelfTest，三种预置坏登记必须被抓）**不在 CI 跑**：
+    #      其中 derived 坏登记的源在 out/，CI 上只会得到 SKIP 而被抓不到，放进 CI 会把
+    #      「工具无效」误报成事实；该自证由本机执行（结果记录在 eval: ff9e31c 提交信息）。
+    # 纯 pwsh + 入仓 JSON 与文档文本：无 cargo、无 rust toolchain、无 GPU/窗口依赖。
+    # 预期（非读数）：CI 上 PASS≈30 / FAIL=0 / SKIP=6；真实结果在首次 push 前一律按未验证处理。
+    steps:
+      - uses: actions/checkout@v4
+      - name: cite-check
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/cite-check.ps1
+
   clippy:
     name: clippy gate (workspace, all targets, -D warnings)
     runs-on: ubuntu-latest
