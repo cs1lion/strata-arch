@@ -128,6 +128,7 @@ function Invoke-CiteCheck {
     $pass = 0; $fail = 0; $skip = 0
     $lines = @()
     $failIds = @()
+    $undecided = @()
 
     foreach ($c in $Items) {
         $verdict = $null   # 'PASS' | 'FAIL' | 'SKIP'
@@ -166,15 +167,35 @@ function Invoke-CiteCheck {
             }
         }
 
+        # 漏判（任何分支都没给 verdict）必须显式化，不得伪装成 FAIL：
+        # 「检查失败」与「实现漏分支」处置方式不同，混在一个桶里会让两者都失去可诊断性。
+        # 这里的 continue 位于 foreach 体内（不在 switch 内），语义正常；
+        # 纪律 §5 第 7 条坑②记录的是「switch 块内 continue 不跳出外层 foreach」，不在此处依赖。
+        if ($verdict -notin @('PASS', 'FAIL', 'SKIP')) {
+            $undecided += $c.id
+            $lines += ("UNDECIDED  {0}  分支未给出 verdict（kind={1}）— 属实现缺陷，不计入 PASS/FAIL/SKIP" -f $c.id, $c.kind)
+            continue
+        }
         switch ($verdict) {
             'PASS' { $pass++ }
             'SKIP' { $skip++; $lines += ("SKIP  {0}  {1}" -f $c.id, $note) }
             default {
                 $fail++
-                if ($verdict -eq 'FAIL') { $failIds += $c.id }
+                $failIds += $c.id
                 $lines += ("FAIL  {0}  {1}" -f $c.id, $note)
             }
         }
+    }
+
+    # 计数不变量（纪律 §5 第 7 条坑②的通用尺子）：每条目必须恰好产出一个 verdict。
+    # 两条都要成立、缺一不可：等式成立 ⇒ 无重复计数/凭空多计；undecided 为空 ⇒ 等式不会因为
+    # 把漏判塞进某个桶而「自我圆场」（这正是漏判伪装成 FAIL 时的失效模式）。
+    $counted = $pass + $fail + $skip
+    $invariantOk = ($counted -eq @($Items).Count) -and (@($undecided).Count -eq 0)
+    $lines += ("  不变量 PASS+FAIL+SKIP={0} 条目={1} 漏判={2} => {3}" -f `
+            $counted, @($Items).Count, @($undecided).Count, $(if ($invariantOk) { '成立' } else { '不成立 ⇒ 整体判失败' }))
+    if (-not $invariantOk) {
+        $lines += ("  漏判 id: {0}" -f (@($undecided) -join ','))
     }
 
     if ($Label -eq 'registry' -and $RequireAllResolved -and $skip -gt 0) {
@@ -183,7 +204,8 @@ function Invoke-CiteCheck {
     }
     # summary 必须在 RequireAllResolved 结算之后格式化，否则会出现「summary 行 FAIL=0、合计行 FAIL=1」的自相矛盾。
     $lines += ("[{0}] 条目={1} PASS={2} FAIL={3} SKIP={4}" -f $Label, @($Items).Count, $pass, $fail, $skip)
-    return [pscustomobject]@{ pass = $pass; fail = $fail; skip = $skip; failIds = $failIds; lines = @($lines) }
+    return [pscustomobject]@{ pass = $pass; fail = $fail; skip = $skip; failIds = $failIds;
+                              undecided = @($undecided); invariantOk = $invariantOk; lines = @($lines) }
 }
 
 if ($SelfTest) {
@@ -219,6 +241,11 @@ if ($SelfTest) {
     $r.lines | ForEach-Object { Write-Output $_ }
     $missed = @($want | Where-Object { $r.failIds -notcontains $_ })
     Write-Output ("  预置坏登记 {0} 处，被抓 id={1}，漏抓={2}" -f $want.Count, (@($r.failIds) -join ','), (@($missed) -join ','))
+    Write-Output ("  自测不变量={0} 漏判={1}" -f $r.invariantOk, (@($r.undecided) -join ','))
+    if (-not $r.invariantOk) {
+        Write-Output "selftest: FAIL（自测自身的计数不变量不成立 ⇒ 结算逻辑有漏分支，不得声称工具有效）"
+        exit 1
+    }
     if ($missed.Count -eq 0) {
         Write-Output ("selftest: PASS（{0} 处坏登记全部被抓）" -f $want.Count)
         exit 0
@@ -237,6 +264,7 @@ Write-Output ("说明: {0}" -f $reg.note)
 $res = Invoke-CiteCheck -Items @($reg.citations) -Label 'registry'
 Write-Output ""
 $res.lines | ForEach-Object { Write-Output $_ }
-Write-Output ("合计 PASS={0} FAIL={1} SKIP={2}（SKIP 不计入通过；未登记项不受保护）" -f $res.pass, $res.fail, $res.skip)
+Write-Output ("合计 PASS={0} FAIL={1} SKIP={2} 漏判={3}（SKIP 不计入通过；未登记项不受保护）" -f $res.pass, $res.fail, $res.skip, (@($res.undecided).Count))
+if (-not $res.invariantOk) { Write-Output "cite-check: 计数不变量不成立（存在漏判或重复计数）⇒ 强制失败"; exit 1 }
 if ($res.fail -gt 0) { exit 1 }
 exit 0
