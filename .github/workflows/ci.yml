@@ -134,6 +134,20 @@ jobs:
             exit 1
           fi
 
+  fmt:
+    name: fmt gate (cargo fmt --all --check)
+    runs-on: ubuntu-latest
+    # AGENTS.md 一直要求提交前 `cargo fmt --all --check`，但本 workflow 此前没有对应 job，
+    # 该要求只靠人守，HEAD 上因此积累存量漂移（2026-11-16 由 chore 提交清掉，8 文件 +31/-19）。
+    # 本 job 把这条既有要求变成机器门禁：只跑 rustfmt 检查，不编译，故不需要 GPU 窗口依赖与 rust-cache。
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: fmt check
+        run: cargo fmt --all -- --check
+
   clippy:
     name: clippy gate (workspace, all targets, -D warnings)
     runs-on: ubuntu-latest
