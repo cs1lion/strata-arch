@@ -158,6 +158,8 @@
       "doc": "docs/process/ENGINEERING-DISCIPLINE.md", "needle": "确认改动落在\\*\\*活路径\\*\\*", "expect": 1 },
     { "id": "disc-s5-7-four-forms-listed", "kind": "pattern-count", "ciVisible": true,
       "doc": "docs/process/ENGINEERING-DISCIPLINE.md", "needle": "^   - 四类真实发生过的", "expect": 1 },
+    { "id": "disc-s5-7-crlf-anchor-trap", "kind": "pattern-count", "ciVisible": true,
+      "doc": "docs/process/ENGINEERING-DISCIPLINE.md", "needle": "^   - \\*\\*行尾差异使带", "expect": 1 },
 
     { "id": "sha-cite-discipline-s5-7", "kind": "sha", "ciVisible": true, "ref": "c965f13",
       "doc": "docs/tickets/arch-tool/26-citation-consistency-check.md", "needle": "c965f13" },
