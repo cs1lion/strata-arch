@@ -73,6 +73,7 @@
 - 样本仓库本体：`~/.cache/strata/corpus/<name>-<commit>/`。
 - 完整读数、截图、基线产物、临时产物：`~/.cache/strata/eval/archive/<git-sha>/<timestamp>/`。
 - 可通过环境变量 `STRATA_EVAL_ARCHIVE` 覆盖归档根目录；路径约定固定，便于审计。
+- **run 不可变（ADR 0004 登记，2026-11-16）**：上方 `<git-sha>/<timestamp>` 分级同样约束仓内 `out/**` 与 `docs/evidence/**`——一次运行一个新目录，重跑不得覆盖已有读数文件。**既有缺口（如实登记）**：`eval/pixel-evidence.ps1` 固定写 `out/pixel-evidence/report.json`，同名重跑会覆盖上一批，与本条约定不符；收敛动作记在票 24 共用口径。在脚本改造落地前，重跑须自行另建目录并在汇报中说明。
 - `.gitignore` 至少包含 `/eval/archive/`、`/eval/tmp/`、`/tests/corpus/`，防止误入库。
 - 主仓只保留 `eval/baseline/current.json` 这一份“当前基线摘要”，其余生成物不得回仓。
 
@@ -260,7 +261,7 @@ cargo run -p arch-cli -- callgraph tests/corpus/excalidraw --out …/excalidraw.
 3. 建首批 L1 标注集（以 `tests/fixtures/resolution` 为起点扩充）。
 4. 把 `tests/corpus/` 迁移到 `~/.cache/strata` 缓存根（`eval/corpus.toml` 与 `eval/fetch-corpus.ps1` 已就位，仅剩缓存根迁移与测试路径切换）。
 5. 接 CI 快集（≤30 秒），发布级全集手动触发并归档读数。
-6. 每次结果写入固定归档路径；主仓只更新基线摘要。
+6. 每次结果写入第 3 节规定的 `<git-sha>/<timestamp>` 归档目录（run 不可变，不覆盖历史目录）；主仓只更新基线摘要。
 
 ## 10. Ticket 02 验收接入
 
