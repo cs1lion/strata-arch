@@ -174,3 +174,11 @@
 - 非 100% / 非 2.25x DPI 下的标签换行与截断：本轮不做自适应，只保证本机 DPI 下完整可读。
 - 真机 IME 组字：不实现，也未做任何可用性声明；只登记为不支持。
 - 跳转到「无入边也无出边」的孤立模块时标签显示 `0 / 0`：像素证据实测（external:@site/src upstream=3 downstream=0）覆盖了单向情形，双向为 0 时只验过模型。
+
+## 口径更正记录（2026-11-16，仅更正固定样本口径，不改任何读数与判据）
+
+- **事实（本轮实测）**：`arch-cli layers tests/fixtures/layers` 输出 `modules=26 edges=19 unresolved=0`；`arch-view map tests/fixtures/layers --no-reveal` 输出 `26 modules, 19 edges, 8 bands [cli=2, commands=1, components=7, server=1, utils=4, tests=4, external=1, unclassified=6]`。两侧一致。
+- **事实**：`git log --oneline -- tests/fixtures/layers` 只有 `29f8e27`（2026-11-07）一笔，即本票写作（2026-11-09）以来该 fixture 未变更。因此本票「固定样本/commit」行的 **`tests/fixtures/layers`（16 模块）** 与该 fixture 的实测模块数不符。
+- **不重判**：本票全部读数（匹配 0.034ms、C8 输入帧 48.59ms、像素 24/24 等）不依赖「模块总数」这一口径，未因此重跑，读数原样保留；上文第「固定样本/commit」行的原文不删不改写，本条为追加更正。
+- **疑似来源（推断，未证实）**：`docs/acceptance-gaps.md` 2.2.1 与票 16 的「16 节点中 13 个非路径节点」是 P1 上下文淡出场景的节点计数，与该 fixture 的模块数不是同一口径；是否为把该数字误当作模块数登记，本轮无证据判定，不写成结论。
+- **连带影响**：票 22 的固定样本行原沿用「16 模块」，已按实测更正为 26 模块并指向本条。后续引用 `tests/fixtures/layers` 规模时应写实测 26 模块 / 19 边 / 8 层带（含 6 个 `unclassified`）。
