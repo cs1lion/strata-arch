@@ -148,6 +148,22 @@ jobs:
       - name: fmt check
         run: cargo fmt --all -- --check
 
+  paired-selftest:
+    name: paired-ab selftest (criteria regression, no desktop)
+    runs-on: ubuntu-latest
+    # 守的是判据式本身：paired-ab 的显著式、gap 减法方向、Round 位数、顺序偏置分组，
+    # 以及两份脚本的语法与参数面。夹具存每对的原始读数，校验时用与 paired-ab 相同的
+    # lib（eval/lib-paired-stats.ps1）重算，因此不是比对成品数字。
+    # 覆盖边界（勿当全套守护）：不含 paired-ab 读取 out/**/pair*.json 的路径与守卫逻辑，
+    # 也不含 frame-timing 真实测量与像素证据——那些需要可见 Windows 桌面会话，
+    # 仍是本机人工项（docs/acceptance-gaps.md）。
+    # 纯 pwsh + 入仓夹具：无 cargo、无 rust toolchain、无 GPU/窗口依赖，故秒级完成。
+    steps:
+      - uses: actions/checkout@v4
+      - name: paired-ab selftest
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/paired-ab-selftest.ps1 -Fixture eval/baseline/paired-ab-selftest.json
+
   clippy:
     name: clippy gate (workspace, all targets, -D warnings)
     runs-on: ubuntu-latest
