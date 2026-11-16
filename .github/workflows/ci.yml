@@ -147,6 +147,16 @@ jobs:
           components: rustfmt
       - name: fmt check
         run: cargo fmt --all -- --check
+      # 第 10 道门禁：拦 ENGINEERING-DISCIPLINE.md §5 第 7 条登记的第九类坑——
+      # `Func $x -split $y` 会被解析成「把 -split 当作 Func 的命名参数」，语法合法、不报错、
+      # 静默退化成单值，产出的是错的读数而不是异常。
+      # 用内置 AST 而非 PSScriptAnalyzer：本机 Get-Module -ListAvailable 查无此模块，
+      # runner 是否预装亦未证实，而引入它需要 PSGallery 出网，取包失败即整条门禁不可用。
+      # 该 step 在三种失效态下自检为退出码 2（不可解析文件 / 两种参数声明形式有一种没入索引 /
+      # 索引为空），不当作通过；判据不被跳过详见 eval/ps-param-lint.ps1 头部说明。
+      - name: powershell param lint (operator-as-argument gate)
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/ps-param-lint.ps1
 
   paired-selftest:
     name: paired-ab selftest (criteria regression, no desktop)
