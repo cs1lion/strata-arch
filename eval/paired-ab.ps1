@@ -32,45 +32,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# 判据式与配对分析来自共享 lib：paired-ab 与 selftest 必须用同一实现，禁止在本文件另写一份
+# （docs/process/eval-harness.md §6.1 第 6 条）。
+. (Join-Path $PSScriptRoot "lib-paired-stats.ps1")
 if (-not (Test-Path -LiteralPath $RunDir)) {
     Write-Output "paired-ab: run 目录不存在 $RunDir"
     exit 1
 }
 
-function Get-StdDev {
-    param([double[]]$Values)
-    $n = $Values.Count
-    if ($n -lt 2) { return $null }
-    $mean = ($Values | Measure-Object -Average).Average
-    $sumSq = 0.0
-    foreach ($v in $Values) { $sumSq += ($v - $mean) * ($v - $mean) }
-    return [math]::Round([math]::Sqrt($sumSq / ($n - 1)), 4)
-}
-
-# 配对差统计：判据式子的**唯一实现处**，median 与 p95 两侧共用，避免两套口径漂移。
-# 显著 = |mean(gap)| > K × (2 × std(gap) / √N) 且 与 mean 同号的对数 / N >= SigMinRatio。
-# 同号定义固定为「与 mean 同向」（不是 max(正,负)）——已登记的读数一律按此定义，勿混用。
-function Get-PairedStats {
-    param([double[]]$Gaps, [double]$BaseMean, [double]$K, [double]$SigMinRatio)
-    $n = $Gaps.Count
-    if ($n -eq 0) { return $null }
-    $mean = [math]::Round(($Gaps | Measure-Object -Average).Average, 3)
-    $std = Get-StdDev $Gaps
-    $threshold = if ($std -ne $null) { [math]::Round($K * 2 * $std / [math]::Sqrt($n), 3) } else { $null }
-    $sameSign = if ($mean -ge 0) { @($Gaps | Where-Object { $_ -ge 0 }).Count } else { @($Gaps | Where-Object { $_ -le 0 }).Count }
-    $ratio = [math]::Round($sameSign / $n, 4)
-    return [pscustomobject]@{
-        count       = $n
-        meanMs      = $mean
-        stdMs       = $std
-        thresholdMs = $threshold
-        sameSign    = "$sameSign/$n"
-        signRatio   = $ratio
-        significant = ($null -ne $threshold) -and ([math]::Abs($mean) -gt $threshold) -and ($ratio -ge $SigMinRatio)
-        relPct      = if ($BaseMean -gt 0) { [math]::Round($mean / $BaseMean * 100, 2) } else { $null }
-        valuesMs    = @($Gaps)
-    }
-}
+# Get-StdDev / Get-PairedStats / Get-PairedAnalysis 均来自 eval/lib-paired-stats.ps1（已在上方 dot-source），
+# 本文件不再持有判据式实现。
 
 function Read-RunJson {
     param([string]$Path)
@@ -128,32 +99,15 @@ foreach ($variant in $Variants) {
         Write-Output "paired-ab: $variant 无完整配对"
         continue
     }
-    $n = $pairs.Count
-    $meanBase = [math]::Round(($pairs | Measure-Object -Property baseMedianMs -Average).Average, 3)
-    # p95 侧 rel% 的分母取 base 的 p95 均值（同量纲才可比；用户裁决 2026-11-16）。
-    $meanBaseP95 = [math]::Round(($pairs | Measure-Object -Property baseP95Ms -Average).Average, 3)
-    $medStats = Get-PairedStats -Gaps @($pairs | ForEach-Object { $_.gapMs }) -BaseMean $meanBase -K $K -SigMinRatio $SigMinRatio
-    $p95Stats = Get-PairedStats -Gaps @($pairs | ForEach-Object { $_.gapP95Ms }) -BaseMean $meanBaseP95 -K $K -SigMinRatio $SigMinRatio
-
-    # 判据 P3：顺序偏置自检 —— 两种先后方向各算一次 mean(gap)。
-    $baseFirstGaps = @($pairs | Where-Object { $_.baseFirst } | ForEach-Object { $_.gapMs })
-    $variantFirstGaps = @($pairs | Where-Object { -not $_.baseFirst } | ForEach-Object { $_.gapMs })
-    $meanBaseFirst = if ($baseFirstGaps.Count) { [math]::Round(($baseFirstGaps | Measure-Object -Average).Average, 3) } else { $null }
-    $meanVariantFirst = if ($variantFirstGaps.Count) { [math]::Round(($variantFirstGaps | Measure-Object -Average).Average, 3) } else { $null }
-    $orderDelta = if ($null -ne $meanBaseFirst -and $null -ne $meanVariantFirst) {
-        [math]::Round([math]::Abs($meanBaseFirst - $meanVariantFirst), 3)
-    } else { $null }
-    $orderEffect = ($null -ne $orderDelta) -and ($null -ne $medStats.stdMs) -and ($orderDelta -gt $medStats.stdMs)
-
-    # p95 侧同样做方向自检（同一判据定义，量换成 gapP95Ms）。
-    $baseFirstP95 = @($pairs | Where-Object { $_.baseFirst } | ForEach-Object { $_.gapP95Ms })
-    $variantFirstP95 = @($pairs | Where-Object { -not $_.baseFirst } | ForEach-Object { $_.gapP95Ms })
-    $meanP95BaseFirst = if ($baseFirstP95.Count) { [math]::Round(($baseFirstP95 | Measure-Object -Average).Average, 3) } else { $null }
-    $meanP95VariantFirst = if ($variantFirstP95.Count) { [math]::Round(($variantFirstP95 | Measure-Object -Average).Average, 3) } else { $null }
-    $orderDeltaP95 = if ($null -ne $meanP95BaseFirst -and $null -ne $meanP95VariantFirst) {
-        [math]::Round([math]::Abs($meanP95BaseFirst - $meanP95VariantFirst), 3)
-    } else { $null }
-    $orderEffectP95 = ($null -ne $orderDeltaP95) -and ($null -ne $p95Stats.stdMs) -and ($orderDeltaP95 -gt $p95Stats.stdMs)
+    # 全部配对统计（含两侧顺序偏置自检）由共享 lib 产出；gap 在 lib 内按 base − 变体 现算。
+    $a = Get-PairedAnalysis -Pairs $pairs -K $K -SigMinRatio $SigMinRatio
+    $n = $a.n
+    $meanBase = $a.meanBaseMs
+    $meanBaseP95 = $a.meanBaseP95Ms
+    $medStats = $a.medianStats
+    $p95Stats = $a.p95Stats
+    $baseFirstGaps = @($a.pairs | Where-Object { $_.baseFirst } | ForEach-Object { $_.gapMs })
+    $orderBiasOut = $a.orderBias
 
     $results += [pscustomobject]@{
         variant           = $variant
@@ -166,23 +120,15 @@ foreach ($variant in $Variants) {
         sameSign          = $medStats.sameSign
         significant       = $medStats.significant
         meanBaseMedianMs  = $meanBase
-        meanVariantMedianMs = [math]::Round(($pairs | Measure-Object -Property variantMedianMs -Average).Average, 3)
+        meanVariantMedianMs = $a.meanVariantMs
         meanGapP95Ms      = $p95Stats.meanMs
         medianStats       = $medStats
         p95Stats          = $p95Stats
         meanBaseP95Ms     = $meanBaseP95
-        orderBias         = [pscustomobject]@{
-            baseFirstN      = $baseFirstGaps.Count
-            variantFirstN   = $variantFirstGaps.Count
-            meanBaseFirstMs = $meanBaseFirst
-            meanVariantFirstMs = $meanVariantFirst
-            deltaMs         = $orderDelta
-            detected        = $orderEffect
-            p95MeanBaseFirstMs = $meanP95BaseFirst
-            p95MeanVariantFirstMs = $meanP95VariantFirst
-            p95DeltaMs      = $orderDeltaP95
-            p95Detected     = $orderEffectP95
-        }
+        # orderBias 由 lib 产出；旧键名全部保留（baseFirstN/variantFirstN/meanBaseFirstMs/
+        # meanVariantFirstMs/deltaMs/detected/p95MeanBaseFirstMs/p95MeanVariantFirstMs/
+        # p95DeltaMs/p95Detected），并新增 p95BaseFirstN/p95VariantFirstN 两个计数键（只增不改）。
+        orderBias         = $orderBiasOut
         perPair           = @($pairs)
     }
 }
