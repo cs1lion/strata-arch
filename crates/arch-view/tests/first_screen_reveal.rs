@@ -140,7 +140,7 @@ fn stages_reveal_in_layer_order_without_reordering() {
             let current = reveal.opacity_for_stage(stage);
             assert!(
                 current >= *item,
-                                "第 {stage} 层不透明度必须单调不减: {} -> {current}",
+                "第 {stage} 层不透明度必须单调不减: {} -> {current}",
                 *item,
             );
             *item = current;

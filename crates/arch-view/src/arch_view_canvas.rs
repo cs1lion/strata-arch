@@ -87,12 +87,8 @@ pub fn paint_dot_grid(
     } else {
         1.0
     };
-    let max_rows = (rows_per_step * factor)
-        .floor()
-        .clamp(1.0, rows_per_step) as usize;
-    let max_cols = (cols_per_step * factor)
-        .floor()
-        .clamp(1.0, cols_per_step) as usize;
+    let max_rows = (rows_per_step * factor).floor().clamp(1.0, rows_per_step) as usize;
+    let max_cols = (cols_per_step * factor).floor().clamp(1.0, cols_per_step) as usize;
     let mut row_idx = 0usize;
     let mut y = offset_y;
     while y < height && row_idx < max_rows {
