@@ -70,18 +70,21 @@ $mapConsistent = (@($mapLines | Select-Object -Unique).Count -eq 1)
 $results = @()
 foreach ($variant in $Variants) {
     $pairs = @()
-    foreach ($k in ($basePaths.Keys | Sort-Object)) {
-        $variantPath = Join-Path $RunDir "pair$k-$variant.json"
+    # 注意：循环变量绝不能叫 $k —— 它与参数 [double]$K 在 PowerShell 里大小写不敏感、是同一个变量，
+    # 参数类型约束会把键强制转成 Double，导致 Int32 键的 hashtable 查找返回空（实测 type=Double / contains=False）。
+    foreach ($pairIndex in ($basePaths.Keys | Sort-Object)) {
+        $variantPath = Join-Path $RunDir "pair${pairIndex}-${variant}.json"
         if (-not (Test-Path -LiteralPath $variantPath)) {
-            Write-Output "paired-ab: 缺第 $k 对的 $variant 侧，跳过该对（不补单侧）"
+            Write-Output "paired-ab: 缺第 $pairIndex 对的 $variant 侧，跳过该对（不补单侧）"
             continue
         }
-        $b = Read-RunJson -Path $basePaths[$k]
+        $basePath = $basePaths[$pairIndex]
+        $b = Read-RunJson -Path $basePath
         $v = Read-RunJson -Path $variantPath
-        $bWrite = (Get-Item -LiteralPath $basePaths[$k]).LastWriteTime
+        $bWrite = (Get-Item -LiteralPath $basePath).LastWriteTime
         $vWrite = (Get-Item -LiteralPath $variantPath).LastWriteTime
         $pairs += [pscustomobject]@{
-            index          = $k
+            index          = $pairIndex
             baseMedianMs   = $b.intervals.medianMs
             variantMedianMs = $v.intervals.medianMs
             gapMs          = [math]::Round($b.intervals.medianMs - $v.intervals.medianMs, 2)
