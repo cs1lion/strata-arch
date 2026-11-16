@@ -55,6 +55,84 @@ function Test-ScriptSyntax {
     return [pscustomobject]@{ path = $Path; errors = @($errs).Count }
 }
 
+# 性质断言（property checks）：不比对成品数字，而是断言判据函数**必须尊重入参与方向定义**。
+# 为什么必须存在：夹具 14 个「组×侧」里，过门槛的 6 组 ratio 全为 6/6，ratio 不足者全未过门槛，
+# 两条件交集为空 ⇒ 有人把同号阈值从 5/6 放宽到 1/2，夹具重算结果一字不变（2026-11-16 注入实测）。
+# 期望值是语义规则，不引入新数字，也不依赖合成数据。
+function Invoke-PropertyChecks {
+    param([object]$Groups, [ref]$Checked, [ref]$Diffs)
+
+    $SidePairs = @(@('medianStats', 'meanBaseMs'), @('p95Stats', 'meanBaseP95Ms'))
+
+    # 受试组：取第一个「median 侧判为显著」的组（需同时满足过门槛与全同号，才能暴露入参被忽略）。
+    $subj = @($Groups | Where-Object { $_.expected.median.significant -eq $true }) | Select-Object -First 1
+    if (-not $subj) {
+        $Diffs.Value += "性质断言无法执行：夹具里没有 median 侧判为显著的组（不可执行按失败计，不得静默跳过）"
+        $Checked.Value++
+        return
+    }
+    $tag = "{0}/{1}" -f $subj.batch, $subj.variant
+    $base = Get-PairedAnalysis -Pairs $subj.pairs -K 2 -SigMinRatio 0.8334
+
+    # PC1 同号阈值敏感性（打穿 B 类盲区）
+    $hi = Get-PairedAnalysis -Pairs $subj.pairs -K 2 -SigMinRatio 1.001
+    foreach ($sp in $SidePairs) {
+        $side = $sp[0]
+        $Checked.Value++
+        if ($base.$side.significant -ne $true) {
+            $Diffs.Value += "PC1 前置 $tag [$side] 规范阈值下 significant 应为 True，实得 $($base.$side.significant)"
+        }
+        $Checked.Value++
+        if ($hi.$side.significant -ne $false) {
+            $Diffs.Value += "PC1 $tag [$side] SigMinRatio=1.001 时 significant 必须为 False（实得 True ⇒ 判据忽略入参，同号阈值被写死）"
+        }
+    }
+
+    # PC2 k 敏感性
+    $kk = Get-PairedAnalysis -Pairs $subj.pairs -K 1000 -SigMinRatio 0.8334
+    $Checked.Value++
+    if ($kk.medianStats.thresholdMs -le $base.medianStats.thresholdMs) {
+        $Diffs.Value += "PC2 $tag K=1000 的门槛必须大于 K=2（$($kk.medianStats.thresholdMs) <= $($base.medianStats.thresholdMs) ⇒ k 被写死）"
+    }
+    $Checked.Value++
+    if ($kk.medianStats.significant -ne $false) {
+        $Diffs.Value += "PC2 $tag K=1000 时不应仍判显著（实得 True ⇒ k 未参与门槛计算）"
+    }
+
+    # PC3 方向性：base 与变体互换 ⇒ meanMs 反号、同号计数不变
+    $swap = @($subj.pairs | ForEach-Object { [pscustomobject]@{
+        baseMedianMs    = $_.variantMedianMs
+        variantMedianMs = $_.baseMedianMs
+        baseP95Ms       = $_.variantP95Ms
+        variantP95Ms    = $_.baseP95Ms
+        baseFirst       = $_.baseFirst
+    } })
+    $sw = Get-PairedAnalysis -Pairs $swap -K 2 -SigMinRatio 0.8334
+    foreach ($sp in $SidePairs) {
+        $side = $sp[0]
+        $Checked.Value++
+        if ([math]::Abs($sw.$side.meanMs + $base.$side.meanMs) -gt 0.005) {
+            $Diffs.Value += ("PC3 {0} [{1}] 互换后 meanMs 必须反号：原 {2} 互换 {3}" -f $tag, $side, $base.$side.meanMs, $sw.$side.meanMs)
+        }
+        $Checked.Value++
+        if ("$($sw.$side.sameSign)" -ne "$($base.$side.sameSign)") {
+            $Diffs.Value += ("PC3 {0} [{1}] 互换后同号计数应不变：{2} -> {3}" -f $tag, $side, $base.$side.sameSign, $sw.$side.sameSign)
+        }
+    }
+
+    # PC4 rel% 分母定义：必须用同侧 base 均值（p95 侧误用 median 均值即失败）
+    foreach ($sp in $SidePairs) {
+        $side = $sp[0]; $meanField = $sp[1]
+        $want = if ($base.$meanField -gt 0) { [math]::Round($base.$side.meanMs / $base.$meanField * 100, 2) } else { $null }
+        $Checked.Value++
+        if ("$($base.$side.relPct)" -ne "$want") {
+            $Diffs.Value += ("PC4 {0} [{1}] relPct 必须等于 meanMs/同侧 base 均值：脚本 {2} 应为 {3}（base 字段 {4}）" -f `
+                    $tag, $side, $base.$side.relPct, $want, $meanField)
+        }
+    }
+    Write-Output ("  性质断言受试组: {0}" -f $tag)
+}
+
 if ($Generate) {
     if (-not $OutFixture) {
         Write-Output "selftest: -Generate 需要同时给 -OutFixture"
@@ -149,6 +227,10 @@ foreach ($g in $fx.groups) {
     $checked++
     if ($a.n -ne $nPairs) { $diffs += ("{0}/{1} 配对数 {2} != {3}" -f $g.batch, $g.variant, $a.n, $nPairs) }
 }
+
+Write-Output ""
+Write-Output "性质断言（判据必须尊重入参、方向与分母定义）："
+Invoke-PropertyChecks -Groups $fx.groups -Checked ([ref]$checked) -Diffs ([ref]$diffs)
 
 # 冒烟：两份脚本语法 + paired-ab 参数面（覆盖「脚本坏了但没人跑它」的盲区）
 $synLib = Test-ScriptSyntax -Path $LibScript
