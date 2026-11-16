@@ -197,7 +197,7 @@
 
    同时限定第 184 行「比较必须在同进程、交替下做（`-Mode ab`）」的适用范围（该句原文保留，此处只补边界）：现有 `-Mode ab` 只交替 `RenderTuning`（`batch_edges` / `cull_viewport`，`crates/arch-view/src/main.rs:121-158`、`3096-3102`），**不含 `RenderSkip`**（每帧 `from_env()`，同进程内不可交替，`main.rs:3172`），且段边界按**绝对帧序号**切（`main.rs:3177`、`3184-3189`），与按键轮次不 1:1。故 `-Mode ab` **不适用于**输入态降格（`STRATA_RENDER_SKIP`）的 A/B；该场景走第 6 条配对法，直到 ab 扩展出 skip 轮换能力。
 6. **跨批比较的配对差口径（2026-11-16 新增）。** 同一会话内把 base 与候选档背靠背成对，配对数 N≥6，`gap_i = 指标(base_i) − 指标(候选_i)`；判据：`|mean(gap)| > k × (2 × std(gap) / √N)`（k=2）**且**与 mean 同号的对数 ≥ 5/6。地板 = `std(gap)`（配对差自身），不是段间 std。
-   - 工具：`eval/frame-timing.ps1 -Mode search -Skip <spec>` 产出逐对 JSON；`eval/paired-ab.ps1 -RunDir <目录> -Variants <档名>` 汇总 median 侧。p95 侧需按同式另行计算——`paired-ab` 目前只输出 `mean(gapP95)`，未做 p95 的 std/门槛/同号。
+   - 工具：`eval/frame-timing.ps1 -Mode search -Skip <spec>` 产出逐对 JSON；`eval/paired-ab.ps1 -RunDir <目录> -Variants <档名>`（每档各调一次）**同时输出 median 与 p95 两侧**的完整配对检验（`mean/std/门槛/同号/显著/rel%`），判据式由 `Get-PairedStats` 单点实现，两侧同式。两项定义固定：同号计数 = **与 mean 同向**的对数（不是 `max(正,负)`——两者在 `mean≈0` 时会给出不同数字，跨文档与临时计算必须统一到脚本定义）；`rel%` 分母 median 侧取 base 的 median 均值、p95 侧取 base 的 **p95** 均值（同量纲可比）。该脚本改动以「既有三批 JSON 复算、median 侧 7 组读数逐位不变」作为回归判据（`out/paired-regression-20261116-195426/`）。
    - **必须在同批内包含 base 档**：不得复用数分钟前的 base 与后来的候选档配对（那等价于跨批比较）。
    - 奇数对 base 先、偶数对倒序，用 `paired-ab` 的 orderBias 输出自检顺序效应（`|Δ| > std(gap)` 判该批无效）。
    - **`-Skip` 取证要求**：`STRATA_RENDER_SKIP` 为**逗号分隔**（`main.rs:74-79`），连字符形态（如 `edges-labels`）静默等价 base。counters 行的 `nodes/edges/bands` 是**场景对象计数**、只有 `labels` 是绘制计数（`main.rs:3204-3209`），故**不能**用 `edges=4363` 证明 edges 未被跳过；证明生效需 labels 计数、负对照 `gap≈0` 与统计方向三者共同支撑，或补「实际绘制边数」诊断字段后直接证明。
