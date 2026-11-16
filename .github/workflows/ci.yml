@@ -180,12 +180,23 @@ jobs:
     #      其中 derived 坏登记的源在 out/，CI 上只会得到 SKIP 而被抓不到，放进 CI 会把
     #      「工具无效」误报成事实；该自证由本机执行（结果记录在 eval: ff9e31c 提交信息）。
     # 纯 pwsh + 入仓 JSON 与文档文本：无 cargo、无 rust toolchain、无 GPU/窗口依赖。
+    # 登记面现状（截至 eval: e2f946d / 7dfa48f 之后）：条目 55，其中 ciVisible=true 47 条、out/** 源 6 条记 SKIP；
+    # 上方「首批 36 条 / 30 条」是立项当时值，按不回改原则保留，引用时以本行为准。
     # 预期（非读数）：CI 上 PASS≈30 / FAIL=0 / SKIP=6；真实结果在首次 push 前一律按未验证处理。
     steps:
       - uses: actions/checkout@v4
       - name: cite-check
         shell: pwsh
         run: pwsh -NoProfile -File eval/cite-check.ps1
+      - name: injection selftest
+        # 元测试：断言检查器抓得住破坏，而不只是断言现状全绿。用例 C1a/b/c 基线须绿，
+        # C2 活路径漏计必须让 paired-ab-selftest 变红，C3/C3b 把「叠加短路可逃逸 + 语句守护看不见」
+        # 固化为断言（守护天花板留痕，哪天能抓了这两条会失败并提醒更新文档），
+        # C4/C5/C6 分别掏空 Get-RgCount、清空 -SelfTest 的 failIds、抬高 expect，三者都必须变红。
+        # 元测试自身有效性已反证：喂入「入仓 + 叠加 $invariantOk = $true」基准时 C2 由 PASS 翻 FAIL、整体退出码 1。
+        # 副本一律写 eval/tmp-meta-* 并 try/finally 清理；本步不依赖 out/**，故 CI 上应与本机同判。
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/injection-selftest.ps1
 
   clippy:
     name: clippy gate (workspace, all targets, -D warnings)
