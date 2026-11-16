@@ -69,7 +69,7 @@ function Invoke-PropertyChecks {
     if (-not $subj) {
         $Diffs.Value += "性质断言无法执行：夹具里没有 median 侧判为显著的组（不可执行按失败计，不得静默跳过）"
         $Checked.Value++
-        return
+        return 1   # 早退路径的计划项数为 1（就是上面这条不可执行断言）
     }
     $tag = "{0}/{1}" -f $subj.batch, $subj.variant
     $base = Get-PairedAnalysis -Pairs $subj.pairs -K 2 -SigMinRatio 0.8334
@@ -130,7 +130,9 @@ function Invoke-PropertyChecks {
                     $tag, $side, $base.$side.relPct, $want, $meanField)
         }
     }
-    Write-Output ("  性质断言受试组: {0}" -f $tag)
+    # 纪律 §5 第 7 条坑③：函数内不得再 Write-Output——它会并入返回值，使本函数回报的项数被污染，
+    # 表现为「合计行仍对、明细却丢」。受试组信息由调用方打印（见主脚本的 性质断言 段落）。
+    return 12   # PC1 4 项 + PC2 2 项 + PC3 4 项 + PC4 2 项
 }
 
 if ($Generate) {
@@ -230,7 +232,17 @@ foreach ($g in $fx.groups) {
 
 Write-Output ""
 Write-Output "性质断言（判据必须尊重入参、方向与分母定义）："
-Invoke-PropertyChecks -Groups $fx.groups -Checked ([ref]$checked) -Diffs ([ref]$diffs)
+# 计划项数独立推导，不采用被检函数回报的数字：回报值与实得同源，PC 内部漏加一次
+# $Checked.Value++ 会让「计划」与「实得」一起变小、等式照样成立，抓不到漏计。
+$subjExists = (@($fx.groups | Where-Object { $_.expected.median.significant -eq $true }).Count -gt 0)
+$plannedPcItems = if ($subjExists) { 12 } else { 1 }
+$expectedChecks = 17 * @($fx.groups).Count + $plannedPcItems + 7
+$pcItems = Invoke-PropertyChecks -Groups $fx.groups -Checked ([ref]$checked) -Diffs ([ref]$diffs)
+Write-Output ("  性质断言受试组: {0}（计划项数 {1}，函数回报 {2}）" -f `
+        $(if ($subjExists) { '存在' } else { '无 ⇒ 按失败计' }), $plannedPcItems, $pcItems)
+if ($pcItems -ne $plannedPcItems) {
+    $diffs += ("PC 回报项数 {0} != 计划 {1}" -f $pcItems, $plannedPcItems)
+}
 
 # 冒烟：两份脚本语法 + paired-ab 参数面（覆盖「脚本坏了但没人跑它」的盲区）
 $synLib = Test-ScriptSyntax -Path $LibScript
@@ -248,6 +260,17 @@ foreach ($p in @('RunDir', 'Variants', 'K', 'SigMinRatio', 'OutJson')) {
 Write-Output ""
 Write-Output ("检查项总数 = {0} 不匹配数 = {1}" -f $checked, $diffs.Count)
 foreach ($d in $diffs) { Write-Output ("  DIFF {0}" -f $d) }
+
+# 计数不变量（纪律 §5 第 7 条坑②的通用尺子）：实执行项数必须等于计划项数。
+# 不成立意味着有分支被跳过或重复计数——那种情况下「不匹配数=0」本身不可信。
+$invariantOk = ($checked -eq $expectedChecks)
+Write-Output ("  不变量 实际检查项={0} 计划={1}（17×{2}组 + PC{3} + 冒烟7）=> {4}" -f `
+        $checked, $expectedChecks, @($fx.groups).Count, $plannedPcItems,
+        $(if ($invariantOk) { '成立' } else { '不成立 ⇒ 有分支被跳过或重复计数' }))
+if (-not $invariantOk) {
+    Write-Output "selftest: FAIL（计数不变量不成立，逐字段比对的结论不予采信）"
+    exit 1
+}
 if ($diffs.Count -gt 0) {
     Write-Output "selftest: FAIL"
     exit 1
