@@ -122,6 +122,10 @@
       "doc": "docs/acceptance-gaps.md", "needle": "^14\\. （2026-11-16）", "expect": 1 },
     { "id": "readme-ticket26-row", "kind": "pattern-count", "ciVisible": true,
       "doc": "docs/tickets/arch-tool/README.md", "needle": "^\\| 26 \\| 文档引用一致性检查", "expect": 1 },
+    { "id": "discipline-s5-7-traps2-lead", "kind": "pattern-count", "ciVisible": true,
+      "doc": "docs/process/ENGINEERING-DISCIPLINE.md", "needle": "^   另三类取证失效形态", "expect": 1 },
+    { "id": "discipline-s5-7-tooled-update", "kind": "pattern-count", "ciVisible": true,
+      "doc": "docs/process/ENGINEERING-DISCIPLINE.md", "needle": "^   工具化状态更新（2026-11-16 同日", "expect": 1 },
 
     { "id": "sha-cite-discipline-s5-7", "kind": "sha", "ciVisible": true, "ref": "c965f13",
       "doc": "docs/tickets/arch-tool/26-citation-consistency-check.md", "needle": "c965f13" },
