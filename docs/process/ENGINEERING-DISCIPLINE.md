@@ -9,6 +9,7 @@
   - 评估体系细则：`docs/process/eval-harness.md`（**唯一**案例分层、指标、门禁）
   - 无法自动验证项的替代口径：`docs/acceptance-gaps.md`
   - 架构裁决：`docs/adr/`
+  - 纪律同名范式：本文件的红线与判据结构等价于社区所称 Evidence-Driven Development（EDD），裁决见 `docs/adr/0004-evidence-driven-development.md`（accepted 2026-11-16）。本节只给指针，不复述条文；若 ADR 0004 的机制增补与本文件或分文档冲突，以本文件与分文档为准（ADR 0004 自限条款同此）。
 
 若本文件与分文档冲突，以分文档为准，并立即修正本文件；不得两处各写一套。
 
@@ -154,6 +155,7 @@
 | 交付形态 | `docs/adr/0002-desktop-only.md` | 纯桌面端 + CLI；取消 Web UI 与可交互 HTML 导出 |
 | 截图能力 | `docs/acceptance-gaps.md` 第 2.2 节、ticket 11 | `gpui 0.2.2` 无公开离屏导出入口；原 `render_to_image` 断言推翻；截图验收从 ticket 03 移交 ticket 11 重新定义 |
 | 层分类判据 | `docs/tickets/arch-tool/03b-layer-coverage.md` | 原「自有源码 unclassified ≤10%」不成立；改为原因码可解释性判据，external 独立成层，反向用例不退化 |
+| 纪律定名 | `docs/adr/0004-evidence-driven-development.md` | 既有红线定名 EDD；增补两条机制要求——门禁须有 negative control 自证（落地见票 24）、证据 run 不可变（细则见 `eval-harness.md` 第 3 节）。两条机制均不改判据、不改阈值 |
 
 新增裁决时：
 
