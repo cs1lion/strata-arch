@@ -12,6 +12,8 @@
 #   gap_k = median(base_k) - median(variant_k)        # 正数表示变体更快
 #   显著 = |mean(gap)| > K × (2 × std(gap) / √N)  且  同号对数 / N >= SigMinRatio
 #   地板 = 配对差的 std(gap)。
+#   median 与 p95 两侧共用同一判据式（Get-PairedStats 单点实现）；两侧 rel% 分母分别取
+#   base 的 median 均值与 base 的 p95 均值（同量纲可比）。同号计数统一为「与 mean 同向」。
 # 为什么不用同进程段间 std 当分母：2026-11-16 实测批间中位漂移 2.61~3.08ms，
 # 远大于段间地板 0.28~3.9ms，段间地板不含批间方差，拿它做批次对比会系统性假阳性
 # （见 out/t23-stability-searchload-* 与 out/t23-stage0-* 的 JSON）。
@@ -43,6 +45,31 @@ function Get-StdDev {
     $sumSq = 0.0
     foreach ($v in $Values) { $sumSq += ($v - $mean) * ($v - $mean) }
     return [math]::Round([math]::Sqrt($sumSq / ($n - 1)), 4)
+}
+
+# 配对差统计：判据式子的**唯一实现处**，median 与 p95 两侧共用，避免两套口径漂移。
+# 显著 = |mean(gap)| > K × (2 × std(gap) / √N) 且 与 mean 同号的对数 / N >= SigMinRatio。
+# 同号定义固定为「与 mean 同向」（不是 max(正,负)）——已登记的读数一律按此定义，勿混用。
+function Get-PairedStats {
+    param([double[]]$Gaps, [double]$BaseMean, [double]$K, [double]$SigMinRatio)
+    $n = $Gaps.Count
+    if ($n -eq 0) { return $null }
+    $mean = [math]::Round(($Gaps | Measure-Object -Average).Average, 3)
+    $std = Get-StdDev $Gaps
+    $threshold = if ($std -ne $null) { [math]::Round($K * 2 * $std / [math]::Sqrt($n), 3) } else { $null }
+    $sameSign = if ($mean -ge 0) { @($Gaps | Where-Object { $_ -ge 0 }).Count } else { @($Gaps | Where-Object { $_ -le 0 }).Count }
+    $ratio = [math]::Round($sameSign / $n, 4)
+    return [pscustomobject]@{
+        count       = $n
+        meanMs      = $mean
+        stdMs       = $std
+        thresholdMs = $threshold
+        sameSign    = "$sameSign/$n"
+        signRatio   = $ratio
+        significant = ($null -ne $threshold) -and ([math]::Abs($mean) -gt $threshold) -and ($ratio -ge $SigMinRatio)
+        relPct      = if ($BaseMean -gt 0) { [math]::Round($mean / $BaseMean * 100, 2) } else { $null }
+        valuesMs    = @($Gaps)
+    }
 }
 
 function Read-RunJson {
@@ -101,14 +128,12 @@ foreach ($variant in $Variants) {
         Write-Output "paired-ab: $variant 无完整配对"
         continue
     }
-    $gaps = @($pairs | ForEach-Object { $_.gapMs })
-    $n = $gaps.Count
-    $meanGap = [math]::Round(($gaps | Measure-Object -Average).Average, 3)
-    $stdGap = Get-StdDev $gaps
-    $threshold = if ($stdGap -ne $null) { [math]::Round($K * 2 * $stdGap / [math]::Sqrt($n), 3) } else { $null }
-    $sameSign = if ($meanGap -ge 0) { @($gaps | Where-Object { $_ -ge 0 }).Count } else { @($gaps | Where-Object { $_ -le 0 }).Count }
-    $ratio = [math]::Round($sameSign / $n, 4)
-    $significant = ($threshold -ne $null) -and ([math]::Abs($meanGap) -gt $threshold) -and ($ratio -ge $SigMinRatio)
+    $n = $pairs.Count
+    $meanBase = [math]::Round(($pairs | Measure-Object -Property baseMedianMs -Average).Average, 3)
+    # p95 侧 rel% 的分母取 base 的 p95 均值（同量纲才可比；用户裁决 2026-11-16）。
+    $meanBaseP95 = [math]::Round(($pairs | Measure-Object -Property baseP95Ms -Average).Average, 3)
+    $medStats = Get-PairedStats -Gaps @($pairs | ForEach-Object { $_.gapMs }) -BaseMean $meanBase -K $K -SigMinRatio $SigMinRatio
+    $p95Stats = Get-PairedStats -Gaps @($pairs | ForEach-Object { $_.gapP95Ms }) -BaseMean $meanBaseP95 -K $K -SigMinRatio $SigMinRatio
 
     # 判据 P3：顺序偏置自检 —— 两种先后方向各算一次 mean(gap)。
     $baseFirstGaps = @($pairs | Where-Object { $_.baseFirst } | ForEach-Object { $_.gapMs })
@@ -118,24 +143,34 @@ foreach ($variant in $Variants) {
     $orderDelta = if ($null -ne $meanBaseFirst -and $null -ne $meanVariantFirst) {
         [math]::Round([math]::Abs($meanBaseFirst - $meanVariantFirst), 3)
     } else { $null }
-    $orderEffect = ($null -ne $orderDelta) -and ($null -ne $stdGap) -and ($orderDelta -gt $stdGap)
+    $orderEffect = ($null -ne $orderDelta) -and ($null -ne $medStats.stdMs) -and ($orderDelta -gt $medStats.stdMs)
 
-    $relPct = $null
-    $meanBase = [math]::Round(($pairs | Measure-Object -Property baseMedianMs -Average).Average, 3)
-    if ($meanBase -gt 0) { $relPct = [math]::Round($meanGap / $meanBase * 100, 2) }
+    # p95 侧同样做方向自检（同一判据定义，量换成 gapP95Ms）。
+    $baseFirstP95 = @($pairs | Where-Object { $_.baseFirst } | ForEach-Object { $_.gapP95Ms })
+    $variantFirstP95 = @($pairs | Where-Object { -not $_.baseFirst } | ForEach-Object { $_.gapP95Ms })
+    $meanP95BaseFirst = if ($baseFirstP95.Count) { [math]::Round(($baseFirstP95 | Measure-Object -Average).Average, 3) } else { $null }
+    $meanP95VariantFirst = if ($variantFirstP95.Count) { [math]::Round(($variantFirstP95 | Measure-Object -Average).Average, 3) } else { $null }
+    $orderDeltaP95 = if ($null -ne $meanP95BaseFirst -and $null -ne $meanP95VariantFirst) {
+        [math]::Round([math]::Abs($meanP95BaseFirst - $meanP95VariantFirst), 3)
+    } else { $null }
+    $orderEffectP95 = ($null -ne $orderDeltaP95) -and ($null -ne $p95Stats.stdMs) -and ($orderDeltaP95 -gt $p95Stats.stdMs)
 
     $results += [pscustomobject]@{
         variant           = $variant
         pairs             = $n
-        meanGapMs         = $meanGap
-        gapRelPct         = $relPct
-        stdGapMs          = $stdGap
-        thresholdMs       = $threshold
-        sameSign          = "$sameSign/$n"
-        significant       = $significant
+        # 以下左侧字段名与含义保持与旧版逐字一致（回归判据要求），值改由共用函数产出。
+        meanGapMs         = $medStats.meanMs
+        gapRelPct         = $medStats.relPct
+        stdGapMs          = $medStats.stdMs
+        thresholdMs       = $medStats.thresholdMs
+        sameSign          = $medStats.sameSign
+        significant       = $medStats.significant
         meanBaseMedianMs  = $meanBase
         meanVariantMedianMs = [math]::Round(($pairs | Measure-Object -Property variantMedianMs -Average).Average, 3)
-        meanGapP95Ms      = [math]::Round(($pairs | Measure-Object -Property gapP95Ms -Average).Average, 3)
+        meanGapP95Ms      = $p95Stats.meanMs
+        medianStats       = $medStats
+        p95Stats          = $p95Stats
+        meanBaseP95Ms     = $meanBaseP95
         orderBias         = [pscustomobject]@{
             baseFirstN      = $baseFirstGaps.Count
             variantFirstN   = $variantFirstGaps.Count
@@ -143,6 +178,10 @@ foreach ($variant in $Variants) {
             meanVariantFirstMs = $meanVariantFirst
             deltaMs         = $orderDelta
             detected        = $orderEffect
+            p95MeanBaseFirstMs = $meanP95BaseFirst
+            p95MeanVariantFirstMs = $meanP95VariantFirst
+            p95DeltaMs      = $orderDeltaP95
+            p95Detected     = $orderEffectP95
         }
         perPair           = @($pairs)
     }
@@ -162,6 +201,15 @@ foreach ($r in $results) {
             $r.sameSign, $r.significant, $r.meanGapP95Ms)
 }
 Write-Output ""
+Write-Output "  （上表为 median 侧；下表为 p95 侧，同一判据式 Get-PairedStats，rel% 分母取 base 的 p95 均值）"
+Write-Output ("{0,-14} {1,3} {2,9} {3,9} {4,9} {5,9} {6,7} {7,8}" -f `
+        "variant(p95)", "N", "mean(gap)", "rel%", "std(gap)", "门槛", "同号", "显著")
+foreach ($r in $results) {
+    $s = $r.p95Stats
+    Write-Output ("{0,-14} {1,3} {2,9} {3,9} {4,9} {5,9} {6,7} {7,8}" -f `
+            $r.variant, $s.count, $s.meanMs, $s.relPct, $s.stdMs, $s.thresholdMs, $s.sameSign, $s.significant)
+}
+Write-Output ""
 foreach ($r in $results) {
     $o = $r.orderBias
     $flag = if ($o.detected) { "顺序效应检出（判据 P3 不成立，本口径无效，如实报告不调判据）" } else { "无" }
@@ -170,6 +218,11 @@ foreach ($r in $results) {
     Write-Output ("    每对 gap(ms): " + (($r.perPair | ForEach-Object { $_.gapMs }) -join ", "))
     Write-Output ("    每对间隔数: base " + (($r.perPair | ForEach-Object { $_.baseIntervals }) -join "/") +
             " | variant " + (($r.perPair | ForEach-Object { $_.variantIntervals }) -join "/"))
+    Write-Output ("    每对 gapP95(ms): " + (($r.perPair | ForEach-Object { $_.gapP95Ms }) -join ", "))
+    $o95 = if ($r.orderBias.p95Detected) { "顺序效应检出" } else { "无" }
+    Write-Output ("    p95 方向自检: base-first={0} 对 mean={1}ms / variant-first={2} 对 mean={3}ms，|Δ|={4}ms vs std={5}ms => {6}" -f `
+            $r.orderBias.baseFirstN, $r.orderBias.p95MeanBaseFirstMs, $r.orderBias.variantFirstN, `
+            $r.orderBias.p95MeanVariantFirstMs, $r.orderBias.p95DeltaMs, $r.p95Stats.stdMs, $o95)
 }
 Write-Output ""
 Write-Output "  说明：-Skip 全程生效 ≠ 路线 C 的「只在 SearchMode::Input 期间生效」；本读数为成本上界筛查，不作路线 C 验收（判据 P5）。"
