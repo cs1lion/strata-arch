@@ -375,3 +375,50 @@
 ### 6. 仍未闭合
 
 `docs/evidence/` 这两份新档**尚无 `citations.json` 守护项**（`ev-*` 模式此前用于 drift/ab 两档），即"文件被删/被改"暂不可检。补守护需追加登记项并触发 `reg-count-selfguard` 的 expect 变更（A 口径删除例外），另笔待批。产品裁决（路径 A 修渲染 / 路径 B 以几何重导判据）仍未决；P1 稳定先决的补法亦待批。
+
+## P1 稳定先决 `p1-frames-settled` 落地，并使"根因未验证"升为已验证（2026-11-17 追加；上方原文一字不改）
+
+提交：`98a8d03`（`eval`）、`a46d215`（`eval(registry)`，A 口径）。审批口径为"S3 同批补守护、三笔全做"。
+
+### 1. 加了什么
+
+- `Get-IntraStateStability`（新函数，紧邻 `Get-PanelFrameStability`）：对同一状态的 `Valid[-2]` 与 `Valid[-1]` 两帧做 `FrameDiff::Compare`，要求 `changedRatio <= StaticMaxChangedRatio`。
+- `Add-Assertion "p1-frames-settled"`：置于 p1 段 `if/else` **之外**，任何路径都产出；**断言总数 26 → 27**。
+- `p1-frames-distinguishable` 追加 `-and $p1SettledOk['off'] -and $p1SettledOk['on']`，读数串回显 `settled(off=..,on=..)`；`report.states.p1.settledFrames` 记逐态明细（与 `search.settledFrames` 同构）。
+- **零新常量、零阈值改动**：复用 `StaticMaxChangedRatio = 0.001`（`static-baseline-noise` 同口径）、`ChangeTolerance = 6`、`CellSize = 32`。
+- 删除面：`eval` 笔 `38/2`（唯一含删除的 hunk `@@ -772,2 +808,2 @@` 即判据的读数行与布尔行，PowerShell 无法对既有表达式附加与条件）；`registry` 笔 `5/1`（唯一删除是 `reg-count-selfguard` 的 expect 行，`@@ -257 +257 @@`）。**草案曾预估 registry 笔 2 处删除，实际 1 处，以实测 numstat 为准。**
+
+### 2. 使上一节的"根因未验证"成为已验证
+
+上一节写："**根因未验证**。最可能的候选：P1 抓取缺少'场景已稳定'的先决"。现给出实测：异常运行 `out/pixel-evidence-99fc678` 的 **off 态相邻两帧帧差 = 7.153%**，而其余 17 次运行的 off 与 on 两态该值**均为 0.000%**。即该次运行的关闭态尚未停稳，拿未停稳的 off 帧去与已停稳的 on 帧比对，人为抬高了 `changed`（6.612% 跨过 2% 阈值并误判 PASS，其 bbox 亦收缩为 `(616,577)-(2084,1816)`）。**根因确认 = P1 缺少停稳先决**，上一句的"候选"升格为结论；原句保留不回改。
+
+### 3. 五道验收实测（V1/V2 事前设计，V3 破坏反证）
+
+| 编号 | 检查 | 实测 |
+| --- | --- | --- |
+| V1 | **用入仓实现本身**重放 18 组历史帧（把脚本里的 `DiffStats`/`FrameDiff` C# 块、`Get-IntraStateStability`、`Load-Pixels` 按标记切片执行，阈值数值由脚本正则解析，不硬编码） | **放行 17/18、拦下 1/18**；被拦且原判 PASS 者恰为 `out/pixel-evidence-99fc678@6.612%`，无第二例 |
+| V1b | 放行集合是否收敛 | `c99f3cc 7.884%×3`、`99fc678 1.459%×5`、`2fb60a5 1.52%×2`、`HEAD 1.52%×6 + 1.528%×1`；其中 **HEAD 的 PASS 次数 = 0、99fc678 的 PASS 次数 = 0** ⇒ **没有任何既有红因此变绿**（反洗绿证据） |
+| V2 | 真实重跑 `-OutDir out/pe-settle-v2` | 断言 **27**（26→27，新增唯一即 `p1-frames-settled`）、`passed=26 failed=1`、失败项只有 `p1-frames-distinguishable`、`PIXEL_EXIT=1`；先决读数 `off 0.000% 帧 1->2`、`on 0.000% 帧 2->3`；判据读数 `changed=1.520% ... settled(off=True,on=True)`，`gt0Pct=8.032`、`meanMax=9.17` 与改前**逐字相同** |
+| V3 | 两处破坏反证 | S1 摘闸门 ⇒ `FAIL pe-crit-p1-settled-gate 命中 0 行，期望 1`，汇总 `PASS=139 FAIL=1`；S2 改先决断言名 ⇒ `FAIL pe-settled-p1-assertion 命中 0 行，期望 1`，同 `PASS=139 FAIL=1`。两次 `git checkout` 还原后命中回到 1/1，终态 `140/140` 退出 0 |
+| V4 | 阈值未动 | `P1MinChangedRatio = 0.02`、`StaticMaxChangedRatio = 0.001` 各 `rg -F` 命中 1；`pe-thr-*` 十条全绿（含于 140/140） |
+| V5 | 回归 | `cite-check 条目=140 PASS=140 FAIL=0 SKIP=0` 退出 0；`ps-param-lint`、`injection-selftest`、`drift-gate -SelfTest` 均退出 0；`fmt` 0、`test 246/0/3`、`clippy` 0 |
+
+### 4. 对既有登记口径的影响
+
+- **今后 P1 的断言总数是 27，不再是 26。** 历史文档与两份 `docs/evidence/24-p1-*` 中的 `total=26/24` 是**当时的读数**，保留不回改；引用时须注意工具已变更（同一比较不可跨版本直接混用——这正是本票第 2 节刚否证过的那类推论方向）。
+- 复现矩阵里 18 次运行的 `thresholds` 快照恒为 `P1MinChangedRatio=0.02 / ChangeTolerance=6`，加上先决后 **HEAD 侧结论不变**（仍红），变的只是"未停稳运行不再可能被当成绿"。
+
+### 5. 过程中踩到/自查出的工具性失误（一并留痕，均为本回合）
+
+- `rg -F` 把以 `-` 开头的模式当参数解析（`error parsing flag`），故两条新 needle **刻意避开前导 `-and`**；且首次尝试因该错误**静默给出空值**，若不复核会误记成"命中 0"。
+- 双引号串里用 `\"` 转义（PowerShell 用反引号）导致整条命令 ParserError；改用变量承载 needle 后通过。
+- 对 `MatchCollection` 用 `.Length`（应为 `.Count`）使 `FAILED_hits` 取空——**空值不等于 0**，已重测为 0 后方才提交。
+- 哈希字面量内写 `if` 语句会静默产出空字段（上一笔归档时差点把空 `gt0` 写进证据档）。
+
+### 6. 仍未闭合
+
+- 两份 `docs/evidence/24-p1-*` 档**仍无守护项**（本笔补的是判据代码的守护，不是这两份文件的），"被删/被改不可检"仍开放。
+- `p1-off` 仅抓 2 帧 ⇒ 任一帧空白即判未停稳（方向保守，与搜索侧同构，已接受）；**未**提高抓帧数（属捕获行为改动，另议）。
+- 先决失败仍走 `exit 1`（S1 选项未启用），CI 仍不跑本脚本（人工项）。
+- `out/pixel-evidence` 覆盖式写入与 ADR 0004"run 不可变"冲突仍未修；本回合 V2 已改用新目录规避，脚本默认值未动。
+- 产品裁决（路径 A 修渲染 / 路径 B 几何重导判据）**仍未决**，且现在必须建立在"已停稳的读数"之上。
