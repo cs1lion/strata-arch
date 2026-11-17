@@ -227,6 +227,8 @@ public static class PixelMetrics {
         long total = 0;
         int first = -1;
         int last = -1;
+        int gated = 0;
+        int maxRowHits = 0;
         for (int y = y0; y < y1; y++) {
             int rowBase = y * stride;
             int rowHits = 0;
@@ -240,12 +242,14 @@ public static class PixelMetrics {
                 }
             }
             total += rowHits;
+            if (rowHits > maxRowHits) maxRowHits = rowHits;
             if (rowHits >= minRowCount) {
+                gated++;
                 if (first < 0) first = y;
                 last = y;
             }
         }
-        return new long[] { first, last, total };
+        return new long[] { first, last, total, gated, maxRowHits };
     }
 
     public static double MeanLuminance(byte[] data, int width, int height, int stride,
@@ -408,7 +412,9 @@ function Get-ColorExtent {
     $extent = [PixelMetrics]::ColorExtent($Img.Bytes, $Img.Width, $Img.Height, $Img.Stride,
         $r[0], $r[1], $r[2], $r[3], $bg[0], $bg[1], $bg[2], $Thresholds.SearchBgTolerance,
         $Thresholds.SearchPanelMinRowWidth)
-    return @([int]$extent[0], [int]$extent[1], [long]$extent[2])
+    # [0]=首个达标行 [1]=末个达标行 [2]=原始匹配像素总数（未过滤，历史判据口径，保持不变）
+    # [3]=达标行数（每行 >= SearchPanelMinRowWidth，即空间连贯性度量）[4]=最长单行命中数
+    return @([int]$extent[0], [int]$extent[1], [long]$extent[2], [int]$extent[3], [int]$extent[4])
 }
 
 function Get-PanelExtent {
@@ -419,6 +425,29 @@ function Get-PanelExtent {
 function Get-LabelExtent {
     param($Img)
     return Get-ColorExtent $Img $Thresholds.SearchLabelX0 $Thresholds.SearchLabelY0 1.0 1.0
+}
+
+# 逐态稳定度量（票 24 阶段 3 · R3；用户裁决「未稳定判红」）。
+# 同一状态一次捕获里的前两帧应当完全一致：比较原始计数、达标行数（空间连贯性）与最长单行命中。
+# 任一不等 ⇒ 该态在抓帧时还没收敛，它的读数不能用于任何判据；此时判红而不是继续比较阈值，
+# 因为「红」将同时可能来自产品行为、动画残帧与采样时机，无法归因。
+function Get-PanelFrameStability {
+    param([string]$Name, [object]$Sel)
+    $valid = @($Sel.Valid)
+    if ($valid.Count -lt 2) {
+        return [pscustomobject]@{
+            name = $Name; ok = $false
+            detail = ("{0}: 有效帧 {1} 不足 2，无法证明稳定" -f $Name, $valid.Count)
+        }
+    }
+    $m1 = Get-PanelExtent $valid[0].Img
+    $m2 = Get-PanelExtent $valid[1].Img
+    $ok = ($m1[2] -eq $m2[2]) -and ($m1[3] -eq $m2[3]) -and ($m1[4] -eq $m2[4])
+    return [pscustomobject]@{
+        name = $Name; ok = $ok
+        detail = ("{0}: total {1}->{2} gatedRows {3}->{4} maxRowHits {5}->{6}" -f `
+            $Name, $m1[2], $m2[2], $m1[3], $m2[3], $m1[4], $m2[4])
+    }
 }
 
 function Select-Frames {
@@ -866,6 +895,32 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
 
     $focusSummary = ($focusOut -split "`n" | Select-String "search:label module=" | ForEach-Object { $_.Line } | Select-Object -First 1)
     Add-Assertion "search-focus-stdout-counts" "聚焦态 stdout 给出 module 与 upstream/downstream 计数" $(if ($focusSummary) { $focusSummary.Trim() } else { "missing" }) ([bool]$focusSummary)
+
+    # R3 逐态稳定断言（收敛版）。为什么只覆盖 off：results/noMatch/focus/clear 四态都用
+    # `-KeysAfterFrame 1`，即第 1 帧是「输入前」、第 2 帧是「输入后」——两帧本就对应不同产品状态，
+    # 拿它们比稳定是伪命题（初版正是这样误报了 3 个「未稳定」，属自造假红）。
+    # 只有 off 无按键注入，其两帧同条件，可比。四个键控态的稳定验证需要每态多捕一帧
+    # （-Frames 3），但那会让 Valid[-1] 换帧、改变现有 24 条判据的读数 ⇒ 归笔 B 处理，此处如实登记缺口。
+    $settled = @(Get-PanelFrameStability -Name "off" -Sel $offSel)
+    $unstable = @($settled | Where-Object { -not $_.ok })
+    Add-Assertion "search-off-settled" "关闭态同条件两帧的 total/达标行数/最长行命中必须一致" `
+        ((@($settled | ForEach-Object { $_.detail })) -join " | ") ($unstable.Count -eq 0)
+    if ($unstable.Count -gt 0) {
+        Write-Output ("  关闭态未稳定: {0}（其读数不得用于任何判据）" -f `
+            ((@($unstable | ForEach-Object { $_.name })) -join ', '))
+    }
+    Write-Output "  稳定验证缺口: results/noMatch/focus/clear 每态仅 2 帧且键在帧 1 后注入，无同条件帧对可比；需 -Frames 3（会换 Valid[-1]，属笔 B）"
+    # 把新度量写进产物，使「散点 vs 连贯面板」日后无需外部探针即可复核（此前该分析只在一次性
+    # 离线探针里做过，PNG 又被 gitignore，属已登记的证据耐久性缺口）。
+    $report.states.search.panelGatedRowsOff = $offPanel[3]
+    $report.states.search.panelGatedRowsFocus = $focusPanel[3]
+    $report.states.search.panelGatedRowsResults = $resPanel[3]
+    $report.states.search.panelMaxRowHitsOff = $offPanel[4]
+    $report.states.search.panelMaxRowHitsFocus = $focusPanel[4]
+    $report.states.search.panelMaxRowHitsResults = $resPanel[4]
+    $report.states.search.settledFrames = @($settled | ForEach-Object {
+        [ordered]@{ name = $_.name; ok = $_.ok; detail = $_.detail } })
+    $report.states.search.settledGap = 'results/noMatch/focus/clear 每态仅 2 帧且键在帧 1 后注入，无同条件帧对可做稳定验证；需 -Frames 3，但会改变 Valid[-1] 取帧即影响既有判据，故留待笔 B'
 }
 
 # ---- 汇总 ------------------------------------------------------------------
