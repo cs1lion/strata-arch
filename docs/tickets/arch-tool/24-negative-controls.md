@@ -60,3 +60,28 @@
 - **正对照：原设计做不到，原因两条实测/源码依据。** ① `-Mode ab` 不轮换 `RenderSkip`：每帧 `from_env()`（`main.rs:3172`），档名仅 `base/A/B/BA/AB` 且只映射 `RenderTuning`（`main.rs:121-158`、`3096-3102`），段边界还是绝对帧序号（`main.rs:3177`、`3184-3189`）与按键轮次不 1:1；② 降格的真实效应**不是干净的「已知有收益」**：降 `edges` 在 p95 侧 +1.593~+3.465ms 改善，median 侧却是 −0.622~−1.760ms 代价（见票 23 阶段 C′）。按原判据「ON 档必须判显著」执行，会在 median 侧得到反向结论，进而被误读为「检验力不足」而非「效应本身有代价与收益两个方向」。
 - **已实现的替代正对照（判据式行为级）。** `eval/paired-ab-selftest.ps1` 的性质断言：PC1 同数据在 `SigMinRatio=1.001` 下必须不显著、PC2 在 `K=1000` 下门槛必须抬高且结论必须翻转、PC4 `rel%` 必须用同侧 base 均值作分母；并用三处判据式注入复测证明这些断言真会抓（同号阈值写死 → PC1 报 2 条；k 写死 → PC2 报 2 条；分母取错 → 夹具 4 条 + PC4 1 条），提交 `97e8817`。这替代的是「判据能否正确区分显著/不显著」这一半目标，不替代真实降格档的正对照。
 - **本阶段剩余缺口（仍按原判据待做）。** 帧时间层面的「同进程交替 + 降格档」正对照仍未实现，前置条件是扩展 `-Mode ab` 使 `RenderSkip` 参与 segment 轮换（产品代码改动 + A 档先 Red + 段边界改按轮次计数）。在该能力落地前，本票阶段 2 记为**部分完成（负对照已过、正对照未成立）**，不得记为已完成，也不得据此宣布降格无收益（与票 23 阶段 C 第 5 条、`eval-harness.md` §6.1 第 7 条一致）。
+
+## 阶段 1 的更正与已完成范围（2026-11-17 实测登记；上方原判据一字不改）
+
+票面阶段 1 的若干前提经本轮实测不成立或弱于实现，且 arch-cli 这一层的构造实验其实已在测试里完成却未在本票记账。本节只追加说明，**上文阶段 1 的第 1 至第 5 条原文保留不改**。
+
+- **Status 更正**：票头 `proposal-only（未执行，无本轮读数）` 对 arch-cli 这一层已不成立——见下「已完成范围」。本节所有数字均为本轮（2026-11-17）现场回读，非引用旧值。
+
+- **「绿基线 = `pwsh eval/drift-gate.ps1 -PlanOnly`」不成立**：`-PlanOnly` 只输出计划、**不执行任何检测**。实测本轮：`-PlanOnly` 退出码 0，且其输出经匹配判定**不含** `self: passed` 或 `self: FAILED` 任一执行结果字样（含计划/NOT REQUIRED 字样）。拿它当绿基线，证的是「改动是否触及输入面」，不是「drift 门禁通过」。真正执行的是 `Invoke-DriftGate`，其结果字样为 `self: passed（…）` / `self: FAILED（N 条新增违规）`。
+
+- **阶段 1 第 1 步指定的基线用错**：`eval/baseline/drift-tsx.json` 的模块集属真实语料（`src/esm/…`、`docs/.vitepress/…`），与 fixture 的 `cli/main.ts` 等 8 个模块不是同一套。本轮实测：**未注入**的原 fixture 配该基线即 `退出码 1`，注入后同样 `退出码 1`（`wrongbase_untouched=1 / wrongbase_injected=1`）——前后皆红 ⇒ 该组合对本实验**无判别力**。fixture 对应的基线是 `tests/fixtures/drift/drift-baseline.json`（即脚本里的 `$selfBaseline`）。
+
+- **「报警断言：进程非零退出」是弱判据**：真报红 = **1**（`CliError::DriftDetected`），输入类错误 = **2**（本轮实测 `--base` 指向不存在路径 → `missingbase=2`）。二者皆非零。断言必须写「恰为 1」并叠加报告内容，否则「构造无效」会被误当成「门禁报警成功」。
+
+- **一处注入会产生两类违规**：本轮向副本 `utils/format.ts` 追加一条指向 `server/api.ts` 的反向 import，实测 `gate.passed=False`、`newViolations=2`，kind 分别为 `reverseEdge`（`utils→server`）与 `cycle`（`[server/api.ts, utils/format.ts]`）——因原图已有 `server→utils`，反向即成双向；`gate.checks.reverseEdges.newCount=1` 与 `cycles.newCount=1` 同步非零。故任何「violations 恰为 1 条」或「只认 reverseEdge」的断言与实现不符。
+
+- **已完成范围（arch-cli 层，headless 测试，已在 `cargo test --workspace` 内）**：`crates/arch-cli/tests/drift.rs` 的 6 个测试（本轮 `cargo test -p arch-cli --test drift -- --list` 列出，全部在 246 之内）已覆盖阶段 1 的核心结构——`drift_with_matching_baseline_exits_zero_and_reports_empty`（绿基线 + `gate.passed=true` + `reverseEdges.newCount=0`）、`drift_gate_failure_exits_one_with_a_full_report`（**副本 + 追加反向 import → 断言退出码 1、`passed=false`、`violations[0]` 的 kind/source/target**）、`a_new_file_fails_the_gate_with_its_layer_and_module`（`moduleChange` 类注入）、`missing_or_invalid_baseline_exits_two_without_partial_json`（输入错误 = 退出码 2 且不吐半截 JSON）、`drift_record_writes_a_portable_deterministic_baseline`、`drift_argument_contract_rejects_missing_or_conflicting_flags`。这些已满足阶段 1 第 2 条（用副本、不动原 fixture、基线只读）与第 4 条的多数禁止项。
+
+- **残余（阶段 1 尚未闭合之处，均指 `eval/drift-gate.ps1` 这一 CI 门禁层，而非 arch-cli 层）**：
+  1. `Invoke-DriftGate` 的状态映射把 `failed` **只交给退出码 1**，不看 `newViolations` 是否非空；drift-gate 作为 CI 门禁「故意注入 → 整体变红」**从未跑过一次**。若把该映射改成 `1 { "passed" }`，现有任何检查都不会报警——正是本票「一个从未变红过的门禁与坏掉的门禁在证据上长得一样」所指。
+  2. 阶段 1 第 4 步「复原后重跑必须回绿」在**脚本路径**上无记录（rust 测试用 TempDir，不覆盖脚本聚合）。
+  3. 平台耦合：`$Exe` 默认 `target/debug/arch-cli.exe` 带 `.exe` 后缀，现状 `drift` job 为 `windows-latest` 故成立；self-test 若移到 Linux runner 必须显式传 `-Exe`。
+
+- **本轮取证自纠（§5 第 7 条坑族的新变体，是否入册待裁决）**：探针最初用 `Select-Object -First 1` 截断 `arch-cli` 的输出管道，PowerShell 因此**提前终止子进程并污染 `$LASTEXITCODE`**，得到「不存在的 `--base` 也返回 1」的错误读数，一度据以怀疑既有 rust 测试的断言。改用 `Out-String` 完整捕获（不提前结束管道）后重测为 **2**，与 rust 测试一致。教训：**断言原生命令退出码时，禁止用 `-First`／`-Last` 之类会提前结束管道的方式截取输出**；`$LASTEXITCODE` 只有在管道被完整消费后才可信。
+
+- **未验证**：`build` / `drift` job 是否有 GitHub runner 的真实执行历史，本轮**未取证**——不能因 rust 测试存在即宣称「阶段 1 已在 CI 生效」。此外阶段 1 第 3 条要求的「注入必红、复原必绿各实测一次并归档命令与退出码」仍未归档，本节读数属**可行性核实**，不等同于本票执行完成。
