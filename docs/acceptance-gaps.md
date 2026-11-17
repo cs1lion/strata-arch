@@ -441,3 +441,14 @@ cargo test --locked
     - **C 方案（放弃）**：改为存在性守护（只钉首条/末条 id 在位）。放弃理由：不需随追加变动，但抓不到中间任意条目被删，防护强度显著低于计数式。
     - **本条不改变的残留极限**：删掉 `reg-count-selfguard` 自身仍无任何机制报警（检查者随被删对象消失，见第 18 条同名子项）；要再上一层需外部计数器或哈希基线，本仓库尚无该约定。
     - **适用范围**：自 `744d772` 起生效；下一次对 `citations.json` 的追加即须按本条声明。对其它文件（含本文件）的追加不受影响——本笔即为反例：向 `acceptance-gaps.md` 追加不触碰任何计数 needle，登记项 `gaps-8-13-present` 与 `gaps-8-14-present` 的 `expect` 仍各为 1。
+
+20. （2026-11-17）`eval/drift-gate.ps1 -SelfTest` 的残余边界（`cb0e660` 落盘 S1-S4，`ef9ab13` 增 S5 并接入 CI，`870b894` 补 15 条 `dg-*` 登记项）。落盘实测：`verdict=PASS`、`cases=5`、不符合 0、整体退出码 0；S1 子进程 exit 0、S2 exit 1（`newViolations=2`，构成为 `reverseEdge` + `cycle` 伴生）、S3 脚本级 `drift gate: FAILED` 字样成立、S4 exit 0 且仓内基线 SHA256 前后一致、S5 内层 exit 1 且抓到 S2、深度守卫生效。登记表条目 107。
+    - **只覆盖 self 目标**：负控跑的是 fixture 副本配仓内 `$selfBaseline`；corpus 那条 `Invoke-DriftGate` 分支（`eval/baseline/drift-*.json` 配 `tests/corpus/**`）**没有负控**，其判红能力仍未证。
+    - **CI 里带条件，未触发即不跑**：该步骤条件是 `always() && steps.plan.outputs.required == 'true'`，与 `build arch-cli` 同条件（selftest 前置是那个二进制存在；若无条件运行，会在「本次改动不触及 drift 输入面」的推送上因缺 exe 直接 `exit 2`，成为假红）。故「负控在 GitHub runner 上成立」**只在 gate-required 的推送上有证据**，其它推送连跑都不跑。
+    - **平台耦合**：`$Exe` 默认值带 `.exe`，现状 `drift` job 为 `windows-latest` 才成立；该 job 若迁到 Linux 必须显式传 `-Exe`，否则一律 `PRECHECK exit 2`。
+    - **退出码语义不可跨模式混用**：`-SelfTest` 下 0 = 全例符合、1 = 报警或任一例不符、2 = 前置不满足；而返回 1 有两种成因（门禁真失效 / 自测自身失真），码本身不区分，必须读逐例输出。同文件另有两处不同语义：基线改动且语料不可用走 `coverage: blocked` 并 `exit 1`；`-RequireCorpus` 且语料缺失按配置错误 `exit 2`。
+    - **归档目录可能混层**：内层反证运行若与外层同秒启动，会复用同一个 `out/drift-selftest-<runId>/`。正确性由「S1-S4 的结论在派生内层之前就已求值完毕」保证（脚本顺序），但**该目录的文件计数不可当独立证据**，引用读数一律以 stdout 的逐例行为准。
+    - **S5 的牙齿有前置**：S5 只有在本脚本真被带 `-SelfTest` 调用时才生效，而该调用点在 CI 里带上面那个条件。「反证的反证」到此为止；再往上需要外部计数器或哈希基线，本仓库尚无该约定（同第 19 条自指极限）。
+    - **文本守护天花板延续**：`dg-*` 15 条只守文本在位，「保留 needle 原文另加早退」的语义削弱仍不可见（同第 16、18 条）。
+    - **第 19 条 A 口径的首次实际执行（记录形态，非新缺口）**：`870b894` 追加 15 条时把自指项 `expect` 由 92 改为 107，产生 **1 处 deletion**；提交信息按要求附三件套——变更前后 expect（92→107）、落盘后 `"id": "` 行数回读 107 且与 `ConvertFrom-Json` 条目数一致、`cite-check` 条目=107 等于新 expect；并用 hunk 头 `@@ -257 +257,31 @@` 证明删除仅该行一处、其配对新增行按 `"expect": <N>` 归一化后逐字相同。本笔只动本文件、不追加登记项，未触发该口径。
+    - **未验证**：`drift` job 是否有 GitHub runner 的真实执行历史本轮仍未取证；本条全部读数均来自本机 Windows。票 24 阶段 1 第 3 条要求的「归档命令与退出码」目前只落在被 gitignore 的 `out/` 里，未随证据入仓，故该条仍未闭环。
