@@ -182,6 +182,34 @@ try {
     $r9 = Invoke-Capture -ScriptPath (AbsNew $lintRel) -ArgList @('-FileList', 'eval/tmp-meta-c9-good.ps1')
     $d9 = ($r9.out -match 'files=1 ') -and ($r9.out -match 'hits=0 D1=0 D2=0') -and ($r9.out -notmatch 'HIT ')
     Add-Case -Id 'C9 正确写法不得误报' -Expect '退出码 0 且扫到1文件且无HIT' -Ok ($r9.code -eq 0 -and $d9) -Detail "退出码 $($r9.code) / 差异出现=$d9"
+
+    # ---------- C10/C11 反证固化：证明 C7 是定向哨兵，不是恒红也不是恒绿 ----------
+    # 单看 C7 为绿不足以说明它有牙：若门禁的形式 B 索引被改坏（开发期真实踩过——形式 B 分支失效时
+    # 有声明函数只剩 56/71），C7 会由红转绿，而笔 2/4b 的文本登记项抓不到「条文仍在、行为已废」。
+    # 这里主动造一个被削弱的门禁副本（把形式 B 分支改成 if ($false)）并断言破坏的形状：
+    #   C10 非对称性——削弱副本对形式 B 探针不再报警(0)，对形式 A/D2 探针仍报警(1)。
+    #         真门禁对两者都报警（见 C7/C8），故 C7 的绿是「有判别力的绿」，不是无条件红。
+    #   C11 自检兜底——削弱副本在发现模式必须被自身 coverage-form-index 自检拦下(2)，
+    #         即形式 B 索引丢失不会以「全绿」形态出厂。
+    # 与 C2/C3 的 `-PassScript` 同构：断言的是「破坏必然可见」，而非「当前正确」。
+    # 措辞约束：本节不得出现 landing 回读那三条 throw 文案里的同一个中文短语——它是
+    # meta-landing-readback 的计数 needle（expect=3），多一处提及即 bump 成 4，会造出与削弱无关的假报警。
+    $sabRel = 'eval/tmp-meta-c10-lint.ps1'
+    $sabPath = New-Tmp $sabRel
+    $lintRaw = Read-Text (AbsNew $lintRel)
+    $formBAnchor = '        if ($p.Parent -is [System.Management.Automation.Language.FunctionDefinitionAst]) {'
+    if (-not $lintRaw.Contains($formBAnchor)) { throw 'C10 锚点缺失（形式 B 分支已变动，反证不再成立）' }
+    Write-Text $sabPath ($lintRaw.Replace($formBAnchor, '        if ($false) {   # (meta) 形式 B walker disabled'))
+    $sabRaw = Read-Text $sabPath
+    if (-not $sabRaw.Contains('(meta) 形式 B walker disabled')) { throw 'C10 削弱行未写入副本（落盘回读失败）' }
+    if ($sabRaw.Contains($formBAnchor)) { throw 'C10 削弱未生效（原形式 B 分支仍在）' }
+    $s10a = Invoke-Capture -ScriptPath $sabPath -ArgList @('-FileList', 'eval/tmp-meta-c7-formB.ps1')
+    $s10b = Invoke-Capture -ScriptPath $sabPath -ArgList @('-FileList', 'eval/tmp-meta-c8-formA.ps1')
+    $d10 = ($s10a.out -notmatch 'cmd=LB') -and ($s10b.out -match 'cmd=LA param=split')
+    Add-Case -Id 'C10 削弱副本非对称报警' -Expect 'formB探针0(漏检) 且 formA探针1(仍报)' -Ok ($s10a.code -eq 0 -and $s10b.code -eq 1 -and $d10) -Detail "formB=$($s10a.code) formA=$($s10b.code) 非对称成立=$d10"
+    $s11 = Invoke-Capture -ScriptPath $sabPath
+    $d11 = ($s11.out -match 'SELF-CHECK FAIL\(coverage-form-index\)') -and ($s11.out -match 'B=0')
+    Add-Case -Id 'C11 削弱副本发现模式须自检红' -Expect '退出码 2 且报 coverage-form-index 与 B=0' -Ok ($s11.code -eq 2 -and $d11) -Detail "退出码 $($s11.code) / 自检标签与 B=0 出现=$d11"
 }
 finally {
     foreach ($p in $script:tmpFiles) { if (Test-Path $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }
