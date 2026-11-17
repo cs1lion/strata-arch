@@ -74,6 +74,7 @@
 - 完整读数、截图、基线产物、临时产物：`~/.cache/strata/eval/archive/<git-sha>/<timestamp>/`。
 - 可通过环境变量 `STRATA_EVAL_ARCHIVE` 覆盖归档根目录；路径约定固定，便于审计。
 - **run 不可变（ADR 0004 登记，2026-11-16）**：上方 `<git-sha>/<timestamp>` 分级同样约束仓内 `out/**` 与 `docs/evidence/**`——一次运行一个新目录，重跑不得覆盖已有读数文件。**既有缺口（如实登记）**：`eval/pixel-evidence.ps1` 固定写 `out/pixel-evidence/report.json`，同名重跑会覆盖上一批，与本条约定不符；收敛动作记在票 24 共用口径。在脚本改造落地前，重跑须自行另建目录并在汇报中说明。
+  - **缺口已闭合（2026-11-17，提交 `be1bd89` + 守护 `0412aaa`）**：`eval/pixel-evidence.ps1` 的默认 `-OutDir` 改为留空并自动解析为 `out/pixel-evidence/<git-sha>/<timestamp>/`（时间戳沿用本文件既有 `yyyyMMdd-HHmmss` 方言），同秒重复运行以 `-2/-3` 后缀避让；显式传入的目录若已含 `report.json`，脚本**拒绝运行并以退出码 2 结束**，不覆盖任何历史读数。上方"在脚本改造落地前，重跑须自行另建目录并在汇报中说明"的手工规避自此不再需要，但作为历史处置说明保留。两条守护 `pe-run-immutable-default-outdir` 与 `pe-run-immutable-refusal` 均已经破坏反证（各令 `PASS=145 FAIL=1`）。
 - `.gitignore` 至少包含 `/eval/archive/`、`/eval/tmp/`、`/tests/corpus/`，防止误入库。
 - 主仓只保留 `eval/baseline/current.json` 这一份“当前基线摘要”，其余生成物不得回仓。
 
