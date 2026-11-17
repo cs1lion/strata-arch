@@ -150,6 +150,38 @@ try {
     Write-Text $c6regPath ($j6 | ConvertTo-Json -Depth 10)
     $r6 = Invoke-Capture -ScriptPath (AbsNew $ccRel) -ArgList @('-Registry', $c6regPath)
     Add-Case -Id 'C6 抬高expect必须变红' -Expect '退出码 1' -Ok ($r6.code -eq 1) -Detail "退出码 $($r6.code)"
+
+    # ---------- C7/C8/C9 ps-param-lint 门禁的行为面自证 ----------
+    # 必要性：登记项（笔 2 的 13 条）只守「条文在不在」，守不住「条文仍在、行为已废」。
+    # 开发期实测到正是这种失效：walker 只认 `function F { param() }` 而漏掉 `function F()`
+    # 位置式声明时，索引 56/66 个函数，那 10 个函数上的坏调用永不报警且整体报绿。
+    # C7 即该静默漏检的行为哨兵：形式 B 的索引一旦被改坏，C7 会从「红」退化为「绿」⇒ 本测试失败。
+    # 三例分工：C7 证 D1 对形式 B 生效；C8 证 D2（运算符被吞成参数）生效；
+    # C9 证已修复写法不误报——且 C9 同时断言 VERDICT 的 files=1/hits=0，
+    # 使退出码 0 必须来自「扫过了且干净」，而不是「什么都没扫」。
+    $lintRel = 'eval/ps-param-lint.ps1'
+    $nl = [string][char]10
+
+    $c7Path = New-Tmp 'eval/tmp-meta-c7-formB.ps1'
+    Write-Text $c7Path ('function LB([string]$P) { return 1 }' + $nl + '$v = LB "x" -Foo' + $nl)
+    if ((Read-Text $c7Path) -notmatch 'function LB\(\[string\]\$P\)') { throw 'C7 探针未落盘（形式 B 声明缺失）' }
+    $r7 = Invoke-Capture -ScriptPath (AbsNew $lintRel) -ArgList @('-FileList', 'eval/tmp-meta-c7-formB.ps1')
+    $d7 = ($r7.out -match 'cmd=LB param=Foo rules=D1-undeclared-local-arg') -and ($r7.out -match 'hits=1 D1=1 D2=0')
+    Add-Case -Id 'C7 形式B坏调用必须变红' -Expect '退出码 1 且 HIT 指向 LB/D1' -Ok ($r7.code -eq 1 -and $d7) -Detail "退出码 $($r7.code) / 差异出现=$d7"
+
+    $c8Path = New-Tmp 'eval/tmp-meta-c8-formA.ps1'
+    Write-Text $c8Path ('function LA { param([string]$P) return 1 }' + $nl + '$v = LA "x" -split ","' + $nl)
+    if ((Read-Text $c8Path) -notmatch 'param\(\[string\]\$P\)') { throw 'C8 探针未落盘（形式 A 声明缺失）' }
+    $r8 = Invoke-Capture -ScriptPath (AbsNew $lintRel) -ArgList @('-FileList', 'eval/tmp-meta-c8-formA.ps1')
+    $d8 = ($r8.out -match 'cmd=LA param=split rules=D1-undeclared-local-arg\+D2-operator-as-argument')
+    Add-Case -Id 'C8 split被吞成参数须变红' -Expect '退出码 1 且 HIT 同含 D1/D2' -Ok ($r8.code -eq 1 -and $d8) -Detail "退出码 $($r8.code) / 差异出现=$d8"
+
+    $c9Path = New-Tmp 'eval/tmp-meta-c9-good.ps1'
+    Write-Text $c9Path ('function LC { param([string]$P) return 1 }' + $nl + '$y = @((LC "x") -split ",")' + $nl)
+    if ((Read-Text $c9Path) -notmatch '@\(\(LC "x"\) -split') { throw 'C9 探针未落盘（正确写法缺失）' }
+    $r9 = Invoke-Capture -ScriptPath (AbsNew $lintRel) -ArgList @('-FileList', 'eval/tmp-meta-c9-good.ps1')
+    $d9 = ($r9.out -match 'files=1 ') -and ($r9.out -match 'hits=0 D1=0 D2=0') -and ($r9.out -notmatch 'HIT ')
+    Add-Case -Id 'C9 正确写法不得误报' -Expect '退出码 0 且扫到1文件且无HIT' -Ok ($r9.code -eq 0 -and $d9) -Detail "退出码 $($r9.code) / 差异出现=$d9"
 }
 finally {
     foreach ($p in $script:tmpFiles) { if (Test-Path $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }
