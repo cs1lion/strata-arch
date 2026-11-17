@@ -354,6 +354,7 @@ using System;
 public class DeltaBuckets {
     public static long[] Of(byte[] a, byte[] b, int w, int h, int strideA, int strideB) {
         long g1 = 0, g3 = 0, g6 = 0, g12 = 0, g24 = 0;
+        long g0 = 0, sum = 0;
         for (int y = 0; y < h; y++) {
             int ra = y * strideA, rb = y * strideB;
             for (int x = 0; x < w; x++) {
@@ -362,6 +363,7 @@ public class DeltaBuckets {
                 int d2 = Math.Abs(a[ia + 1] - b[ib + 1]);
                 int d3 = Math.Abs(a[ia + 2] - b[ib + 2]);
                 int mx = d1 > d2 ? (d1 > d3 ? d1 : d3) : (d2 > d3 ? d2 : d3);
+                if (mx > 0) { g0++; sum += mx; }
                 if (mx > 1) g1++;
                 if (mx > 3) g3++;
                 if (mx > 6) g6++;
@@ -369,7 +371,7 @@ public class DeltaBuckets {
                 if (mx > 24) g24++;
             }
         }
-        return new long[] { g1, g3, g6, g12, g24 };
+        return new long[] { g1, g3, g6, g12, g24, g0, sum };
     }
 }
 '@
@@ -753,6 +755,14 @@ if ($offSel.Valid.Count -eq 0 -or $onSel.Valid.Count -eq 0) {
             gt6Pct = [Math]::Round($buckets[2] / $framePx * 100, 3)
             gt12Pct = [Math]::Round($buckets[3] / $framePx * 100, 3)
             gt24Pct = [Math]::Round($buckets[4] / $framePx * 100, 3)
+            # 以下三项为「仅记录」项，不参与任何判据（票 24 追加）。理由：P1 归因中我曾把最低档
+            # `>1`（严格大于）误当「变化面积」，而淡出减弱恰恰表现为位移整体左移到 m=1 这一档——
+            # 面积几乎不变、幅度塌一个数量级。仅凭 `>1` 起的分档既无法区分这两种情形，也会让读数
+            # 卡在量化台阶上不稳定。故补 `gt0`（真正的可检变化面积）与变化像素最大通道色差的均值。
+            # 判据、阈值、退出码语义均不变；本节读数不得用于转绿任何判据。
+            gt0 = $buckets[5]
+            gt0Pct = [Math]::Round($buckets[5] / $framePx * 100, 3)
+            meanMaxDeltaOverGt0 = if ($buckets[5] -gt 0) { [Math]::Round($buckets[6] / $buckets[5], 2) } else { 0 }
             toleranceUsed = $Thresholds.ChangeTolerance
         }
         blankOff = $offSel.Blank
