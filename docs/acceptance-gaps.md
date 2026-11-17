@@ -433,3 +433,11 @@ cargo test --locked
     - **文本守护天花板（承接第 16 条）**：`eval/baseline/citations.json` 现有 82 条登记项（`pattern-count` 53，其中 `literal=true` 12；`ciVisible=true` 76），含 13 条 `pl-*`（2 条指向 `ci.yml` 的接线与步骤名、11 条指向门禁脚本文本）与 12 条 `meta-*`（全部指向 `eval/injection-selftest.ps1`，其中 `meta-landing-readback` 为 `expect=3` 的计数守护）。这些只守「文本在位」，抓不到「保留原文而另加早退/重排」的语义削弱。真正有牙的是 C7/C8/C9 的行为断言与上述破坏副本反证，而**反证目前仍是本机一次性动作，未进 CI**。
     - **PSScriptAnalyzer 路线未采用、其能力未验证**：本机 `Get-Module -ListAvailable PSScriptAnalyzer` 查无此模块；GitHub runner 是否预装经检索未确认；采用它需增加 `Install-Module` 并依赖 PSGallery 出网，取包失败即整条门禁不可用。**其内置规则能否拦此写法本轮未能验证**——不采用的理由是可得性与依赖面，不是「它做不到」。
     - **CI 真实执行仍未验证**：`ci.yml` 现有 7 个 job，其中 `fmt` 4 步、`paired-selftest` 2 步、`cite-check` 3 步；本会话累计向 CI 新增 5 个门禁步骤（`fmt check`、`powershell param lint`、`paired-ab selftest`、`cite-check`、`injection selftest`），全部从未在 GitHub runner 上执行，本机 pwsh 跑通不代表 runner 行为一致。第 17 条末句「本会话新增的 4 个门禁」是其落盘当时的读数，现累计为 5 个步骤，原文按规矩保留不改。
+
+19. （2026-11-17）自指守护 `reg-count-selfguard`（`744d772`）与「登记面改动必须 0 deletions」硬约束的**冲突口径**，裁决取 A 方案。冲突事实：该登记项的 `expect` 绑定登记表条目数，本笔落盘前实测为 `rg 字面 "id": " 命中 92 = ConvertFrom-Json 条目 92 = 登记 expect 92`（三者一致）；因此**今后任何向 `eval/baseline/citations.json` 追加条目的动作，都必须同步修改该数字**，而这一行修改在 `git diff --numstat` 上必然表现为 1 deletion——纯插入地扩充登记表在机械上已不可能。这不是实现缺陷，是自指设计的固有代价，故在此登记处置口径而非留作口头默契。
+    - **A 方案（采纳）**：保留自指项。今后追加登记项时，允许且**仅**允许那一处 `expect` 数字变动，并必须在提交信息中显式声明这是对「0 deletions」的偏离，声明内容包含三件套：变更前后 `expect` 数值、修改后 `rg` 回读的实际条目数、`cite-check` 全量读数（且 `条目=` 数必须与新 `expect` 相等，不等即说明漏改或错改）。
+    - **不接受的规避方式**：为使 diff 保持 0 deletions 而少加守护项；把 `expect` 改成与实得不符的值后靠删条目凑数；改 `-SelfTest`/判据绕过计数。三者都属于「调整判据以让它通过」，与既有禁止项同源。
+    - **B 方案（放弃）**：删除自指项以恢复纯插入。放弃理由：这会让「静默摘掉守护」重新变成无人可见，正是本项要堵的缺口，等于为便利放弃防线。
+    - **C 方案（放弃）**：改为存在性守护（只钉首条/末条 id 在位）。放弃理由：不需随追加变动，但抓不到中间任意条目被删，防护强度显著低于计数式。
+    - **本条不改变的残留极限**：删掉 `reg-count-selfguard` 自身仍无任何机制报警（检查者随被删对象消失，见第 18 条同名子项）；要再上一层需外部计数器或哈希基线，本仓库尚无该约定。
+    - **适用范围**：自 `744d772` 起生效；下一次对 `citations.json` 的追加即须按本条声明。对其它文件（含本文件）的追加不受影响——本笔即为反例：向 `acceptance-gaps.md` 追加不触碰任何计数 needle，登记项 `gaps-8-13-present` 与 `gaps-8-14-present` 的 `expect` 仍各为 1。
