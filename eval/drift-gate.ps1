@@ -206,6 +206,42 @@ if ($SelfTest) {
         ($r4.reached -and $r4.code -eq 0 -and $o4 -and $v4.Count -eq 0 -and $hashOk) `
         -Detail ("reached={0} exit={1} passed字样={2} newViolations={3} 基线未变={4}" -f $r4.reached, $r4.code, $o4, $v4.Count, $hashOk)
 
+    # S5 反证固化：把 Invoke-DriftGate 的状态映射掏空（`1 到 passed`）的本脚本副本，
+    # 必须被 -SelfTest 自己抓住。没有 S5，S2/S3 的绿只证明「今天会报警」，不证明「报警是有牙的」——
+    # 掏空后若 S2/S3 仍绿，说明这两例是摆设。
+    # 递归防护：内层运行（经环境变量标记）不再派生反证副本，只打印可断言的 SKIP 字样；
+    # 父层据此区分「深度守卫生效」与「内层根本没跑」。
+    # 归档口径提示：内层与外层在同一秒启动时会复用同一个 out/drift-selftest-<runId>/ 目录，
+    # 故 S1-S4 的结论必须在派生内层之前就已求值完毕（本脚本的顺序保证了这一点）。
+    if ($env:STRATA_DRIFT_SELFTEST_INNER -eq '1') {
+        Write-Output "  [SKIP] S5 深度守卫：内层运行不再派生反证副本"
+    } else {
+        $sabAbs = [IO.Path]::GetFullPath(
+            (Join-Path $repoRoot ("eval/tmp-driftself-" + $stRunId + "-sab-statusmap.ps1")))
+        $statusAnchor = '        1 { "failed" }'
+        if (-not $gateText.Contains($statusAnchor)) {
+            Write-Output "  [FAIL] S5 掏空锚点缺失（Invoke-DriftGate 状态映射已变动，反证不再成立）"
+            $script:stCases += [pscustomobject]@{ id = 'S5 掏空状态映射须变红'; ok = $false }
+        } else {
+            [IO.File]::WriteAllText($sabAbs,
+                $gateText.Replace($statusAnchor, '        1 { "passed" }   # (meta) 掏空状态映射'))
+            $script:stTmpCopies += $sabAbs
+            $env:STRATA_DRIFT_SELFTEST_INNER = '1'
+            try {
+                # 完整消费管道，理由同 Invoke-GateChild：-First 会污染 $LASTEXITCODE。
+                $sabOut = (& pwsh -NoProfile -File $sabAbs -SelfTest 2>&1 | Out-String)
+                $sabCode = $LASTEXITCODE
+            } finally {
+                Remove-Item Env:\STRATA_DRIFT_SELFTEST_INNER -ErrorAction SilentlyContinue
+            }
+            $sawFail2 = ($sabOut -match '\[FAIL\] S2')
+            $sawSkip5 = ($sabOut -match '\[SKIP\] S5')
+            Add-StCase -Id 'S5 掏空状态映射须变红' -Expect '内层 exit 1 + 抓到 S2 + 深度守卫生效' -Ok `
+                ($sabCode -eq 1 -and $sawFail2 -and $sawSkip5) `
+                -Detail ("内层exit={0} 抓到S2={1} 深度守卫={2}" -f $sabCode, $sawFail2, $sawSkip5)
+        }
+    }
+
     foreach ($p in $script:stTmpCopies) {
         Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
     }

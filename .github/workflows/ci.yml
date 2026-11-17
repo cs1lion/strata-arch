@@ -400,6 +400,16 @@ jobs:
           }
           & pwsh @argv
           exit $LASTEXITCODE
+      # 负控自证（票 24 阶段 1）：故意注入一处结构违规，断言本门禁必然判红、复原必然回绿，
+      # 并用「掏空状态映射的脚本副本必须被抓住」（S5）证明上述报警是有牙的而非恒红。
+      # 条件必须与 build arch-cli / drift gate 一致：selftest 的前置是那个二进制已存在，
+      # 若无条件运行会在「本次改动不触及 drift 输入面」时因缺 exe 直接 exit 2，成为假红。
+      # 用 always() 是为了让主门禁判红时负控仍然跑完（两者是独立结论，不该互相遮蔽）。
+      # 已知边界：门禁未被触发时本步骤不跑，故「负控在 runner 上成立」只在 gate-required 的推送里有证据。
+      - name: drift gate selftest (negative control)
+        if: always() && steps.plan.outputs.required == 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -File eval/drift-gate.ps1 -SelfTest
       - name: upload drift artifacts
         if: always() && steps.plan.outputs.required == 'true'
         uses: actions/upload-artifact@v4
@@ -408,5 +418,6 @@ jobs:
           path: |
             out/drift-gate.json
             out/drift-*.json
+            out/drift-selftest-*/**
           if-no-files-found: warn
           retention-days: 14
