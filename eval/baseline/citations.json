@@ -254,7 +254,7 @@
     { "id": "meta-c11-label", "kind": "pattern-count", "ciVisible": true, "literal": true,
       "doc": "eval/injection-selftest.ps1", "needle": "SELF-CHECK FAIL\\(coverage-form-index\\)", "expect": 1 },
     { "id": "reg-count-selfguard", "kind": "pattern-count", "ciVisible": true, "literal": true,
-      "doc": "eval/baseline/citations.json", "needle": "\"id\": \"", "expect": 107 },
+      "doc": "eval/baseline/citations.json", "needle": "\"id\": \"", "expect": 108 },
     { "id": "dg-selftest-param", "kind": "pattern-count", "ciVisible": true, "literal": true,
       "doc": "eval/drift-gate.ps1", "needle": "[switch]$SelfTest,", "expect": 1 },
     { "id": "dg-selftest-entry", "kind": "pattern-count", "ciVisible": true, "literal": true,
@@ -285,6 +285,9 @@
       "doc": ".github/workflows/ci.yml", "needle": "pwsh -NoProfile -File eval/drift-gate.ps1 -SelfTest", "expect": 1 },
     { "id": "dg-ci-artifact-path", "kind": "pattern-count", "ciVisible": true, "literal": true,
       "doc": ".github/workflows/ci.yml", "needle": "out/drift-selftest-*/**", "expect": 1 },
+    { "id": "ev-drift-selftest-json", "kind": "pattern-count", "ciVisible": true, "literal": true,
+      "doc": "docs/evidence/24-drift-selftest-20261117.json",
+      "needle": "negative-control-evidence", "expect": 1 },
     { "id": "file-selftest-fixture", "kind": "file-exists", "ciVisible": true,
       "source": "eval/baseline/paired-ab-selftest.json",
       "doc": "docs/acceptance-gaps.md", "needle": "eval/baseline/paired-ab-selftest.json" }
