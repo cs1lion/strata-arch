@@ -342,6 +342,39 @@ public static class FrameDiff {
 '@
 }
 
+# P1 的逐像素 delta 分档计数（票 24 阶段 3 · 闭掉「直方图只存在于一次性离线探针、无法从入仓
+# 产物复核」的耐久性缺口）。分档口径与 DiffStats/FrameDiff 一致：取三通道绝对差的最大值，
+# 「任一通道差 > 阈值」记入该档。其中 `>6` 用的就是现行 `ChangeTolerance`，其比例应与
+# `report.states.p1.changedRatio` 相符——这个自校验让新分档数据本身可被证伪，而不是另起一套口径。
+# 用途：判据不变的前提下区分「淡出没发生」与「淡出发生了但幅度小」，前者是功能失效、
+# 后者是强度退化；两者对 P1MinChangedRatio 的影响完全不同，不能靠放宽容差去猜。
+if (-not ("DeltaBuckets" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+public class DeltaBuckets {
+    public static long[] Of(byte[] a, byte[] b, int w, int h, int strideA, int strideB) {
+        long g1 = 0, g3 = 0, g6 = 0, g12 = 0, g24 = 0;
+        for (int y = 0; y < h; y++) {
+            int ra = y * strideA, rb = y * strideB;
+            for (int x = 0; x < w; x++) {
+                int ia = ra + x * 4, ib = rb + x * 4;
+                int d1 = Math.Abs(a[ia] - b[ib]);
+                int d2 = Math.Abs(a[ia + 1] - b[ib + 1]);
+                int d3 = Math.Abs(a[ia + 2] - b[ib + 2]);
+                int mx = d1 > d2 ? (d1 > d3 ? d1 : d3) : (d2 > d3 ? d2 : d3);
+                if (mx > 1) g1++;
+                if (mx > 3) g3++;
+                if (mx > 6) g6++;
+                if (mx > 12) g12++;
+                if (mx > 24) g24++;
+            }
+        }
+        return new long[] { g1, g3, g6, g12, g24 };
+    }
+}
+'@
+}
+
 function Load-Pixels {
     param([string]$Path)
     if (-not (Test-Path $Path)) { throw "缺少帧文件 $Path" }
@@ -694,6 +727,9 @@ if ($offSel.Valid.Count -eq 0 -or $onSel.Valid.Count -eq 0) {
     $offImg = $offSel.Valid[-1].Img
     $onImg = $onSel.Valid[-1].Img
     $d = [FrameDiff]::Compare($offImg.Bytes, $onImg.Bytes, $offImg.Width, $offImg.Height, $offImg.Stride, $onImg.Stride, $Thresholds.CellSize, $Thresholds.ChangeTolerance, $Thresholds.HotCellChangedRatio)
+    # 逐像素 delta 分档（仅记录，不参与任何判据）：用于区分「淡出未发生」与「淡出发生但幅度小」。
+    $buckets = [DeltaBuckets]::Of($offImg.Bytes, $onImg.Bytes, $offImg.Width, $offImg.Height, $offImg.Stride, $onImg.Stride)
+    $framePx = [long]$offImg.Width * $offImg.Height
     $report.states.p1 = [ordered]@{
         offFrame = $offSel.Valid[-1].Index
         onFrame = $onSel.Valid[-1].Index
@@ -703,6 +739,22 @@ if ($offSel.Valid.Count -eq 0 -or $onSel.Valid.Count -eq 0) {
         maxCellRatio = [Math]::Round($d.MaxCellRatio, 4)
         hotCells = $d.HotCells
         changedBbox = @($d.MinX, $d.MinY, $d.MaxX, $d.MaxY)
+        # 分档明细（口径：max(|ΔR|,|ΔG|,|ΔB|) > 阈值 的像素数）。deltaGt6 应≈changedRatio×总像素，
+        # 因为 6 就是现行 ChangeTolerance；这一自校验写进产物，读者可直接判否。
+        deltaBuckets = [ordered]@{
+            framePixels = $framePx
+            gt1 = $buckets[0]
+            gt3 = $buckets[1]
+            gt6 = $buckets[2]
+            gt12 = $buckets[3]
+            gt24 = $buckets[4]
+            gt1Pct = [Math]::Round($buckets[0] / $framePx * 100, 3)
+            gt3Pct = [Math]::Round($buckets[1] / $framePx * 100, 3)
+            gt6Pct = [Math]::Round($buckets[2] / $framePx * 100, 3)
+            gt12Pct = [Math]::Round($buckets[3] / $framePx * 100, 3)
+            gt24Pct = [Math]::Round($buckets[4] / $framePx * 100, 3)
+            toleranceUsed = $Thresholds.ChangeTolerance
+        }
         blankOff = $offSel.Blank
         blankOn = $onSel.Blank
     }
