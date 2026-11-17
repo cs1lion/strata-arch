@@ -253,6 +253,8 @@
       "doc": "eval/injection-selftest.ps1", "needle": "C10 锚点缺失", "expect": 1 },
     { "id": "meta-c11-label", "kind": "pattern-count", "ciVisible": true, "literal": true,
       "doc": "eval/injection-selftest.ps1", "needle": "SELF-CHECK FAIL\\(coverage-form-index\\)", "expect": 1 },
+    { "id": "reg-count-selfguard", "kind": "pattern-count", "ciVisible": true, "literal": true,
+      "doc": "eval/baseline/citations.json", "needle": "\"id\": \"", "expect": 92 },
     { "id": "file-selftest-fixture", "kind": "file-exists", "ciVisible": true,
       "source": "eval/baseline/paired-ab-selftest.json",
       "doc": "docs/acceptance-gaps.md", "needle": "eval/baseline/paired-ab-selftest.json" }
