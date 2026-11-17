@@ -82,6 +82,52 @@ impl RenderSkip {
         }
         skip
     }
+
+    /// 段名 → 该帧生效的降格集合（同进程 A/B 轮换用，票 21/24）。
+    ///
+    /// 只有 `skip:<子集>` 形态的段名会**覆写**降格；其余段名（`base`/`A`/`B`/`BA`/`AB`
+    /// 及未知名）一律沿用 `fallback`——即 `from_env()` 的结果。这样既让降格参与分段轮换，
+    /// 又保住既有 `-Mode ab -Skip x` 的语义（那种跑法下每段都取环境值，与改动前逐位一致）。
+    fn for_segment(name: &str, fallback: Self) -> Self {
+        let Some(rest) = name.strip_prefix("skip:") else {
+            return fallback;
+        };
+        let mut skip = Self::default();
+        for part in rest.split(',') {
+            match part.trim() {
+                "bands" => skip.bands = true,
+                "edges" => skip.edges = true,
+                "nodes" => skip.nodes = true,
+                "labels" => skip.labels = true,
+                _ => {}
+            }
+        }
+        skip
+    }
+
+    /// 把已解析的降格集合回写成确定性字面，供 `phase: ab:skip=` 打点使用。
+    ///
+    /// 打点报告的是**本帧实际生效**的集合，而不是段名字面：`-Skip` 与段名覆写两条来源
+    /// 都能被如实反映，避免把「有降格的段」谎报成 `none`。字段顺序固定，便于逐帧比对。
+    fn spec(self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        if self.bands {
+            parts.push("bands");
+        }
+        if self.edges {
+            parts.push("edges");
+        }
+        if self.nodes {
+            parts.push("nodes");
+        }
+        if self.labels {
+            parts.push("labels");
+        }
+        if parts.is_empty() {
+            return "none".to_string();
+        }
+        format!("skip:{}", parts.join(","))
+    }
 }
 
 /// 诊断用确定性平移帧数：每渲染帧平移 8px 并续订下一帧（`STRATA_AUTOPAN_FRAMES`）。
@@ -615,6 +661,7 @@ fn spawn_map_loading(
                         .and_then(|value| value.trim().parse().ok())
                         .unwrap_or(60)
                         .max(1),
+                    render_skip: RenderSkip::default(),
                     search,
                     focus_handle,
                     keyboard_focus_pending: true,
@@ -2222,6 +2269,10 @@ struct MapView {
     /// 同进程 A/B：按帧段交替的配置名与每段帧数（`STRATA_AB_CYCLE` / `STRATA_AB_SEGMENT_FRAMES`）。
     ab_segments: Vec<String>,
     ab_segment_frames: u32,
+    /// 本帧已解析的降格集合，由 `render` 在帧起始写入，绘制路径只读它。
+    /// 存在的理由：`render` 与 `add_scene_elements` 原本各自调一次 `from_env()`；引入按段
+    /// 轮换后，两处若各自解析可能落在不同段上，造成同一帧两种降格语义。
+    render_skip: RenderSkip,
     /// ticket 20：模块搜索/聚焦的纯状态机。
     search: SearchState,
     focus_handle: FocusHandle,
@@ -2402,7 +2453,8 @@ impl MapView {
         viewport: Viewport,
         viewport_size: (f32, f32),
     ) -> Stateful<Div> {
-        let skip = RenderSkip::from_env();
+        // 读帧起始缓存的同一次解析结果，避免与 `render` 各解析一次而落到不同段上。
+        let skip = self.render_skip;
         let labels = self.state.labels_visible() && !skip.labels;
         let selected = self.state.selected().map(ToOwned::to_owned);
         let highlighted = self.state.highlighted();
@@ -3102,6 +3154,20 @@ impl MapView {
         RenderTuning::for_segment(&self.ab_segments[segment])
     }
 
+    /// 当前帧生效的降格集合：无 A/B 周期时读环境变量（与历史行为一致），有周期时按帧段轮换。
+    ///
+    /// ordinal 口径：本方法在 `render` 里**帧计数自增之前**调用，故直接用自增前的
+    /// `frame_count`；它等于自增后 `current_tuning` 与段打点所用的 `frame_count - 1`，
+    /// 三者必定落在同一段上。若改成自增后调用，这里要同步改成 `saturating_sub(1)`。
+    fn current_skip(&self) -> RenderSkip {
+        if self.ab_segments.is_empty() {
+            return RenderSkip::from_env();
+        }
+        let ordinal = self.frame_count;
+        let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
+        RenderSkip::for_segment(&self.ab_segments[segment], RenderSkip::from_env())
+    }
+
     /// 诊断：逐帧平移，用于在外部测持续重绘的帧间隔；播完即停。
     fn schedule_autopan_step(view: &mut MapView, window: &mut Window, cx: &mut Context<MapView>) {
         if view.autopan_scheduled {
@@ -3169,7 +3235,9 @@ static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 impl Render for MapView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let skip = RenderSkip::from_env();
+        let skip = self.current_skip();
+        // 缓存给本帧的绘制路径（`add_scene_elements`）复用：一帧只解析一次。
+        self.render_skip = skip;
         let trace = frame_trace_enabled();
         if trace {
             phase_marker("frame");
@@ -3186,6 +3254,10 @@ impl Render for MapView {
             if ordinal.is_multiple_of(self.ab_segment_frames) {
                 let segment = (ordinal / self.ab_segment_frames) as usize % self.ab_segments.len();
                 phase_marker(&format!("ab:segment={}", self.ab_segments[segment]));
+                // 降格段的**能力凭证**：报告本帧实际生效的降格集合，而不是段名字面。
+                // harness（eval/frame-timing.ps1）据此断言「段名换了、配置也真的换了」；
+                // 缺这条打点即判 RED，禁止把「各段其实同配置」读成「降格无差异」。
+                phase_marker(&format!("ab:skip={}", skip.spec()));
             }
         }
         if !MAP_FIRST_FRAME.swap(true, Ordering::SeqCst) {
