@@ -494,3 +494,71 @@ V5 反证**第一次执行时是无效的**：当时被测实现尚未提交，�
 - 其余 `out/**` 生产者是否全部满足 run 不可变，本次**未逐一核查**——本票只闭合 `pixel-evidence` 这一处。
 - `p1-off` 仅 2 帧的保守判定、先决失败仍走 `exit 1`（未与新增的 `exit 2` 合并语义）、CI 不跑本脚本：均维持原状。
 - 产品裁决（路径 A 修渲染 / 路径 B 几何重导判据）**仍未决**；现在证据底座已不覆盖历史，可放心多轮对照。
+
+## D：两态真实分支、系数更正为 0.43、层带 base 定位（闭合旧缺口）与单测证据等级下调（2026-11-17 追加；上方原文一字不改）
+
+本轮为**只读归因**（未动文件、未改阈值与判据、未动 `citations.json`）。结论使本票先前登记的三处措辞需要更正，先列更正，再给证据。
+
+### 0. 三处已登记措辞的更正（原文保留，此处声明作废范围）
+
+| 被更正的原句所在节 | 原句要点 | 更正 |
+| --- | --- | --- |
+| 「定性草案与一处自我更正」第 2 节第 4 步；§8 第 27 条「定性草案」项 | 位移 ≈ `(1 − 0.68) × abs(fill − 底色)`，"旧约 19、新约 1.3" | **系数错**。真实 α 差是 `abs(0.68 − 0.25) = 0.43`，即位移 ≈ `0.43 × abs(fill − base)`。错误来源：我把 `run_diff` / `DiffView` 的 `--no-fade` 字段（`main.rs` 的 `fade_enabled` 局部变量）误当成 map 的 fade 开关；map 渲染态的 `fade_enabled` 实际由 `playback.animation_enabled()` 派生（见第 1 节）。**定性结论不变**（系数是两侧公因子，塌缩比约 10× 的判定不受影响）。 |
+| 「定性草案」第 1 节 D1 行与第 2 节第 6 步、结论引文 | "淡化 α 路径完好**且被单测锁定**" | **证据等级下调**。`resolve_module_node_style` 仅被 `arch_view_canvas.rs` 的 `paint_module_nodes_canvas` 调用，而 `main.rs` 对 `render_strata_canvas_surface`、`paint_module_nodes_canvas` 的引用命中数**均为 0**（与 `99fc678` 自述"未整体切换到 canvas 主渲染"一致）⇒ 该单测锁的是 **map 命令不走的路径**。结论"α 未被破坏"仍成立，但依据改为：读码（`main.rs` 节点绘制闭包内 `bg.a *= item.opacity`）+ 像素位移与 α 差同量级吻合。模型级由 `crates/arch-view/tests/context_fade.rs` 锁定（live 路径）。 |
+| 「定性草案」第 6 节；§8 第 27 条「方法与失败项」项 | "层带基色未能定位（`band_bg`/`layer_band_color` 零命中）" | **缺口已闭合**。真名是 `view.rs` 的 `band_background_palette`，经 `arch_view_theme.rs` 的 `band_style` 以 **α=0.78** 叠在 `CANVAS_BACKGROUND = 0x0d1117` 上，由 `arch_view_canvas.rs` 的 `paint_layer_bands` 落图。当时零命中是因为猜错了标识符名。 |
+
+### 1. 两态走哪条分支（代码级确证）
+
+| 环节 | p1-off（无 `STRATA_EVIDENCE_ANIMATION`） | p1-on（置该 env） |
+| --- | --- | --- |
+| `playback` | `Some`（`main.rs` 因 `--from/--to` 赋值） | `Some`（同） |
+| `animation_enabled` | `false`（`playback.rs` 构造默认） | `true`（`main.rs` 的证据钩子设置） |
+| map 渲染用 `fade_enabled` | **`false`** —— `main.rs` 取 `playback.animation_enabled()` | **`true`**（同一处） |
+| 节点 α 实际取值 | 旧分支：路径 `1.0`、非路径 **`NON_PATH_OPACITY = 0.25`** | 新分支：`Current`/`Path` = `1.0`、`Context` = **`CONTEXT_OPACITY = 0.68`** |
+
+⇒ 票 16 登记的依据文字"13 个非路径节点透明度 0.25→0.68"**正确**；每像素位移公因子为 **0.43**。
+⇒ 语义提醒：off 更暗、on 更亮，**P1 名为"上下文淡出"，实为"淡出减弱"**（判据名与所测对象不完全对应，登记备查，未改判据）。
+
+### 2. 层带 base 的有效值
+
+`band_background_palette`：unclassified `0x1f1a12`、external `0x101d21`、常规 `0x11161c`；`band_style` 以 `0.78 × reveal_alpha` 的 α 落图 ⇒ 有效 base = `0.78×band + 0.22×canvas`：
+**unclassified ≈ (27,24,19)、external ≈ (15,26,31)、常规 ≈ (16,21,27)**。
+
+### 3. 定量模型与实测吻合（含往返自检）
+
+先试**像素比值**判 α 对（预期 2.72 或 0.68）**失败**：拿 canvas 当 base 是错的，分布不聚拢（峰值 ≈1.75/2.25，两带各占 0%/6–17%）。改用正确 base 的解析模型，位移 = `0.43 × max(abs(fill − base))`，旧 = `layer_palette` 原色、新 = `s×0.65` 与 `l=(l×0.55)` 再 clamp 到 `0.08..0.18`；HSL 双向转换经**往返自检 5/5 逐字还原**后方才使用。
+
+| 层（base = unclassified；本 fixture 12/16 模块在此带） | 旧位移 | 旧 >6 | 新位移 | 新 >6 |
+| --- | --- | --- | --- | --- |
+| unclassified | 13.3 | 是 | **1.3** | **否** |
+| external | 18.1 | 是 | 5.2 | 否 |
+| cli | 35.7 | 是 | 13.3 | 是 |
+| commands | 25.8 | 是 | 7.3 | 是 |
+| components | 36.6 | 是 | 14.2 | 是 |
+| server | 29.2 | 是 | 8.6 | 是 |
+| utils | 27.1 | 是 | 9.9 | 是 |
+| tests | 24.1 | 是 | 6.4 | 是（勉强） |
+
+（base = external 一列同趋势：旧 14.2–34.4 全计入；新 3.0–13.8，其中 external 与 utils **掉出容差**。）
+
+与实测的吻合：旧态所有瓦片位移 13–37 ⇒ 整片计入 ⇒ 实测 `>1 ≈ >6`（7.943 / 7.884）、`meanMax = 19.45`、`m=1 档 0.000pp`；新态主力 unclassified 位移仅 **1.3 ⇒ 量化后正好为 1** ⇒ 实测 **`m=1 档 4.396pp` + `m=2..3 档 2.007pp`**（合计 6.4pp 落在容差之下），`>6` 仅剩 1.520%（由高对比层 + 标签/accent/边残余）。⇒ "塌的是幅度不是面积"由定性升为**可数值复现**，根因定位到 `tint.l` 的 `clamp(0.08, 0.18)`。
+
+### 4. 由此得到的两个处置参数
+
+- **A（修渲染）有了明确数值目标**：需 `0.43 × max(abs(fill − base)) > 6` ⇒ **`max(abs(fill − base)) ≥ 14`**（旧版实际 13–37，新版仅 1.3–14）。改动点在 `tint.s *= 0.65` 与 `tint.l = (tint.l*0.55).clamp(0.08,0.18)`（及 `card_bg`），**不应动 `CONTEXT_OPACITY = 0.68`**——该值在 `playback.rs` 注释中记有 WCAG 依据（0.68 时最低标签对比度约 5.2:1 > 4.5:1）。约束是**层×带二元组**，最差组合（unclassified 层在 unclassified 带，1.3）必须达标。
+- **B（几何重导）障碍增加**：信号是 layer × band 的乘积（16 模块分处 2 带），掩膜须知道每个节点的层色、所属带与带的有效 base；且现存信号有相当部分来自**标签、accent、边强调集（`EdgeRole::Current`）与绘制顺序**（`fade_enabled && source_module == target_module` 的跳过、`paint_order`）⇒ 纯节点矩形掩膜会把这些排除在外，**等于换了判据所测对象**，需先导出几何+归属（属实现改动）。
+
+### 5. 新增的测试覆盖缺口
+
+map 的实际绘制步 `bg.a *= item.opacity` **无任何 Rust 测试锁定**；`resolve_module_node_style` 的单测锁的是非 live 的 canvas 路径。⇒ 一旦按 A 修渲染，可能出现"α 被改坏而无人报警"。建议单独补一条 live 路径的绘制级断言（独立、本地可闭合）。
+
+### 6. 顺带登记：C 案不得再提（防第三次）
+
+- P1 两态都带 `--from/--to` ⇒ `reveal_allowed(requested, playback.is_some())` 使**揭示恒关**；产物 stdout 自身即 `map: reveal=off`。
+- `--no-reveal` 已由 **E5′** 实测：`changed=1.520%` 与基线**逐字相同**；改等 `phase: reveal:done` 会等一个**永不出现**的标记而挂死（`reveal:done` 仅在 `was_active` 时打印）。
+- 新查：`-Marker "map:"` 是**空转门**——`capture-window` 用子串匹配，P1 stdout 中最早含 `map:` 的是 `phase: map:prep:start`，故实际同步全靠 `WarmupMs 1500`。但失稳那次的 stdout **与稳定运行逐行相同（17 行，含 `phase: content:presented`）** ⇒ **改严 marker 也拦不住翻绿**；唯一保险仍是 `p1-frames-settled`。
+- off 两帧差 7.153% 的**根因仍未验证**。
+
+### 7. 本轮未验证 / 未做
+
+未逐节点核对 16 模块的层与带归属（用 stdout 聚合值 `external=4, unclassified=12`）；未量化标签/边/绘制顺序各自贡献面积；未实测 A 改到 ≥14 能否把 `changed` 推回 2% 以上；本轮**未动任何文件、未提交、未动 `citations.json`（`expect` 仍 146）**。
