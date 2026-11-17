@@ -1,0 +1,425 @@
+{
+  "schemaVersion": 1,
+  "kind": "pixel-evidence-delta-histogram",
+  "ticket": "24",
+  "subject": "P1 淡出的色差分解：变化面积（gt0）与每像素幅度（meanMaxDeltaOverGt0）分离测量",
+  "recordedAt": "2026-11-17T20:52:35+08:00",
+  "recordedByCommit": "034a980",
+  "recordingFieldsAddedIn": "034a980",
+  "semantics": {
+    "perPixel": "max(abs(dR), abs(dG), abs(dB))",
+    "frame": "p1-off-f01 与 p1-on-f01，2728x1879 = 5125912 像素",
+    "recordOnlyFields": [
+      "gt0",
+      "gt0Pct",
+      "meanMaxDeltaOverGt0"
+    ],
+    "participatesInNoCriterion": true
+  },
+  "whyTheseFieldsExist": "票 24 曾把 deltaBuckets 的最低档 >1（严格大于）误当变化面积；而淡出减弱恰恰表现为位移整体左移到 m=1 单档。补 gt0 与均值幅度之后，才能区分「淡出未发生」与「淡出发生但不可感」。",
+  "runs": [
+    {
+      "dir": "out/pixel-evidence",
+      "rev": "HEAD",
+      "exe": "target/release/arch-view.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.52,
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "rawCounts": {
+        "gt0": 411711,
+        "gt1": 186395,
+        "gt3": 83531,
+        "gt6": 77921,
+        "gt12": 67313,
+        "gt24": 34230,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.109,
+        "m7to12": 0.207,
+        "m13to24": 0.645,
+        "mGt24": 0.668
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/pixel-evidence-c99f3cc",
+      "rev": "c99f3cc",
+      "exe": "out/bisect/arch-view-c99f3cc.exe",
+      "verdict": "PASS",
+      "changedPrintedPct": 7.884,
+      "gt0Pct": 7.943,
+      "meanMax": 19.45,
+      "rawCounts": {
+        "gt0": 407130,
+        "gt1": 407128,
+        "gt3": 406992,
+        "gt6": 404150,
+        "gt12": 171303,
+        "gt24": 56394,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 0.0,
+        "m2to3": 0.003,
+        "m4to6": 0.055,
+        "m7to12": 4.543,
+        "m13to24": 2.242,
+        "mGt24": 1.1
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/pixel-evidence-99fc678",
+      "rev": "99fc678",
+      "exe": "out/bisect/arch-view-99fc678.exe",
+      "verdict": "PASS",
+      "changedPrintedPct": 6.612,
+      "gt0Pct": 7.094,
+      "meanMax": 22.8,
+      "rawCounts": {
+        "gt0": 363645,
+        "gt1": 351818,
+        "gt3": 339307,
+        "gt6": 338939,
+        "gt12": 200454,
+        "gt24": 65969,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 0.231,
+        "m2to3": 0.244,
+        "m4to6": 0.007,
+        "m7to12": 2.702,
+        "m13to24": 2.624,
+        "mGt24": 1.287
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/verify-c99f3cc",
+      "rev": "c99f3cc",
+      "exe": "out/bisect/arch-view-c99f3cc.exe",
+      "verdict": "PASS",
+      "changedPrintedPct": 7.884,
+      "gt0Pct": 7.943,
+      "meanMax": 19.45,
+      "rawCounts": {
+        "gt0": 407130,
+        "gt1": 407128,
+        "gt3": 406992,
+        "gt6": 404150,
+        "gt12": 171303,
+        "gt24": 56394,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 0.0,
+        "m2to3": 0.003,
+        "m4to6": 0.055,
+        "m7to12": 4.543,
+        "m13to24": 2.242,
+        "mGt24": 1.1
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/verify-99fc678",
+      "rev": "99fc678",
+      "exe": "out/bisect/arch-view-99fc678.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.459,
+      "gt0Pct": 8.035,
+      "meanMax": 9.16,
+      "rawCounts": {
+        "gt0": 411853,
+        "gt1": 187105,
+        "gt3": 85098,
+        "gt6": 74772,
+        "gt12": 69574,
+        "gt24": 33995,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.385,
+        "m2to3": 1.99,
+        "m4to6": 0.201,
+        "m7to12": 0.101,
+        "m13to24": 0.694,
+        "mGt24": 0.663
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/verify-2fb60a5",
+      "rev": "2fb60a5",
+      "exe": "out/bisect/arch-view-2fb60a5.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.52,
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "rawCounts": {
+        "gt0": 411711,
+        "gt1": 186395,
+        "gt3": 83531,
+        "gt6": 77921,
+        "gt12": 67313,
+        "gt24": 34230,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.109,
+        "m7to12": 0.207,
+        "m13to24": 0.645,
+        "mGt24": 0.668
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/verify-HEAD",
+      "rev": "HEAD",
+      "exe": "target/release/arch-view.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.52,
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "rawCounts": {
+        "gt0": 411711,
+        "gt1": 186395,
+        "gt3": 83531,
+        "gt6": 77921,
+        "gt12": 67313,
+        "gt24": 34230,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.109,
+        "m7to12": 0.207,
+        "m13to24": 0.645,
+        "mGt24": 0.668
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-99fc678-1",
+      "rev": "99fc678",
+      "exe": "out/bisect/arch-view-99fc678.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.459,
+      "gt0Pct": 8.035,
+      "meanMax": 9.16,
+      "rawCounts": {
+        "gt0": 411853,
+        "gt1": 187105,
+        "gt3": 85098,
+        "gt6": 74772,
+        "gt12": 69574,
+        "gt24": 33995,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.385,
+        "m2to3": 1.99,
+        "m4to6": 0.201,
+        "m7to12": 0.101,
+        "m13to24": 0.694,
+        "mGt24": 0.663
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-99fc678-2",
+      "rev": "99fc678",
+      "exe": "out/bisect/arch-view-99fc678.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.459,
+      "gt0Pct": 8.035,
+      "meanMax": 9.16,
+      "rawCounts": {
+        "gt0": 411853,
+        "gt1": 187105,
+        "gt3": 85098,
+        "gt6": 74772,
+        "gt12": 69574,
+        "gt24": 33995,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.385,
+        "m2to3": 1.99,
+        "m4to6": 0.201,
+        "m7to12": 0.101,
+        "m13to24": 0.694,
+        "mGt24": 0.663
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-99fc678-3",
+      "rev": "99fc678",
+      "exe": "out/bisect/arch-view-99fc678.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.459,
+      "gt0Pct": 8.035,
+      "meanMax": 9.16,
+      "rawCounts": {
+        "gt0": 411853,
+        "gt1": 187105,
+        "gt3": 85098,
+        "gt6": 74772,
+        "gt12": 69574,
+        "gt24": 33995,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.385,
+        "m2to3": 1.99,
+        "m4to6": 0.201,
+        "m7to12": 0.101,
+        "m13to24": 0.694,
+        "mGt24": 0.663
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-HEAD-1",
+      "rev": "HEAD",
+      "exe": "target/release/arch-view.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.52,
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "rawCounts": {
+        "gt0": 411711,
+        "gt1": 186395,
+        "gt3": 83531,
+        "gt6": 77921,
+        "gt12": 67313,
+        "gt24": 34230,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.109,
+        "m7to12": 0.207,
+        "m13to24": 0.645,
+        "mGt24": 0.668
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-HEAD-2",
+      "rev": "HEAD",
+      "exe": "target/release/arch-view.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.528,
+      "gt0Pct": 8.04,
+      "meanMax": 9.26,
+      "rawCounts": {
+        "gt0": 412105,
+        "gt1": 186787,
+        "gt3": 83923,
+        "gt6": 78309,
+        "gt12": 67609,
+        "gt24": 34526,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.11,
+        "m7to12": 0.209,
+        "m13to24": 0.645,
+        "mGt24": 0.674
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    },
+    {
+      "dir": "out/rep-HEAD-3",
+      "rev": "HEAD",
+      "exe": "target/release/arch-view.exe",
+      "verdict": "FAIL",
+      "changedPrintedPct": 1.52,
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "rawCounts": {
+        "gt0": 411711,
+        "gt1": 186395,
+        "gt3": 83531,
+        "gt6": 77921,
+        "gt12": 67313,
+        "gt24": 34230,
+        "framePixels": 5125912
+      },
+      "derivedBandsPct": {
+        "m1": 4.396,
+        "m2to3": 2.007,
+        "m4to6": 0.109,
+        "m7to12": 0.207,
+        "m13to24": 0.645,
+        "mGt24": 0.668
+      },
+      "selfCheck_bandSumEqualsGt0": true,
+      "selfCheck_gt6PctEqualsChangedRatio": true
+    }
+  ],
+  "headline": {
+    "before": {
+      "rev": "c99f3cc",
+      "dir": "out/verify-c99f3cc",
+      "gt0Pct": 7.943,
+      "meanMax": 19.45,
+      "m1BandPct": 0.0,
+      "changedPrintedPct": 7.884
+    },
+    "after": {
+      "rev": "HEAD",
+      "dir": "out/verify-HEAD",
+      "gt0Pct": 8.032,
+      "meanMax": 9.17,
+      "m1BandPct": 4.396,
+      "changedPrintedPct": 1.52
+    },
+    "areaDeltaPp": 0.089,
+    "amplitudeRatioPct": 47.1,
+    "statement": "淡出覆盖面积基本未变（HEAD 与退化前相差 0.089pp），而变化像素的最大通道色差均值从 19.45/255 跌到 9.17/255，且 HEAD 有 4.396pp 帧面积位移恰为 1/255，即属幅度塌陷而非面积消失"
+  },
+  "selfChecks": {
+    "gt6EqualsChangedRatio": "gt6Pct 与断言 reading 中打印的 changed 值同值，13/13 次成立（6 就是 ChangeTolerance）",
+    "bandSumEqualsGt0": "逐差之和等于 gt0，13/13 次成立",
+    "crossImplementation": "入仓新实现（HEAD 侧 gt0Pct=8.032、meanMax=9.17）与本会话此前的独立离线探针同值，排除「新字段算错但看起来合理」"
+  },
+  "stabilityWarning": "P1 存在 1/6 概率的逐次翻转（同一 99fc678 二进制曾得 6.612% 而 PASS）。任何以 changedRatio 为基准的复测必须同时记录 gt0Pct 与 meanMaxDeltaOverGt0，否则无法区分「幅度回升」与「台阶抖动 / 场景未稳」。详见姊妹档 newFinding。",
+  "forbiddenUse": "本节任何字段不得用于转绿判据；P1MinChangedRatio 保持 0.02，未做任何调整。",
+  "mechanismRefs": [
+    "淡化 alpha 未变：playback.rs 的 CONTEXT_OPACITY=0.68、NON_PATH_OPACITY=0.25；合成点在 main.rs 节点绘制闭包内 bg.a 乘以 item.opacity",
+    "底色改变：99fc678 引入 arch_view_theme.rs 的 card_bg=0x161b22 与 main.rs 的 tint.s 乘 0.65、tint.l 取 tint.l*0.55 再 clamp 到 0.08..0.18；view.rs 的 CANVAS_BACKGROUND=0x0d1117；旧侧为 layer_color 即 rgb(layer_palette(..))，例如 components=0x4a3768",
+    "alpha 被单测锁定：visual_theme_regression.rs 的 non_neighbor_nodes_dimmed_when_selection_active 断言压暗态 bg.a 与 label_color.a 均为 0.22（non_neighbor_dim_factor=0.22）"
+  ],
+  "boundaries": [
+    "离线探针对 c99f3cc 侧得到的 >0 与 meanMax 与入仓工具一致，但 c99f3cc 侧的原始帧 PNG 仍在被 gitignore 的 out/ 下。",
+    "未定位节点底下的层带基色（band_bg 与 layer_band_color 在 view.rs、arch_view_theme.rs 零命中），故未给出逐层解析色差表；面积问题改由直接测量回答。",
+    "mechanismRefs 属同量级吻合（预测约 19 对实测 19.45），不是逐像素精确预测：均值按面积加权且含 accent 与文字像素。",
+    "99fc678 的 6.61% 那次运行提示 P1 缺少稳定先决；补先决属判据改动，未获批准前不做。"
+  ]
+}
