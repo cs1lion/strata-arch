@@ -422,3 +422,41 @@
 - 先决失败仍走 `exit 1`（S1 选项未启用），CI 仍不跑本脚本（人工项）。
 - `out/pixel-evidence` 覆盖式写入与 ADR 0004"run 不可变"冲突仍未修；本回合 V2 已改用新目录规避，脚本默认值未动。
 - 产品裁决（路径 A 修渲染 / 路径 B 几何重导判据）**仍未决**，且现在必须建立在"已停稳的读数"之上。
+
+## 两份 P1 证据档的守护落地，第 6 节该条缺口就此闭合（2026-11-17 追加；上方原文一字不改）
+
+提交 `50a451b`（`eval(registry)`，A 口径）。第 6 节写的"两份 `docs/evidence/24-p1-*` 档**尚无 `citations.json` 守护项**"就此闭合（原句保留）。
+
+### 1. 加了哪 4 条，各自守什么
+
+| 守护 id | kind | 守的那条腿 |
+| --- | --- | --- |
+| `ev-p1-bisect-file` | `file-exists` | 归因档存在 **且** 被 `docs/acceptance-gaps.md` 引用 |
+| `ev-p1-fade-file` | `file-exists` | 分解档存在 **且** 被引用 |
+| `ev-p1-bisect-rev` | `pattern-count` | 归因结论 `"regressionCommit": "99fc678"` 未被改 |
+| `ev-p1-fade-area` | `pattern-count` | 反直觉结论 `"areaDeltaPp": 0.089`（面积未变）未被改 |
+
+**写前先读工具实现**（`Invoke-CiteCheck`）以免夸大覆盖面：`file-exists` 走 else 分支，依次校验 ① `source` 存在 ② `needle` 必须等于源算值（对该 kind 即等于 `source` 本身）③ `doc` 内该字面命中 `>= 1`。⇒ 它**同时**守"文件被删"与"文档不再引用它"，但**管不到文件内部**；这正是必须另补 2 条 `pattern-count` 的原因，不是冗余。
+
+### 2. 四条腿逐一破坏反证（每例破坏后立即还原并回读）
+
+| 例 | 破坏动作 | 结果 |
+| --- | --- | --- |
+| S1 | 把分解档改名 | **同时 2 条 FAIL**：`ev-p1-fade-file`（路径不存在）+ `ev-p1-fade-area`（文档不存在），`PASS=142 FAIL=2` ⇒ 纵深 |
+| S2 | 篡改 `0.089 → 0.091` | `ev-p1-fade-area` 报"命中 0 行，期望 1"，`PASS=143 FAIL=1` |
+| S3 | 篡改 `99fc678 → deadbee` | `ev-p1-bisect-rev` 同形态报警，`PASS=143 FAIL=1` |
+| S4 | 抹掉 acceptance-gaps 里的路径引用 | `ev-p1-bisect-file` 报"文档未出现登记字面"，`PASS=143 FAIL=1` |
+
+四例还原后终态 `条目=144 PASS=144 FAIL=0 SKIP=0` 退出码 0；被破坏文件逐一回读确认复原（命中 1 / 1 / 2）。
+
+### 3. A 口径三段证据（登记表追加的强制删除）
+
+- (a) `reg-count-selfguard` 的 `expect`：`140 → 144`
+- (b) 落盘回读：`rg -c -F '"id": "'` = **144** == `ConvertFrom-Json` 条目数 **144**（三者相等，JSON 解析成功）
+- (c) `cite-check 条目=144 PASS=144` 退出码 **0**，不变量 `PASS+FAIL+SKIP==条目数` 成立
+- 影响面：`numstat 13/1`；hunk `@@ -257 +257 @@`（仅 expect 行原位改值）+ `@@ -293,0 +294,12 @@`（4 条纯插入）；**唯一删除行即 expect 那一行**
+- 阈值仍零改动：未触碰 `eval/pixel-evidence.ps1` 与任何阈值，10 条 `pe-thr-*` + 2 条 `pe-*p1-settled*` 均含于 144 全绿内
+
+### 4. 本票证据面的当前状态
+
+至此，本票产生的**四份**入仓证据/判据面（drift 自测档、ab 自测档、p1 归因档、p1 分解档）与 P1 先决代码均有 `cite-check` 守护并各自经破坏反证。仍未纳入守护的是 `out/**` 下的原始帧与二进制（被 gitignore，设计上不入仓）—— 这一点不是缺口，但意味着"逐像素原始数据"层的可复核性只能靠 `rederive` 段命令重跑，登记以保持可见。
