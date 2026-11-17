@@ -51,6 +51,8 @@ param(
     [switch]$PlanOnly,
     [switch]$ForceFull,
     [switch]$RequireCorpus,
+    # 负控自证（票 24 阶段 1）：故意注入一处结构违规，断言本脚本作为 CI 门禁必然判红、复原必然回绿。
+    [switch]$SelfTest,
     [switch]$CorpusUnavailable
 )
 
@@ -60,6 +62,162 @@ Set-Location $repoRoot
 
 $selfTarget = "tests/fixtures/drift"
 $selfBaseline = "tests/fixtures/drift/drift-baseline.json"
+
+# ---------- -SelfTest：负控自证（票 24 阶段 1，headless）----------
+#
+# 为什么需要：`arch-cli drift` 的 gate 已被 rust 集成测试证红
+# （`crates/arch-cli/tests/drift.rs::drift_gate_failure_exits_one_with_a_full_report`），
+# 但**本脚本作为 CI 门禁**从未在故意注入下变红过一次。若有人把 `Invoke-DriftGate` 的状态映射
+# 改成 `1 { "passed" }`，现有任何检查都不会报警——「一个从未变红过的门禁与坏掉的门禁，在证据上
+# 长得一样」正是本票要消除的状态。
+#
+# 为什么父进程在这里提前接管：若把自测放在计划判定之后，`-PlanOnly` 与 not-required 分支会提前
+# `exit 0`，自测整段被跳过却仍返回 0——那是「空跑也算过」的失效形态。父进程只做编排，真正的
+# 门禁判定交给子进程跑**完整脚本**，走的是 `Invoke-DriftGate`、`$selfRequired` 与汇总退出的真实路径。
+#
+# 为什么每段子运行都要校验哨兵字样：子进程退出码不足以证明它真跑了 gate。故每次断言输出含
+# `drift gate: base=`（主流程起点字样），否则按空跑失败计。
+#
+# 为什么脚本副本必须落在 eval/ 而不是 out/：副本自身会执行
+# `$repoRoot = Split-Path -Parent $PSScriptRoot`；放到 out/<runId>/ 会把仓库根算成 run 目录，
+# 相对基线与 `$Exe` 全部错位，产出的读数是假的。副本命名 `eval/tmp-driftself-*`，退出前删除并校验残留。
+#
+# 判据（与票 24 阶段 1 更正段一致）：
+#   S1 绿基线     未改动的 fixture 副本 → 退出码 0 + `self: passed` + 报告 newViolations 为空
+#   S2 注入必红   副本 `utils/format.ts` 追加一条指向 `server/api.ts` 的反向 import →
+#                 退出码 1 + `self: FAILED` + 报告含 {kind=reverseEdge, source=utils/format.ts,
+#                 target=server/api.ts}。**不断言条数恰为 1**：实测反向边会伴生 cycle。
+#   S3 脚本聚合   同一次子运行必须给出脚本级判红字样 `drift gate: FAILED`，
+#                 证明红来自本脚本的汇总，而不只是 arch-cli 自己非零。
+#   S4 复原回绿   把被注入的文件按原文覆盖回去再跑 → 退出码 0 + `self: passed` + 无违规，
+#                 并断言仓内基线文件 SHA256 前后一致（本自测对仓库内文件严格只读）。
+#
+# 退出码：0 = 四例全部符合；1 = 任一例不符合（门禁失效或本自测自身失真）；
+#         2 = 前置条件不满足（缺 arch-cli / 缺 fixture / 缺基线 / 缺锚点），**绝不表示报警**。
+if ($SelfTest) {
+    $stExeAbs = Join-Path $repoRoot $Exe
+    $stFixture = Join-Path $repoRoot "tests/fixtures/drift"
+    $stBaselineAbs = Join-Path $repoRoot $selfBaseline
+    if (-not (Test-Path -LiteralPath $stExeAbs)) {
+        Write-Output "drift-gate selftest: PRECHECK FAIL 缺少 $Exe（先运行 cargo build -p arch-cli）。退出码 2 不表示报警。"
+        exit 2
+    }
+    if (-not (Test-Path -LiteralPath $stFixture) -or -not (Test-Path -LiteralPath $stBaselineAbs)) {
+        Write-Output "drift-gate selftest: PRECHECK FAIL fixture 或基线缺失。退出码 2 不表示报警。"
+        exit 2
+    }
+
+    $lf = [string][char]10
+    $stRunId = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stOut = Join-Path $repoRoot ("out/drift-selftest-" + $stRunId)
+    New-Item -ItemType Directory -Force -Path $stOut | Out-Null
+    $greenDir = Join-Path $stOut "fixture-green"
+    $injDir = Join-Path $stOut "fixture-injected"
+    New-Item -ItemType Directory -Force -Path $greenDir, $injDir | Out-Null
+    Write-Output ("drift-gate selftest: run 目录 {0}（每次新目录，遵守 ADR 0004）" -f $stOut)
+
+    # 从「当前正在运行的这份脚本」取文本，而不是硬编码 eval/drift-gate.ps1：
+    # 正常跑两者同一文件；但做削弱反证时（喂入一份被改坏的本脚本副本）必须让子进程继承同一处削弱，
+    # 否则副本派生出的是未改坏的原件，反证会以假绿的方式失效。
+    $gateText = [IO.File]::ReadAllText($PSCommandPath).Replace("`r`n", $lf)
+    $assignAnchor = '$selfTarget = "tests/fixtures/drift"'
+    if (-not $gateText.Contains($assignAnchor)) {
+        Write-Output "drift-gate selftest: PRECHECK FAIL 找不到 `$selfTarget 赋值锚点（脚本结构已变，负控失效）"
+        exit 2
+    }
+    $baselineHashBefore = (Get-FileHash -Path $stBaselineAbs -Algorithm SHA256).Hash
+
+    $script:stCases = @()
+    $script:stTmpCopies = @()
+
+    function Add-StCase {
+        param([string]$Id, [string]$Expect, [bool]$Ok, [string]$Detail)
+        $mark = if ($Ok) { 'PASS' } else { 'FAIL' }
+        $script:stCases += [pscustomobject]@{ id = $Id; ok = $Ok }
+        Write-Output ("  [{0}] {1,-14} 期望: {2,-34} 实得: {3}" -f $mark, $Id, $Expect, $Detail)
+    }
+
+    function Invoke-GateChild {
+        param([string]$Label, [string]$TargetDir)
+        # 只重定向 self 目标到副本；`$selfBaseline` 保持指向仓内基线，以证明基线被只读使用。
+        $copyAbs = [IO.Path]::GetFullPath(
+            (Join-Path $repoRoot ("eval/tmp-driftself-" + $stRunId + "-" + $Label + ".ps1")))
+        [IO.File]::WriteAllText($copyAbs, $gateText.Replace(
+            $assignAnchor, ('$selfTarget = "' + ($TargetDir -replace '\\', '/') + '"')))
+        $script:stTmpCopies += $copyAbs
+
+        $summary = Join-Path (Join-Path $stOut $Label) "summary.json"
+        $argv = @('-NoProfile', '-File', $copyAbs,
+                  '-ChangedFiles', 'tests/fixtures/drift/utils/format.ts',
+                  '-OutJson', $summary)
+        # 完整消费管道：用 Select-Object -First 截断会提前终止子进程并污染 $LASTEXITCODE（见票 24 更正段）。
+        $out = (& pwsh @argv 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+
+        $rep = $null
+        $repDir = Join-Path $stOut $Label
+        $rf = @(Get-ChildItem -LiteralPath $repDir -File -Filter 'drift-gate-report-self-*.json' -ErrorAction SilentlyContinue)
+        if ($rf.Count -gt 0) {
+            try { $rep = Get-Content -LiteralPath $rf[0].FullName -Raw -Encoding utf8 | ConvertFrom-Json }
+            catch { $rep = $null }
+        }
+        return [pscustomobject]@{
+            code = $code; out = $out; report = $rep
+            reached = ($out -match 'drift gate: base=')
+        }
+    }
+
+    Copy-Item -Path (Join-Path $stFixture '*') -Destination $greenDir -Recurse -Force
+    Copy-Item -Path (Join-Path $stFixture '*') -Destination $injDir -Recurse -Force
+
+    # S1 绿基线
+    $r1 = Invoke-GateChild -Label 'green' -TargetDir $greenDir
+    $v1 = @($r1.report.newViolations)
+    $o1 = ($r1.out -match 'self: passed')
+    Add-StCase -Id 'S1 绿基线' -Expect 'exit 0 + self: passed + 0 违规' -Ok `
+        ($r1.reached -and $r1.code -eq 0 -and $o1 -and $null -ne $r1.report -and $v1.Count -eq 0) `
+        -Detail ("reached={0} exit={1} passed字样={2} newViolations={3}" -f $r1.reached, $r1.code, $o1, $v1.Count)
+
+    # S2 注入必红 + S3 脚本聚合
+    $injFile = Join-Path $injDir 'utils/format.ts'
+    $injOrig = [IO.File]::ReadAllText($injFile)
+    [IO.File]::WriteAllText($injFile, ('import { ping } from "../server/api";' + $lf + $injOrig))
+    $r2 = Invoke-GateChild -Label 'injected' -TargetDir $injDir
+    $v2 = @($r2.report.newViolations)
+    $hit = @($v2 | Where-Object {
+        $_.kind -eq 'reverseEdge' -and $_.source -eq 'utils/format.ts' -and $_.target -eq 'server/api.ts' })
+    $o2 = ($r2.out -match 'self: FAILED')
+    Add-StCase -Id 'S2 注入必红' -Expect 'exit 1 + 报告含该反向边' -Ok `
+        ($r2.reached -and $r2.code -eq 1 -and $o2 -and $hit.Count -ge 1) `
+        -Detail ("reached={0} exit={1} failed字样={2} 命中该边={3} newViolations={4}" -f $r2.reached, $r2.code, $o2, $hit.Count, $v2.Count)
+    Write-Output ("      伴生违规构成（供核，不作断言）: " + (($v2 | ForEach-Object { $_.kind }) -join ','))
+    $agg2 = ($r2.out -match 'drift gate: FAILED')
+    Add-StCase -Id 'S3 脚本聚合判红' -Expect '脚本级 drift gate: FAILED + exit 1' -Ok `
+        ($agg2 -and $r2.code -eq 1) `
+        -Detail ("脚本级判红字样={0} exit={1}" -f $agg2, $r2.code)
+
+    # S4 复原回绿 + 基线只读
+    [IO.File]::WriteAllText($injFile, $injOrig)
+    $r4 = Invoke-GateChild -Label 'restored' -TargetDir $injDir
+    $v4 = @($r4.report.newViolations)
+    $o4 = ($r4.out -match 'self: passed')
+    $hashOk = ((Get-FileHash -Path $stBaselineAbs -Algorithm SHA256).Hash -eq $baselineHashBefore)
+    Add-StCase -Id 'S4 复原回绿' -Expect 'exit 0 + 基线 SHA256 未变' -Ok `
+        ($r4.reached -and $r4.code -eq 0 -and $o4 -and $v4.Count -eq 0 -and $hashOk) `
+        -Detail ("reached={0} exit={1} passed字样={2} newViolations={3} 基线未变={4}" -f $r4.reached, $r4.code, $o4, $v4.Count, $hashOk)
+
+    foreach ($p in $script:stTmpCopies) {
+        Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    }
+    $stLeft = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'eval') -File -Filter 'tmp-driftself-*' -ErrorAction SilentlyContinue)
+    Write-Output ("  临时脚本副本: 计划 {0} 个, 残留 {1} 个" -f $script:stTmpCopies.Count, $stLeft.Count)
+
+    $stBad = @($script:stCases | Where-Object { -not $_.ok }).Count + $stLeft.Count
+    Write-Output ("drift-gate selftest: verdict={0} cases={1} 不符合={2} 归档={3}" -f `
+        $(if ($stBad -eq 0) { 'PASS' } else { 'FAIL' }), $script:stCases.Count, $stBad, $stOut)
+    if ($stBad -gt 0) { exit 1 }
+    exit 0
+}
 
 # engine：扫描 / 解析 / 分层 / 漂移 / CLI 行为。改了这些，两类基线的读数都可能变。
 $enginePatterns = @(
