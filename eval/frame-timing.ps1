@@ -66,6 +66,30 @@ $exePath = (Resolve-Path $Exe).Path
 
 $arguments = @("map", $Repo)
 $envVars = @{ STRATA_PHASE_MARKERS = "1"; STRATA_FRAME_TRACE = "1" }
+
+# -AbCycle token 校验（票 24 阶段 2 前置 · 笔 1）。
+# 未知 token 必须拒绝而不是放行：`RenderTuning::for_segment` 对不认识的段名会
+# **静默回落 `from_env()`**，那一段于是悄悄变成「不降格」，产出一份看起来正常却什么都没测的读数。
+# 降格段（`skip:*`）在本笔只是语法合法；应用侧尚未按段轮换 `RenderSkip`，
+# 该能力缺失由后面的 RED 断言负责报警，这里不代替它判定。
+$abSkipTokens = @()
+$abSkipMarks = New-Object System.Collections.Generic.List[object]
+if ($Mode -eq 'ab') {
+    $knownAbTokens = @('base', 'A', 'B', 'BA', 'AB')
+    $skipTokenPattern = '^skip:(bands|edges|nodes|labels)(,(bands|edges|nodes|labels))*$'
+    foreach ($tok in @($AbCycle.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        if ($knownAbTokens -contains $tok) { continue }
+        if ($tok -match $skipTokenPattern) { $abSkipTokens += $tok; continue }
+        Write-Output ("frame timing: -AbCycle 含未知 token [{0}]" -f $tok)
+        Write-Output "  合法形态：base / A / B / BA / AB，或 skip:<bands|edges|nodes|labels 的逗号子集>（如 skip:edges、skip:edges,labels）"
+        Write-Output "  拒绝而非静默放行：未知段名会落进 from_env() 回落分支，段标签与实际配置不再对应。"
+        exit 2
+    }
+    if ($abSkipTokens.Count -gt 0) {
+        Write-Output ("  ab cycle 含降格段 {0} 个：{1}" -f $abSkipTokens.Count, ($abSkipTokens -join ' '))
+        Write-Output "  注意：`-Skip` 走的是全进程一次性 STRATA_RENDER_SKIP；降格段要求应用侧按帧段轮换 RenderSkip。"
+    }
+}
 $windowTag = ""
 
 switch ($Mode) {
@@ -273,6 +297,11 @@ while ($null -ne $line) {
         if ($label.StartsWith("ab:segment=")) {
             $abMarks.Add([pscustomobject]@{ name = $label.Substring(11); at = $elapsed })
         }
+        # 降格段的**能力凭证**：`phase: ab:skip=<spec>`，由应用侧在每个段边界发出（笔 2 实现）。
+        # 没有它，段标签只是名字——两帧段可能跑的是同一套 RenderSkip，任何配对比较都无意义。
+        if ($label.StartsWith("ab:skip=")) {
+            $abSkipMarks.Add([pscustomobject]@{ spec = $label.Substring(8); at = $elapsed })
+        }
     } elseif ($line.StartsWith("frame: ")) {
         $counters = $line
     } elseif ($line.StartsWith("map: ") -and -not $firstLine) {
@@ -447,6 +476,21 @@ switch ($Mode) {
                 medianOfP95Ms = $medianOfP95
             }
         }
+    # 能力断言（TDD Red 的判定点）：cycle 里的每个降格段实例都必须有一条 `ab:skip=` 凭证，
+    # 且凭证覆盖 cycle 中出现的每个 spec。缺失即说明「段名换了但 RenderSkip 没换」——
+    # 这必须判失败，绝不允许被读成「降格无差异」。
+    if ($abSkipTokens.Count -gt 0) {
+        $wantSkipMarks = @($abMarks | Where-Object { $_.name -like 'skip:*' }).Count
+        $gotSkipMarks = $abSkipMarks.Count
+        $seenSkipSpecs = @($abSkipMarks | ForEach-Object { $_.spec } | Sort-Object -Unique)
+        $missingSpecs = @($abSkipTokens | Where-Object { $seenSkipSpecs -notcontains $_ })
+        if ($gotSkipMarks -lt $wantSkipMarks) {
+            $script:abCapabilityGap = ("降格段凭证不足：cycle 含降格段实例 {0} 个，应用实发 ab:skip 打点 {1} 条" -f $wantSkipMarks, $gotSkipMarks)
+        } elseif ($missingSpecs.Count -gt 0) {
+            $script:abCapabilityGap = ("降格段凭证与 cycle 不符：未覆盖 [{0}]" -f ($missingSpecs -join ' '))
+        }
+        Write-Output ("  降格段凭证核对：需要={0} 实得={1} 覆盖spec=[{2}]" -f $wantSkipMarks, $gotSkipMarks, ($seenSkipSpecs -join ' '))
+    }
     }
     "stability" {
         # 整段 pooled 间隔用于 `intervals` 块；段间离散度用于稳定性摘要。
@@ -660,6 +704,15 @@ if ($Mode -eq "idle") {
             $detail.prepDoneMs, $detail.contentPresentedMs, $detail.panDoneMs)
 }
 Write-Output ("  exit={0} wrote {1}" -f $process.ExitCode, $OutJson)
+
+# 降格段轮换能力缺失 → RED（票 24 阶段 2 前置 · 笔 1 的预期失败）。
+# 放在 JSON 写出之后，保证 Red 运行同样留下可核对的产物。
+if ($script:abCapabilityGap) {
+    Write-Output ("frame timing: RED — 降格段轮换能力缺失：{0}" -f $script:abCapabilityGap)
+    Write-Output "  预期失败：笔 1 只加校验与断言，应用侧尚未按段轮换 RenderSkip；笔 2 落地后应转绿。"
+    Write-Output "  禁止把本失败读成「降格无收益」：各段实为同一配置，本次实验没有测到任何降格效应。"
+    exit 1
+}
 
 if ($process.ExitCode -ne 0) { exit 1 }
 exit 0
