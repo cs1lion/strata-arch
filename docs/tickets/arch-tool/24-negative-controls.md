@@ -128,3 +128,19 @@
 **状态更新（追加，不改写上方表述）**：本票阶段 2 的核心目标——「显著性判定必须既能判显著、也能判不可判定」——**已按票面样本口径达成**：正对照（同 tuning 的 `BA ↔ skip:edges`）在 p95 与 median 两侧均以 12/12 同号过门槛，负对照（同配置）两侧均不过门槛且同号不足。同时文末「阶段 2 的部分完成与设计修订」一节中「本阶段剩余缺口……『同进程交替 + 降格档』正对照仍未实现」一项，其前提条件（扩展 `-Mode ab` 使 `RenderSkip` 参与 segment 轮换）已由 `dff5b38`+`c2c4d46` 完成，该剩余缺口就此闭合；原文按规矩保留不改。
 
 **仍不得据本票说什么**：(a) 效应量不得当产品收益结论——本档降格是**诊断用受控实验**，非发布特性，且三次批次 median `mean(gap)` 为 4.368 / 6.578 / 6.226ms、p95 为 6.491 / 13.551 / 9.053ms，跨批波动仍达 2 倍；(b) 真实产品档（路线 C 的 `labels+edges` 常开降格）收益与代价仍归票 23 阶段 C/C′ 判定，不在本票范围；(c) 判据从未在 GitHub runner 执行（本就不进 CI）。
+
+## 阶段 3 的执行结果：基线不成立，但两侧灵敏度已证明（2026-11-17 实测登记；上方阶段 3 原判据与失败判据一字不改）
+
+- **票面第 1 条假设的「24/24 绿基线」在本机不成立，故阶段 3 未闭环**。基线命令 `pwsh -NoProfile -File eval/pixel-evidence.ps1 -OutDir out/pe-baseline-20261117`，实得 `passed=21 failed=3`、**退出码 1**、单次耗时约 48s。三项失败读数：
+  - `p1-frames-distinguishable`：`changed=1.520%`（下限 2.0%）、`hotCells=18`（下限 10 已过）、`bbox=(36,141)-(2560,1816)`
+  - `search-focus-closes-panel`：`focus=311`（上限 100）
+  - `search-clear-removes-panel-and-label`：`panel=110`（上限 100）、`label=51 offLabel=51`
+  - 通过的帧差侧证据：`static-baseline-noise` `changed=0.000000%`（逐位一致）、`p3-adjacent-frame-moves` `maxChanged=0.752%`（下限 0.2%）
+  - 归因与处置：本机显示面宽 2560（bbox 右界即整幅宽度），而阈值注释里的实测值（如 changed=0.000000%、单行 tint ≈2400 宽）来自另一台标定机；P1 的 1.520% 落在 2.0% 之下属**标定漂移**而非判据失灵。按票面第 4 条禁止项，**未调任何阈值、未加过滤**，因此本阶段判为「前置未满足」，不得记为已完成。
+- **阶段 3 的实质目标（帧差判据必须双向可翻转）已用受控副本证明**，两处注入均不触碰阈值：
+  - **抹掉已声明状态差**：副本把 P1 on 侧的 `$env:STRATA_EVIDENCE_ANIMATION = "1"` 改为 `$null` ⇒ `p1-frames-distinguishable` 读数由 `changed=1.520% / hotCells=18` 变为 **`changed=0.000% / hotCells=0 / bbox=(-1,-1)`**，副本整体退出码 1。⇒ 基线那 1.520% 确实归因于该已声明状态差，不是抓屏抖动。
+  - **注入已声明状态差**：副本给静帧对照的 AppArgs 加 `--autoplay`，并把 `WarmupMs 1200 → 80` 使采样落在播放期间 ⇒ `static-baseline-noise` 由 **`changed=0.000000%`** 翻到 **`changed=0.721491%`**（上限 0.1% 的 7.2 倍）、`hotCells=37`，副本整体退出码 1。⇒ 噪声上限判据不是恒真式。
+  - **未碰阈值的证明**：基线与三个注入副本共四次运行，各自 `report.json` 内嵌的 `thresholds` 快照逐项一致——`P1MinChangedRatio=0.02`、`P1MinHotCells=10`、`P3MinChangedRatio=0.002`、`P3MinHotCells=1`、`StaticMaxChangedRatio=0.001`、`ChangeTolerance=6`；另在副本删除前按符号定界抽取 `$Thresholds` 定义块（66 行）与源做 `StringComparison.Ordinal` 逐字符比较为相等，副本与源的差异行数分别 2/2/4，全部落在状态差与采样窗口两处。这条证据来自运行产物本身，不依赖行号（行号会随脚本改动漂移）。副本已删（经系统回收站，可恢复）。
+- **一次无效注入（阴性结果，按规矩保留）**：只加 `--autoplay` 而不改 `WarmupMs` 时，静帧对照仍 `changed=0.000000%` PASS——两帧都落在播放完成之后。⇒ 「已知差异」必须落在采样窗口内才算构造成功；这是注入设计的缺陷，不是判据失灵。首次尝试还因把说明性注释追加到**带反引号续行的语句行尾**（注释吞掉续行符，`-Frames` 退回默认值 0）而使副本在写出 report 之前抛错终止，遂改用「只替换参数数组内部」的注入点。
+- **新发现的不稳定面**：`search-focus-closes-panel` 读数在两次运行间由 `311` 跳到 `10389`；另一次运行多出 `search-focus-label-visible` 失败（`bg=0 text=0 rows=-1--1`）而基线没有。⇒ search 态两项在本机跨运行不可复现，不能作为阶段 3 的任何结论支撑，须单列处理。
+- **阶段 3 状态**：**未闭环**。要闭环需要下列之一，且均属判据变更、须单独批准：在标定机上取 24/24 绿基线；或按本机环境重新标定 `P1MinChangedRatio` 与 search 两项阈值（这会改动 `pixel-evidence.ps1` 的阈值区，票面第 4 条明令禁止顺手做）。本笔**没有**新增 evidence 文件，只登记读数；判据从未在 CI 执行（需可见 Windows 桌面）。
