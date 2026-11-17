@@ -486,6 +486,29 @@ function Get-PanelFrameStability {
     }
 }
 
+# ---- 票 24：同状态相邻两帧的停稳判据（照 Get-PanelFrameStability 的思路，改用帧差口径）----
+# 依据：18 次复现矩阵中，唯一异常运行（同一 99fc678 二进制读出 changed=6.612% 且判 PASS）的 off 态
+# 相邻两帧帧差为 7.153%，其余 17 次均为 0%。即该运行的关闭态尚未停稳，拿它和已停稳的开启态比会
+# 人为放大 changed。故 P1 必须先自证同状态两帧已一致。
+# 阈值复用：不新增常量，直接用既有 StaticMaxChangedRatio（static-baseline-noise 的同一噪声上限）。
+function Get-IntraStateStability {
+    param([string]$Name, [object]$Sel)
+    $valid = @($Sel.Valid)
+    if ($valid.Count -lt 2) {
+        return [pscustomobject]@{
+            name = $Name; ok = $false
+            detail = ("{0}: 有效帧 {1} 不足 2，无法证明停稳" -f $Name, $valid.Count)
+        }
+    }
+    $a = $valid[-2].Img; $b = $valid[-1].Img
+    $d = [FrameDiff]::Compare($a.Bytes, $b.Bytes, $a.Width, $a.Height, $a.Stride, $b.Stride, $Thresholds.CellSize, $Thresholds.ChangeTolerance, $Thresholds.HotCellChangedRatio)
+    return [pscustomobject]@{
+        name = $Name; ok = ($d.ChangedRatio -le $Thresholds.StaticMaxChangedRatio)
+        detail = ("{0}: 同状态帧差 changedRatio={1:P3}（上限 {2:P1}）帧 {3}->{4}" -f `
+            $Name, $d.ChangedRatio, $Thresholds.StaticMaxChangedRatio, $valid[-2].Index, $valid[-1].Index)
+    }
+}
+
 function Select-Frames {
     param([string]$Name, [int[]]$Indices)
     $valid = @()
@@ -723,6 +746,17 @@ $offSel = Select-Frames -Name "p1-off" -Indices @(1, 2)
 $onSel = Select-Frames -Name "p1-on" -Indices @(1, 2, 3)
 $report.blankFrames.p1off = $offSel.Blank
 $report.blankFrames.p1on = $onSel.Blank
+# ---- 票 24：P1 稳定先决 ----
+# 必须在判据之前算，且与判据分开登记：先决不满足时应报「尺子不可信」，不能被误读成「淡出失效」。
+# 放在 if/else 之外，保证任何路径下都产出该断言（断言总数 26 -> 27）。
+$p1Settled = @()
+$p1Settled += Get-IntraStateStability -Name "off" -Sel $offSel
+$p1Settled += Get-IntraStateStability -Name "on" -Sel $onSel
+$p1SettledOk = @{}
+foreach ($s in $p1Settled) { $p1SettledOk[$s.name] = [bool]$s.ok }
+Add-Assertion "p1-frames-settled" ("关闭态与开启态各自同状态相邻两帧 changedRatio <= {0:P1}" -f $Thresholds.StaticMaxChangedRatio) `
+    ((@($p1Settled | ForEach-Object { $_.detail })) -join " | ") `
+    ($p1SettledOk['off'] -and $p1SettledOk['on'])
 if ($offSel.Valid.Count -eq 0 -or $onSel.Valid.Count -eq 0) {
     Add-Assertion "p1-frames-valid" "关闭态与开启态各至少一帧有效" ("off blank={0}; on blank={1}" -f ($offSel.Blank -join ','), ($onSel.Blank -join ',')) $false
 } else {
@@ -767,10 +801,12 @@ if ($offSel.Valid.Count -eq 0 -or $onSel.Valid.Count -eq 0) {
         }
         blankOff = $offSel.Blank
         blankOn = $onSel.Blank
+        # 停稳先决的逐态明细（仅记录，与 search.settledFrames 同构）。
+        settledFrames = @($p1Settled | ForEach-Object { [ordered]@{ name = $_.name; ok = $_.ok; detail = $_.detail } })
     }
     Add-Assertion "p1-frames-distinguishable" ("帧差变化像素比例 >= {0:P1} 且热点单元(每个 >= {1:P0}) >= {2}" -f $Thresholds.P1MinChangedRatio, $Thresholds.HotCellChangedRatio, $Thresholds.P1MinHotCells) `
-        ("changed={0:P3} meanAbs={1:N3} maxCell={2:P2} hotCells={3} bbox=({4},{5})-({6},{7})" -f $d.ChangedRatio, $d.MeanAbs, $d.MaxCellRatio, $d.HotCells, $d.MinX, $d.MinY, $d.MaxX, $d.MaxY) `
-        ($d.ChangedRatio -ge $Thresholds.P1MinChangedRatio -and $d.HotCells -ge $Thresholds.P1MinHotCells)
+        ("changed={0:P3} meanAbs={1:N3} maxCell={2:P2} hotCells={3} bbox=({4},{5})-({6},{7}) settled(off={8},on={9})" -f $d.ChangedRatio, $d.MeanAbs, $d.MaxCellRatio, $d.HotCells, $d.MinX, $d.MinY, $d.MaxX, $d.MaxY, $p1SettledOk['off'], $p1SettledOk['on']) `
+        ($d.ChangedRatio -ge $Thresholds.P1MinChangedRatio -and $d.HotCells -ge $Thresholds.P1MinHotCells -and $p1SettledOk['off'] -and $p1SettledOk['on'])
 }
 
 # ---- 状态 5：P3 播放推进 ---------------------------------------------------
