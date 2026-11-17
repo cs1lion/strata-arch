@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "kind": "ab-skip-selftest",
+  "recordedAt": "2026-11-17T13:59:26+08:00",
+  "head": "e429c1e23efa37c7318e84ab6067a96ed227a7fa",
+  "reusedArtifacts": false,
+  "params": {
+    "SegmentFrames": 60,
+    "Cycles": 6,
+    "K": 2.0,
+    "SigMinRatio": 0.8334
+  },
+  "runExitCodes": {
+    "positive": 0,
+    "negative": 0
+  },
+  "pairs": {
+    "positive": 12,
+    "negative": 12,
+    "positiveUnpaired": [
+      "BA"
+    ]
+  },
+  "positive": {
+    "median": {
+      "count": 12,
+      "meanMs": 6.226,
+      "stdMs": 1.476,
+      "thresholdMs": 1.704,
+      "sameSign": "12/12",
+      "signRatio": 1.0,
+      "significant": true,
+      "relPct": 42.76,
+      "valuesMs": [
+        4.94,
+        4.15,
+        3.97,
+        6.86,
+        5.63,
+        5.57,
+        5.67,
+        8.83,
+        7.62,
+        7.31,
+        6.91,
+        7.25
+      ]
+    },
+    "p95": {
+      "count": 12,
+      "meanMs": 9.053,
+      "stdMs": 2.8271,
+      "thresholdMs": 3.264,
+      "sameSign": "12/12",
+      "signRatio": 1.0,
+      "significant": true,
+      "relPct": 49.02,
+      "valuesMs": [
+        11.95,
+        4.91,
+        6.3,
+        9.35,
+        7.89,
+        7.02,
+        8.08,
+        13.44,
+        14.05,
+        9.79,
+        7.23,
+        8.63
+      ]
+    },
+    "orderBias": {
+      "baseFirstN": 6,
+      "variantFirstN": 6,
+      "meanBaseFirstMs": 5.79,
+      "meanVariantFirstMs": 6.662,
+      "deltaMs": 0.872,
+      "detected": false,
+      "p95BaseFirstN": 6,
+      "p95VariantFirstN": 6,
+      "p95MeanBaseFirstMs": 9.25,
+      "p95MeanVariantFirstMs": 8.857,
+      "p95DeltaMs": 0.393,
+      "p95Detected": false
+    }
+  },
+  "negative": {
+    "median": {
+      "count": 12,
+      "meanMs": 0.012,
+      "stdMs": 0.4459,
+      "thresholdMs": 0.515,
+      "sameSign": "5/12",
+      "signRatio": 0.4167,
+      "significant": false,
+      "relPct": 0.12,
+      "valuesMs": [
+        1.19,
+        -0.61,
+        0.09,
+        0.17,
+        0.1,
+        -0.24,
+        -0.31,
+        -0.22,
+        -0.13,
+        -0.14,
+        0.33,
+        -0.08
+      ]
+    },
+    "p95": {
+      "count": 12,
+      "meanMs": 0.657,
+      "stdMs": 1.9912,
+      "thresholdMs": 2.299,
+      "sameSign": "6/12",
+      "signRatio": 0.5,
+      "significant": false,
+      "relPct": 5.17,
+      "valuesMs": [
+        4.91,
+        -1.04,
+        0.66,
+        -0.02,
+        0.73,
+        -0.54,
+        -0.15,
+        0.75,
+        -0.88,
+        -1.21,
+        4.41,
+        0.26
+      ]
+    }
+  },
+  "swapped": {
+    "medianMeanMs": -6.226,
+    "p95MeanMs": -9.053
+  },
+  "cases": [
+    {
+      "id": "RUN",
+      "ok": true,
+      "detail": "positive=0 negative=0"
+    },
+    {
+      "id": "N",
+      "ok": true,
+      "detail": "posPairs=12 negPairs=12"
+    },
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "mean=9.053ms thr=3.264ms sameSign=12/12 rel=49.02%"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "mean=6.226ms sameSign=12/12 sig=True rel=42.76%"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "orig median=6.226 p95=9.053 / swapped median=-6.226 p95=-9.053"
+    },
+    {
+      "id": "N1",
+      "ok": true,
+      "detail": "median mean=0.012ms thr=0.515ms sig=False / p95 mean=0.657ms thr=2.299ms sig=False"
+    },
+    {
+      "id": "S1",
+      "ok": true,
+      "detail": "posInstances=25(>= 24) posNames=[BA skip:edges] negNames=[BA]"
+    },
+    {
+      "id": "S3",
+      "ok": true,
+      "detail": "boundaries=25 batches=25 tailDropped=0 unpaired=1[BA]"
+    },
+    {
+      "id": "OB",
+      "ok": true,
+      "detail": "baseFirstN=6 variantFirstN=6 delta=0.872ms/std=1.476ms p95Delta=0.393ms/std=2.8271ms"
+    }
+  ]
+}
