@@ -275,6 +275,12 @@ $summary = [ordered]@{
 }
 $summaryPath = Join-Path $OutDir 'summary.json'
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding utf8
+# 行尾归一（2026-11-17 实测新增）：`Set-Content` 在 Windows 上默认写 CRLF，而本仓
+# .gitattributes 规定 `* text=auto eol=lf`。归档进 docs/evidence 时若带着 CRLF，
+# 就得在归档环节手工转换——那是把缺陷推给下游。这里显式改成 LF 并无 BOM 重写一次，
+# 使脚本产物从一开始就符合仓库约定（重写量仅数 KB，成本可忽略）。
+$summaryText = [IO.File]::ReadAllText($summaryPath).Replace("`r`n", "`n")
+[IO.File]::WriteAllText($summaryPath, $summaryText, (New-Object System.Text.UTF8Encoding($false)))
 
 $bad = @($script:cases | Where-Object { -not $_.ok }).Count
 Write-Output ("  摘要: {0}" -f $summaryPath)
