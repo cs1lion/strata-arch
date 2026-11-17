@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "kind": "negative-control-evidence",
+  "ticket": "24",
+  "subject": "eval/drift-gate.ps1 -SelfTest（票 24 阶段 1 负控自证 S1-S5）",
+  "recordedAt": "2026-11-17T11:06:46+08:00",
+  "provenance": {
+    "head": "33fb54cc89399e750385dc0b8cb2f09aac35c927",
+    "branch": "ci/clippy-gate",
+    "treeCleanBeforeRun": true,
+    "engine": {
+      "path": "target/debug/arch-cli.exe",
+      "sha256": "E416EE09EFABFFE084D50B325AD47FFFB175F24197F1043B5147A3C883CFF2D6",
+      "mtime": "2026-11-17 10:26:28"
+    },
+    "pwsh": "7.6.10",
+    "os": "Microsoft Windows NT 10.0.26300.0",
+    "hostNote": "本机 Windows 执行；未在 GitHub runner 上执行（见 boundaries）"
+  },
+  "readOnlyGuards": {
+    "baselineFile": "tests/fixtures/drift/drift-baseline.json",
+    "baselineSha256": "B8FC695C8A2564516943335FA150CD63B97E24A6DD19C7A4998C2AA4AE089CD4",
+    "baselineDiffVsHeadEmpty": true,
+    "fixtureDiffVsHeadEmpty": true,
+    "inRunAssertion": "True",
+    "restoredCopyShaEqualsOriginal": true
+  },
+  "commands": [
+    "pwsh -NoProfile -File eval/drift-gate.ps1 -SelfTest",
+    "子进程（S1）：pwsh -NoProfile -File eval/tmp-driftself-20261117-110419-green.ps1 -ChangedFiles tests/fixtures/drift/utils/format.ts -OutJson out/drift-selftest-20261117-110419/green/summary.json",
+    "子进程（S2/S3）：同上，脚本为 …-injected.ps1（ 指向 out/drift-selftest-20261117-110419/fixture-injected），OutJson …/injected/summary.json",
+    "子进程（S4）：同上，脚本为 …-restored.ps1（副本文件已按原件写回），OutJson …/restored/summary.json",
+    "子进程（S5 内层）：pwsh -NoProfile -File eval/tmp-driftself-20261117-110419-sab-statusmap.ps1 -SelfTest，环境含 STRATA_DRIFT_SELFTEST_INNER=1"
+  ],
+  "commandCaveat": "eval/tmp-driftself-*.ps1 是本次运行派生的临时副本，运行结束即删除且不入仓；它与入仓脚本的唯一差异是 $selfTarget 被重定向到本次 run 目录（S5 副本另有 1 { \"passed\" } 一处掏空）。",
+  "cases": [
+    {
+      "id": "S1 绿基线",
+      "result": "PASS",
+      "expected": "exit 0 + self: passed + 0 违规",
+      "actual": "reached=True exit=0 passed字样=True newViolations=0",
+      "parsed": {
+        "reached": "True",
+        "exit": "0",
+        "passed字样": "True",
+        "newViolations": "0"
+      }
+    },
+    {
+      "id": "S2 注入必红",
+      "result": "PASS",
+      "expected": "exit 1 + 报告含该反向边",
+      "actual": "reached=True exit=1 failed字样=True 命中该边=1 newViolations=2",
+      "parsed": {
+        "reached": "True",
+        "exit": "1",
+        "failed字样": "True",
+        "命中该边": "1",
+        "newViolations": "2"
+      }
+    },
+    {
+      "id": "S3 脚本聚合判红",
+      "result": "PASS",
+      "expected": "脚本级 drift gate: FAILED + exit 1",
+      "actual": "脚本级判红字样=True exit=1",
+      "parsed": {
+        "脚本级判红字样": "True",
+        "exit": "1"
+      }
+    },
+    {
+      "id": "S4 复原回绿",
+      "result": "PASS",
+      "expected": "exit 0 + 基线 SHA256 未变",
+      "actual": "reached=True exit=0 passed字样=True newViolations=0 基线未变=True",
+      "parsed": {
+        "reached": "True",
+        "exit": "0",
+        "passed字样": "True",
+        "newViolations": "0",
+        "基线未变": "True"
+      }
+    },
+    {
+      "id": "S5 掏空状态映射须变红",
+      "result": "PASS",
+      "expected": "内层 exit 1 + 抓到 S2 + 深度守卫生效",
+      "actual": "内层exit=1 抓到S2=True 深度守卫=True",
+      "parsed": {
+        "内层exit": "1",
+        "抓到S2": "True",
+        "深度守卫": "True"
+      }
+    }
+  ],
+  "companionNote": "伴生违规构成（供核，不作断言）: reverseEdge,cycle",
+  "tmpCopies": "临时脚本副本: 计划 4 个, 残留 0 个",
+  "overall": {
+    "verdictLine": "drift-gate selftest: verdict=PASS cases=5 不符合=0 归档=D:\\project\\1107\\out\\drift-selftest-20261117-110419",
+    "exitCode": 0,
+    "cases": 5,
+    "failed": 0
+  },
+  "innerRun": {
+    "dir": "out/drift-selftest-20261117-110421",
+    "labelsPresent": [
+      "fixture-green",
+      "fixture-injected",
+      "green",
+      "injected",
+      "restored"
+    ],
+    "s5Behaviour": "[SKIP] 深度守卫生效，未再派生"
+  },
+  "rawStdout": [
+    "drift-gate selftest: run 目录 D:\\project\\1107\\out\\drift-selftest-20261117-110419（每次新目录，遵守 ADR 0004）",
+    "  [PASS] S1 绿基线         期望: exit 0 + self: passed + 0 违规       实得: reached=True exit=0 passed字样=True newViolations=0",
+    "  [PASS] S2 注入必红        期望: exit 1 + 报告含该反向边                   实得: reached=True exit=1 failed字样=True 命中该边=1 newViolations=2",
+    "      伴生违规构成（供核，不作断言）: reverseEdge,cycle",
+    "  [PASS] S3 脚本聚合判红      期望: 脚本级 drift gate: FAILED + exit 1    实得: 脚本级判红字样=True exit=1",
+    "  [PASS] S4 复原回绿        期望: exit 0 + 基线 SHA256 未变              实得: reached=True exit=0 passed字样=True newViolations=0 基线未变=True",
+    "  [PASS] S5 掏空状态映射须变红   期望: 内层 exit 1 + 抓到 S2 + 深度守卫生效         实得: 内层exit=1 抓到S2=True 深度守卫=True",
+    "  临时脚本副本: 计划 4 个, 残留 0 个",
+    "drift-gate selftest: verdict=PASS cases=5 不符合=0 归档=D:\\project\\1107\\out\\drift-selftest-20261117-110419",
+    ""
+  ],
+  "boundaries": [
+    "本文件是归档动作的载体；原始产物仍在被 gitignore 的 out/ 下，文件名见上，日后无法用 out/ 复核时以本文件内嵌 rawStdout 为准。",
+    "只覆盖 self 目标，corpus 分支无负控。",
+    "CI 中该步骤条件为 always() && steps.plan.outputs.required == true，gate 未触发的推送上不跑。",
+    "未验证：本负控从未在 GitHub runner 上执行；build/drift job 的 runner 历史未取证。",
+    "同秒重跑会复用同一 out/drift-selftest-<runId>/，故引用读数应以本文件 rawStdout 为准，而非目录文件计数。",
+    "完整残余边界见 docs/acceptance-gaps.md §8 第 20 条。"
+  ]
+}
