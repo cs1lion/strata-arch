@@ -427,10 +427,11 @@ function Get-LabelExtent {
     return Get-ColorExtent $Img $Thresholds.SearchLabelX0 $Thresholds.SearchLabelY0 1.0 1.0
 }
 
-# 逐态稳定度量（票 24 阶段 3 · R3；用户裁决「未稳定判红」）。
-# 同一状态一次捕获里的前两帧应当完全一致：比较原始计数、达标行数（空间连贯性）与最长单行命中。
-# 任一不等 ⇒ 该态在抓帧时还没收敛，它的读数不能用于任何判据；此时判红而不是继续比较阈值，
-# 因为「红」将同时可能来自产品行为、动画残帧与采样时机，无法归因。
+# 逐态稳定度量（票 24 阶段 3 · R3）。同一状态的**最后两个有效帧**必须一致：
+# 键控态（results/noMatch/focus/clear）用 `-KeysAfterFrame 1`，其第 1 帧是「输入前」，
+# 只有第 2、3 帧同属「输入后」，因此比较取 Valid[-2] 与 Valid[-1]，而不是前两帧。
+# 任一不等 ⇒ 该态尚未收敛，其读数不得用于任何判据：此时判红（用户裁决），因为继续比阈值
+# 得到的红/绿同时可能来自产品行为、动画残帧或采样时机，无法归因。
 function Get-PanelFrameStability {
     param([string]$Name, [object]$Sel)
     $valid = @($Sel.Valid)
@@ -440,8 +441,8 @@ function Get-PanelFrameStability {
             detail = ("{0}: 有效帧 {1} 不足 2，无法证明稳定" -f $Name, $valid.Count)
         }
     }
-    $m1 = Get-PanelExtent $valid[0].Img
-    $m2 = Get-PanelExtent $valid[1].Img
+    $m1 = Get-PanelExtent $valid[-2].Img
+    $m2 = Get-PanelExtent $valid[-1].Img
     $ok = ($m1[2] -eq $m2[2]) -and ($m1[3] -eq $m2[3]) -and ($m1[4] -eq $m2[4])
     return [pscustomobject]@{
         name = $Name; ok = $ok
@@ -786,25 +787,25 @@ Write-Output "== state: search =="
 $searchArgs = @("map", "tests/corpus/excalidraw", "--no-reveal", "--auto-close-ms", "15000")
 
 $searchOffStdout = Invoke-Capture -Name "search-off" -AppArgs $searchArgs `
-    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 3 -IntervalMs 200
 $searchResultsStdout = Invoke-Capture -Name "search-results" -AppArgs $searchArgs `
-    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 3 -IntervalMs 200 `
     -KeysAfterFrame 1 -Keys '/src' -KeysSettleMs 400
 $searchNoMatchStdout = Invoke-Capture -Name "search-nomatch" -AppArgs $searchArgs `
-    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 3 -IntervalMs 200 `
     -KeysAfterFrame 1 -Keys '/zzzz' -KeysSettleMs 400
 $searchFocusStdout = Invoke-Capture -Name "search-focus" -AppArgs $searchArgs `
-    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 3 -IntervalMs 200 `
     -KeysAfterFrame 1 -Keys '/src{ENTER}' -KeysSettleMs 900
 $searchClearStdout = Invoke-Capture -Name "search-clear" -AppArgs $searchArgs `
-    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 2 -IntervalMs 200 `
+    -Marker "phase: content:presented" -WarmupMs 500 -SettleMs 300 -Frames 3 -IntervalMs 200 `
     -KeysAfterFrame 1 -Keys '/src{ENTER}{ESC}' -KeysSettleMs 900
 
-$offSel = Select-Frames -Name "search-off" -Indices @(1, 2)
-$resSel = Select-Frames -Name "search-results" -Indices @(1, 2)
-$noMatchSel = Select-Frames -Name "search-nomatch" -Indices @(1, 2)
-$focusSel = Select-Frames -Name "search-focus" -Indices @(1, 2)
-$clearSel = Select-Frames -Name "search-clear" -Indices @(1, 2)
+$offSel = Select-Frames -Name "search-off" -Indices @(1, 2, 3)
+$resSel = Select-Frames -Name "search-results" -Indices @(1, 2, 3)
+$noMatchSel = Select-Frames -Name "search-nomatch" -Indices @(1, 2, 3)
+$focusSel = Select-Frames -Name "search-focus" -Indices @(1, 2, 3)
+$clearSel = Select-Frames -Name "search-clear" -Indices @(1, 2, 3)
 $report.blankFrames.searchOff = $offSel.Blank
 $report.blankFrames.searchResults = $resSel.Blank
 $report.blankFrames.searchNoMatch = $noMatchSel.Blank
@@ -829,13 +830,18 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
     Add-Assertion "search-frames-valid" "五个搜索状态各至少一帧有效" `
         ("off={0} res={1} nomatch={2} focus={3} clear={4}" -f ($offSel.Blank -join ','), ($resSel.Blank -join ','), ($noMatchSel.Blank -join ','), ($focusSel.Blank -join ','), ($clearSel.Blank -join ',')) $false
 } else {
-    $offImg = $offSel.Valid[0].Img
+    # 取帧统一到 Valid[-1]（最后一个有效帧）。此前 off 取 Valid[0] 而其余取 Valid[-1]，
+    # 两侧稳定条件不对称；实测 off 三帧逐字节相同（PNG 大小一致、total/gatedRows/maxRowHits 相同），
+    # 故该统一对 off 的读数无观测影响。键控态的 Valid[-1] 现为第 3 帧（输入后），
+    # 与旧的 Valid[-1]=第 2 帧相比是**更晚的输入后帧**，属本笔刻意的语义变更。
+    $offImg = $offSel.Valid[-1].Img
     $resImg = $resSel.Valid[-1].Img
     $noMatchImg = $noMatchSel.Valid[-1].Img
     $focusImg = $focusSel.Valid[-1].Img
     $clearImg = $clearSel.Valid[-1].Img
 
-    # 背景色块：@(首行, 末行, 总像素)
+    # 背景色块：@(首个达标行, 末个达标行, 原始匹配像素总数, 达标行数, 最长单行命中数)
+    # 第 3 位是历史口径（未过滤）；第 4/5 位为笔 A 新加的空间连贯性度量，本笔起用于面板判据。
     $offPanel = Get-PanelExtent $offImg
     $resPanel = Get-PanelExtent $resImg
     $noMatchPanel = Get-PanelExtent $noMatchImg
@@ -847,7 +853,7 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
     $focusLabelText = Get-LabelText $focusImg
 
     $report.states.search = [ordered]@{
-        offFrame = $offSel.Valid[0].Index
+        offFrame = $offSel.Valid[-1].Index
         resultsFrame = $resSel.Valid[-1].Index
         noMatchFrame = $noMatchSel.Valid[-1].Index
         focusFrame = $focusSel.Valid[-1].Index
@@ -879,15 +885,51 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
     Add-Assertion "search-results-list-taller" ("有结果面板底边比无匹配低 >= {0}px" -f $Thresholds.SearchPanelRowsMinHeightDiff) `
         ("resultsBottom={0} nomatchBottom={1} diff={2}" -f $resPanel[1], $noMatchPanel[1], ($resPanel[1] - $noMatchPanel[1])) `
         (($resPanel[1] - $noMatchPanel[1]) -ge $Thresholds.SearchPanelRowsMinHeightDiff)
-    Add-Assertion "search-focus-closes-panel" ("聚焦态左上角面板底色像素 <= {0}" -f $Thresholds.SearchClearedMaxBgPixels) `
-        ("focus={0}" -f $focusPanel[2]) `
-        ($focusPanel[2] -le $Thresholds.SearchClearedMaxBgPixels)
+    # R3 逐态稳定度量：五态各取「输入后」的最后两个有效帧比较 total / 达标行数 / 最长单行命中。
+    # 键控态的第 1 帧是「输入前」，故不能用前两帧比（笔 A 初版那样做会误报 3 个「未稳定」，
+    # 属自造假红）；本笔把每态多捕一帧（-Frames 3）后才具备同条件帧对。
+    # 稳定性在这里是**判据的先决条件**：某态未稳定 ⇒ 该态的面板判据直接判不通过，
+    # 而不是拿一个没收敛的读数去比阈值——否则红绿都无法归因。
+    $settled = @()
+    $settled += Get-PanelFrameStability -Name "off" -Sel $offSel
+    $settled += Get-PanelFrameStability -Name "results" -Sel $resSel
+    $settled += Get-PanelFrameStability -Name "noMatch" -Sel $noMatchSel
+    $settled += Get-PanelFrameStability -Name "focus" -Sel $focusSel
+    $settled += Get-PanelFrameStability -Name "clear" -Sel $clearSel
+    $settledOk = @{}
+    foreach ($s in $settled) { $settledOk[$s.name] = [bool]$s.ok }
+    $unstableNames = @($settled | Where-Object { -not $_.ok } | ForEach-Object { $_.name })
+    Add-Assertion "search-states-settled" "五个搜索态输入后两帧的 total/达标行数/最长行命中必须一致" `
+        ((@($settled | ForEach-Object { $_.detail })) -join " | ") ($unstableNames.Count -eq 0)
+    if ($unstableNames.Count -gt 0) {
+        Write-Output ("  未稳定的搜索态: {0}（这些态的面板判据按未通过处理，不得据其读数下结论）" -f `
+            (($unstableNames) -join ', '))
+    }
+
+    # R2 同运行地板：关闭态的连贯行数必须为 0。这是下面两条判据的参照，也是「本机存在
+    # 散点同色像素」这一事实的显式化——实测 off 恒为 total 110 / gatedRows 0 / maxRowHits 5，
+    # 那 110 个像素是场景内容里的散点（只占其 bbox 的 0.05%），不是面板。
+    Add-Assertion "search-off-panel-floor-zero" "关闭态连贯行数必须为 0（作为同运行地板，且该态须已稳定）" `
+        ("offGatedRows={0} offTotal={1} offMaxRowHits={2} settled={3}" -f $offPanel[3], $offPanel[2], $offPanel[4], $settledOk['off']) `
+        (($offPanel[3] -eq 0) -and $settledOk['off'])
+    # R1 判据语义重写（本笔的期望值变更）：面板是否存在改由**空间连贯性**判定——
+    # `达标行数 == 0` 即「面板已关闭」。零新增常数：门控宽度沿用既有 SearchPanelMinRowWidth=50，
+    # 未做任何拟合。分离度实测为 2 个数量级（关闭态 0 行 / maxRowHits 5，展开态 159 行 / 776），
+    # 判据落在结构性分界 `>0` 上。旧的「绝对像素 ≤100」在本机结构性不可满足（散点地板 110）。
+    Add-Assertion "search-focus-closes-panel" "聚焦态左上角连贯面板行数必须为 0（面板已关闭，且该态须已稳定）" `
+        ("focusGatedRows={0} focusTotal={1} focusMaxRowHits={2} settled={3} | 地板 offGatedRows={4}" -f `
+            $focusPanel[3], $focusPanel[2], $focusPanel[4], $settledOk['focus'], $offPanel[3]) `
+        (($focusPanel[3] -eq 0) -and $settledOk['focus'])
     Add-Assertion "search-focus-label-visible" ("聚焦态右下角标签底色 >= {0} 且正文白 >= {1}" -f $Thresholds.SearchLabelBgMinPixels, $Thresholds.SearchLabelMinTextPixels) `
         ("bg={0} text={1} rows={2}-{3}" -f $focusLabel[2], $focusLabelText, $focusLabel[0], $focusLabel[1]) `
         ($focusLabel[2] -ge $Thresholds.SearchLabelBgMinPixels -and $focusLabelText -ge $Thresholds.SearchLabelMinTextPixels)
-    Add-Assertion "search-clear-removes-panel-and-label" ("清除后面板/标签底色 <= {0}，且与基线一致" -f $Thresholds.SearchClearedMaxBgPixels) `
-        ("panel={0} label={1} offLabel={2}" -f $clearPanel[2], $clearLabel[2], $offLabel[2]) `
-        ($clearPanel[2] -le $Thresholds.SearchClearedMaxBgPixels -and $clearLabel[2] -le $Thresholds.SearchClearedMaxBgPixels)
+    # 清除态：面板改用连贯行数判定（同上 R1）；标签区保持原绝对像素上限——其实测地板
+    # offLabel=51 与清除后 label=51 均远低于 100，判据可满足，不存在面板区那种「地板高于上限」
+    # 的结构性问题，故本笔不扩大改动面。
+    Add-Assertion "search-clear-removes-panel-and-label" ("清除后连贯面板行数必须为 0，且标签底色 <= {0} 与基线一致（该态须已稳定）" -f $Thresholds.SearchClearedMaxBgPixels) `
+        ("panelGatedRows={0} panelTotal={1} label={2} offLabel={3} offGatedRows={4} settled={5}" -f `
+            $clearPanel[3], $clearPanel[2], $clearLabel[2], $offLabel[2], $offPanel[3], $settledOk['clear']) `
+        (($clearPanel[3] -eq 0) -and ($clearLabel[2] -le $Thresholds.SearchClearedMaxBgPixels) -and $settledOk['clear'])
     Add-Assertion "search-focus-marker" "stdout 出现 phase: search:focus" $(if ($focusOut.Contains("phase: search:focus")) { "seen" } else { "missing" }) ($focusOut.Contains("phase: search:focus"))
     Add-Assertion "search-clear-marker" "stdout 出现 phase: search:focus 与 phase: search:clear" `
         ("focus={0} clear={1}" -f $focusOut.Contains("phase: search:focus"), $clearOut.Contains("phase: search:clear")) `
@@ -896,31 +938,23 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
     $focusSummary = ($focusOut -split "`n" | Select-String "search:label module=" | ForEach-Object { $_.Line } | Select-Object -First 1)
     Add-Assertion "search-focus-stdout-counts" "聚焦态 stdout 给出 module 与 upstream/downstream 计数" $(if ($focusSummary) { $focusSummary.Trim() } else { "missing" }) ([bool]$focusSummary)
 
-    # R3 逐态稳定断言（收敛版）。为什么只覆盖 off：results/noMatch/focus/clear 四态都用
-    # `-KeysAfterFrame 1`，即第 1 帧是「输入前」、第 2 帧是「输入后」——两帧本就对应不同产品状态，
-    # 拿它们比稳定是伪命题（初版正是这样误报了 3 个「未稳定」，属自造假红）。
-    # 只有 off 无按键注入，其两帧同条件，可比。四个键控态的稳定验证需要每态多捕一帧
-    # （-Frames 3），但那会让 Valid[-1] 换帧、改变现有 24 条判据的读数 ⇒ 归笔 B 处理，此处如实登记缺口。
-    $settled = @(Get-PanelFrameStability -Name "off" -Sel $offSel)
-    $unstable = @($settled | Where-Object { -not $_.ok })
-    Add-Assertion "search-off-settled" "关闭态同条件两帧的 total/达标行数/最长行命中必须一致" `
-        ((@($settled | ForEach-Object { $_.detail })) -join " | ") ($unstable.Count -eq 0)
-    if ($unstable.Count -gt 0) {
-        Write-Output ("  关闭态未稳定: {0}（其读数不得用于任何判据）" -f `
-            ((@($unstable | ForEach-Object { $_.name })) -join ', '))
-    }
-    Write-Output "  稳定验证缺口: results/noMatch/focus/clear 每态仅 2 帧且键在帧 1 后注入，无同条件帧对可比；需 -Frames 3（会换 Valid[-1]，属笔 B）"
     # 把新度量写进产物，使「散点 vs 连贯面板」日后无需外部探针即可复核（此前该分析只在一次性
     # 离线探针里做过，PNG 又被 gitignore，属已登记的证据耐久性缺口）。
     $report.states.search.panelGatedRowsOff = $offPanel[3]
     $report.states.search.panelGatedRowsFocus = $focusPanel[3]
     $report.states.search.panelGatedRowsResults = $resPanel[3]
+    $report.states.search.panelGatedRowsNoMatch = $noMatchPanel[3]
+    $report.states.search.panelGatedRowsClear = $clearPanel[3]
     $report.states.search.panelMaxRowHitsOff = $offPanel[4]
     $report.states.search.panelMaxRowHitsFocus = $focusPanel[4]
     $report.states.search.panelMaxRowHitsResults = $resPanel[4]
+    $report.states.search.panelMaxRowHitsClear = $clearPanel[4]
     $report.states.search.settledFrames = @($settled | ForEach-Object {
         [ordered]@{ name = $_.name; ok = $_.ok; detail = $_.detail } })
-    $report.states.search.settledGap = 'results/noMatch/focus/clear 每态仅 2 帧且键在帧 1 后注入，无同条件帧对可做稳定验证；需 -Frames 3，但会改变 Valid[-1] 取帧即影响既有判据，故留待笔 B'
+    # 稳定验证已覆盖五个搜索态（本笔以 -Frames 3 补出同条件帧对，原缺口关闭）：
+    # off 的三帧同为「输入前」，四个键控态取输入后的第 2、3 帧为同条件对。
+    $report.states.search.settledPairs = 'off=帧2/3（无按键）；results/noMatch/focus/clear=输入后的帧2/3，帧1 是输入前故不参与比较'
+    $report.states.search.panelCriterionBasis = '面板存在性以「达标行数(gatedRows)」判定：0=已关闭，>0=存在连贯面板；门控宽度沿用 SearchPanelMinRowWidth=50，无新增常数'
 }
 
 # ---- 汇总 ------------------------------------------------------------------
