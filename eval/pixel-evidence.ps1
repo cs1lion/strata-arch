@@ -12,6 +12,9 @@
 #   pwsh -File eval/pixel-evidence.ps1
 #
 # 产物（全部在 out/pixel-evidence/，被 .gitignore 排除）：
+#   自票 24 起，默认落点为 out/pixel-evidence/<git-sha>/<timestamp>/——一次运行一个新目录（ADR 0004
+#   run 不可变）。显式传入的 -OutDir 若已含 report.json，脚本拒绝运行并以退出码 2 结束，不覆盖历史读数。
+#   退出码：0 = 全部断言通过；1 = 有断言失败（读数报警）；2 = 先决不满足（此处为拒绝覆盖已有读数）。
 #   loading-f01..f03.png / failure-f01..f03.png / diff-f01..f02.png /
 #   p1-off-f01..f02.png / p1-on-f01..f03.png / p3-f01..f05.png / p3-static-f01..f02.png
 #   *.stdout.txt（抓取时刻的 arch-view stdout 快照）
@@ -23,7 +26,9 @@
 [CmdletBinding()]
 param(
     [string]$Exe = "target/release/arch-view.exe",
-    [string]$OutDir = "out/pixel-evidence",
+    # 票 24 对齐 ADR 0004「run 不可变」：默认留空，由下方解析为 out/pixel-evidence/<git-sha>/<timestamp>/，
+    # 每次运行一个新目录。显式传入 -OutDir 仍被尊重，但若其中已有 report.json 则拒绝覆盖（退出码 2）。
+    [string]$OutDir = "",
     [int]$TimeoutSeconds = 30
 )
 
@@ -109,6 +114,36 @@ $centerY0 = 0.25; $centerY1 = 0.75
 
 # ---- 像素工具（PowerShell 负责解码，C# 只处理 byte[]）----------------------
 Add-Type -AssemblyName System.Drawing
+
+# ---- 票 24：run 不可变（ADR 0004）——一次运行一个新目录，重跑永不覆盖已有读数 ----
+# 约定来源：docs/process/eval-harness.md §3 的 <git-sha>/<timestamp> 分级（原文注明同样约束仓内 out/**）。
+# 时间戳格式沿用 eval/ab-skip-selftest.ps1 与 eval/drift-gate.ps1 已有的 runId 方言，不另造格式。
+# 本块必须放在任何写盘之前：脚本在下方会创建 $OutDir 与 fixtures 目录并逐态落 PNG。
+$runDirOrigin = ''
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+    $sha = ''
+    try { $sha = (& git -C $root rev-parse --short HEAD | Out-String).Trim() } catch { $sha = '' }
+    if (-not $sha) { $sha = 'nosha' }
+    $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $candidate = "out/pixel-evidence/$sha/$runId"
+    # 同一秒内的重复运行（例如并行调用）用 -2/-3 递增后缀避让，永不落到同一目录。
+    $suffix = 2
+    while (Test-Path -LiteralPath (Join-Path $candidate 'report.json')) {
+        $candidate = "out/pixel-evidence/$sha/$runId-$suffix"
+        $suffix++
+    }
+    $OutDir = $candidate
+    $runDirOrigin = '自动生成（ADR 0004）'
+} else {
+    # 显式目录仍被尊重，但绝不覆盖已有读数——这是 ADR 0004 对本脚本的实质约束点。
+    if (Test-Path -LiteralPath (Join-Path $OutDir 'report.json')) {
+        Write-Output "拒绝覆盖：目标目录已存在上一次读数（$OutDir/report.json）。"
+        Write-Output "请省略 -OutDir 以自动新建运行目录，或改用一个尚未产生读数的目录。"
+        exit 2
+    }
+    $runDirOrigin = '显式指定（该目录尚无读数）'
+}
+Write-Output "run dir（一次运行一个新目录）= $OutDir  [$runDirOrigin]"
 
 if (-not ("MaskStats" -as [type])) {
     Add-Type -TypeDefinition @'
