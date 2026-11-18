@@ -109,3 +109,12 @@ headless 复现 `layout_map` 坐标（`LayoutConfig::default()`：`width=1200`�
 ### 6.3 本笔验证过程中的一次自我纠错（必须留档）
 
 最初两次抓屏的 PNG **字节完全相同**，看似"改动无效果"，实为**我手里没有含改动的 release 二进制**：提交 `2c8f830` 后只跑过 dev 编译；而 `cargo build --release` 因产物 mtime 比源文件新，被 cargo 判定 fresh 直接跳过重编译（`cargo clean -p arch-view -p arch-core` 之后仍 `Finished in 0.70s` 且哈希不变），加上我此前把 `--target-dir` 与临时快照共用，进一步掩盖了问题。发现靠**比对两份 exe 的 SHA256**（而非信任"Finished"字样），随后 touch 源文件强制真编译（14.15s、哈希由 `87605C90` 变 `D2D09E12`）才得到有效对照。代价：两次抓屏作废。固化规则：**任何"改动前 vs 改动后"的抓屏/帧时对照，必须先证明两侧二进制哈希不同**，再看读数。
+
+### 6.4 三条待裁决路径的落地结果（2026-11-18 追加，选项 ①）
+
+用户裁决采用 **①判据相对化**，明确排除 ②（回退线宽＝为通过而调渲染参数）与 ③（留红挂账）。落地分三笔，本票只记录归属，判据依据与证明全部写在**票 28**：
+
+- `cc00e9a`（`eval:`）：标签腿 `($clearLabel[2] -le 100)` → `([Math]::Abs($clearLabel[2] - $offLabel[2]) -le SearchClearedMaxBgDelta)`，新常数 `SearchClearedMaxBgDelta = 10`；面板强腿 `($clearPanel[3] -eq 0)` 原样保留；按用户勾选追加 `settledOk['off']` 先决；本票 §6.2 的读数未被改写。
+- `9df0345`（`eval(registry)`，A 口径 156 → 158）：`pe-thr-clearedmax` 就地改写为 `pe-thr-clearedmaxdelta`（前提消失的守护若不改写会永久红），新增 `pe-crit-clear-relative`（expect 2）、`pe-crit-clear-offsettled`（expect 1）。
+- 验证按用户要求**本轮未抓屏**：改为离线重放 S1–S4（既有帧，正差 0、卡标签 33050、基线异常 33050、面板未关 `gatedRows=159` 时相对腿仍为 True ⇒ 两腿独立）+ 守护掏空反证 S5（失败项恰为 `pe-crit-clear-relative`）。⇒ **本票 §6.2 那条红在本机仍未被重新观测为绿**：判据形式已改，端到端 27 条全过的读数待一次授权抓屏才成立；在此之前，"票 27 的连带面已闭环"这句话不成立，只能说"处置方案已落地、待复测"。
+- 未动的部分：本票的渲染改动（`EDGE_PLAIN_OPACITY = 0.35`、弱边 `0.95px`、`STRATA_SHOW_CONTEXT_EDGES`）一字未回退。
