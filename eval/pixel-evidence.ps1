@@ -100,7 +100,14 @@ $Thresholds = [ordered]@{
     # 标签内正文白像素；集合外模块已淡到 0.68（白字混合后亮度约 160），不计入近白；取 300。
     SearchLabelMinTextPixels = 300
     # 清除后 / 无面板时的背景色容差上限（允许抗锯齿残留）。
-    SearchClearedMaxBgPixels = 100
+    # 票 28（选项 1）：清除态标签判据改为「与同 run off 基线的相对差」。依据（实测，非估计）：
+    # 正常清除后 clear − off = 0（out/edge-before 为 51−51，out/edge-after2 为 151−151），
+    # 而标签真实存在时的规模 labelBgFocus = 33201 ⇒ 容差 10 与缺陷尺度相差约 3300 倍；
+    # 即便 5% 泄漏（约 1660px）也仍远超 10。容差取 10（用户勾选 S1）而非更大值，因实测余量为 0。
+    # 旧的绝对上限 100 被票 27 撑破的原因：它约束的是「标签底色 + 场景散点」计数，散点数随弱边
+    # 可见度改动漂移（51 → 151），与「标签是否残留」无关——同 run 的 panelGatedRows=0 与
+    # settled=True 已证明面板确已关闭，坏的是判据形式（绝对上限）而非数值。
+    SearchClearedMaxBgDelta = 10
 
     # 搜索区域口径。
     SearchPanelX1 = 0.30
@@ -1059,10 +1066,15 @@ if ($offSel.Valid.Count -eq 0 -or $resSel.Valid.Count -eq 0 -or $noMatchSel.Vali
     # 清除态：面板改用连贯行数判定（同上 R1）；标签区保持原绝对像素上限——其实测地板
     # offLabel=51 与清除后 label=51 均远低于 100，判据可满足，不存在面板区那种「地板高于上限」
     # 的结构性问题，故本笔不扩大改动面。
-    Add-Assertion "search-clear-removes-panel-and-label" ("清除后连贯面板行数必须为 0，且标签底色 <= {0} 与基线一致（该态须已稳定）" -f $Thresholds.SearchClearedMaxBgPixels) `
-        ("panelGatedRows={0} panelTotal={1} label={2} offLabel={3} offGatedRows={4} settled={5}" -f `
-            $clearPanel[3], $clearPanel[2], $clearLabel[2], $offLabel[2], $offPanel[3], $settledOk['clear']) `
-        (($clearPanel[3] -eq 0) -and ($clearLabel[2] -le $Thresholds.SearchClearedMaxBgPixels) -and $settledOk['clear'])
+    # 【更正（票 28，2026-11-18，S2 乙方案：原文保留不删）】上面这三行结论已被实测证伪：
+    # 票 27 落地弱边降级后，out/edge-after2 实测 label=151、offLabel=151（差 0）而绝对上限是 100
+    # ⇒ 标签区同样存在「散点地板可随渲染改动漂移并越过上限」的结构性问题，与面板区同病，
+    # 只是此前未触发。故该腿改为「与同 run off 基线的相对差 <= SearchClearedMaxBgDelta」。
+    # 强腿 panelGatedRows==0 保留不动：它不依赖绝对计数，实测面板打开时为 159 行，与是否相对化无关。
+    Add-Assertion "search-clear-removes-panel-and-label" ("清除后连贯面板行数必须为 0，且标签底色与同 run off 基线之差 <= {0}px，两侧状态均须已稳定" -f $Thresholds.SearchClearedMaxBgDelta) `
+        ("panelGatedRows={0} panelTotal={1} label={2} offLabel={3} labelDelta={4} offGatedRows={5} settled(clear={6},off={7})" -f `
+            $clearPanel[3], $clearPanel[2], $clearLabel[2], $offLabel[2], ([Math]::Abs($clearLabel[2] - $offLabel[2])), $offPanel[3], $settledOk['clear'], $settledOk['off']) `
+        (($clearPanel[3] -eq 0) -and (([Math]::Abs($clearLabel[2] - $offLabel[2])) -le $Thresholds.SearchClearedMaxBgDelta) -and $settledOk['clear'] -and $settledOk['off'])
     Add-Assertion "search-focus-marker" "stdout 出现 phase: search:focus" $(if ($focusOut.Contains("phase: search:focus")) { "seen" } else { "missing" }) ($focusOut.Contains("phase: search:focus"))
     Add-Assertion "search-clear-marker" "stdout 出现 phase: search:focus 与 phase: search:clear" `
         ("focus={0} clear={1}" -f $focusOut.Contains("phase: search:focus"), $clearOut.Contains("phase: search:clear")) `
