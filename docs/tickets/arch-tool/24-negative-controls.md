@@ -562,3 +562,70 @@ map 的实际绘制步 `bg.a *= item.opacity` **无任何 Rust 测试锁定**；
 ### 7. 本轮未验证 / 未做
 
 未逐节点核对 16 模块的层与带归属（用 stdout 聚合值 `external=4, unclassified=12`）；未量化标签/边/绘制顺序各自贡献面积；未实测 A 改到 ≥14 能否把 `changed` 推回 2% 以上；本轮**未动任何文件、未提交、未动 `citations.json`（`expect` 仍 146）**。
+
+## map 绘制步的 α 语义已锁死（闭合第 D 节登记的测试缺口）（2026-11-18 追加；上方原文一字不改）
+
+提交：`ff55716`（`refactor`）、`bce9c90`（`test`）、本笔（`docs`）。批准口径：S1 采纳（T5 停靠守卫）、S2 不并入（另三处同型乘法点本次不动）。
+
+### 1. 为什么必须提取成 lib 纯函数（结构约束，非风格选择）
+
+`main.rs` 属 **binary**，`crates/arch-view/tests/` 的集成测试只能导入 lib ⇒ 不提取就测不到；`playback.rs` 不依赖 gpui（grep 零命中），把 `Hsla` helper 放进去会污染模型层；`arch_view_canvas` 已 `pub mod`、已 `use gpui::Hsla`、已有同族 `pub fn paint_*` ⇒ helper 落此处，`main.rs` 调用之。
+
+### 2. 行为不变的硬验收（这是本笔最关键的一条证据）
+
+同一台机、同一工具，遵守 run 不可变各用新目录：`out/pre-refactor-pe`（改前）与 `out/post-refactor-pe`（改后），两侧逐字比较：
+
+| 项 | 改前 | 改后 |
+| --- | --- | --- |
+| 断言总数 / 通过 / 失败 | 27 / 26 / 1 | **相同** |
+| **27 条断言的 `id=pass` 向量** | — | **逐字相同** |
+| **全部 27 条 `reading`** | — | **逐字相同** |
+| `p1-frames-distinguishable` | `changed=1.520% meanAbs=0.586 maxCell=41.70% hotCells=18 bbox=(36,141)-(2560,1816) settled(off=True,on=True)` | 逐字相同 |
+| `gt0Pct` / `meanMaxDeltaOverGt0` / `changedRatio` | 8.032 / 9.17 / 0.0152 | 三项同值 |
+| 退出码 | 1 | 1 |
+
+⇒ refactor 既未把红洗绿，也未新增任何失败。删除面 `main.rs 7/6`，被删的 6 行正是三组 `let mut X = item.X;` + `X.a *= item.opacity;`（乘法顺序与浮点语义不变，无法靠追加实现）；`arch_view_canvas.rs` 为 `16/0`。
+
+### 3. 新基线（后续以它为准）
+
+`cargo test --workspace`：**246 passed / 0 failed / 3 ignored（39 result 行）→ 250 passed / 0 failed / 4 ignored（40 result 行）**。增量全部来自 `crates/arch-view/tests/fade_alpha_contract.rs`（4 条 active + 1 条 ignored）；既有三条 ignored（arch-core `commit_diff`、`history_prefixes` C 档、`timeline_playback` C 档）**未动**。
+
+### 4. 五条测试与判别性设计
+
+- **T1 `fade_multiplies_not_replaces`（本文件的理由所在）**：`a=0.22` 乘 `0.68` 必须得 `0.1496`，并显式断言结果与 `0.68` 相差 `> 0.1`。
+- T2/T3：分别锁 live 的 `0.68`（上下文）与 `0.25`（p1-off 关闭态实际用的 `NON_PATH_OPACITY`）。
+- T4：淡出只准动 alpha，RGB 与 h/s/l 必须逐字不变（防"顺手在合成处调色"，那会同时改变 P1 像素差的语义）。
+- T5 `salience_parked_guard`（S1 采纳，`#[ignore]` 停靠）：把 A 的量化目标写成可执行断言。
+
+### 5. T5 的诚实定位与它给出的新数值
+
+它**不是常驻守卫**：已用 `--include-ignored` 实跑证明它当前确实失败（退出码 101），故不假装已在守。失败信息由**产品自身的颜色代码路径**（`band_background_palette`、`layer_palette`、gpui 的 `rgb→Hsla→Rgba`）算出：
+
+> 淡出位移 **1.097**，`max abs(fill − base)` = **2.6**，α 差 **0.43**，等价要求 `max abs(fill − base) ≥ 14.0`。
+
+这与本会话早前用独立 PowerShell 重算的 **1.3** 属同一档（量化后都是 **1**）⇒ 对 `m=1` 单档 4.396pp 的解释获得**第二次独立佐证**，且这次用的是被测代码本身而非我的移植实现。A 落地后移除 `#[ignore]`，它即转为常驻守卫。
+
+### 6. 反证（先证能变红，三例均机判一致）
+
+在**两笔均已提交之后**执行（吸取 `git checkout` 抹除未提交实现的教训），每例后立即还原并回读 `bg.a *= opacity;` 命中数：
+
+| 变异 | 预期失败集 | 实测失败集 | 机判 |
+| --- | --- | --- | --- |
+| M1 `a *= opacity` → `a = opacity` | 仅 T1 | 仅 `fade_multiplies_not_replaces` | 一致 |
+| M2 完全不乘 | T1+T2+T3 | 同左三条 | 一致 |
+| M3 乘 α 时顺带改 `bg.s` | 仅 T4 | 仅 `fade_preserves_rgb_channels` | 一致 |
+
+⇒ **M1 实证了 T1 的唯一判别性**：改成替换语义时 T2/T3 恰好仍绿，若无 T1 则此缺陷可无声通过。终态 `4 passed / 0 failed / 1 ignored`、工作树干净、乘法点命中 1。
+（过程留痕：首轮我用 `Compare-Object` 做集合比对，命令自身因管道绑定 null 报错，故用纯字符串等值重跑三例才得到上面的"机判一致"——首轮结果我只当作观察，未当读数。）
+
+### 7. 仍未闭合（本笔不假装做完）
+
+- **同型乘法点还剩三处未锁**：`main.rs` 的 `1885`（双色）、`2569-2573`（层带 fill/border/header）、`3068-3072`（三色）。S2 经批准不并入；它们是 A 落地时可能碰到的地方，届时须补或显式说明不守。
+- T5 处于 ignored ⇒ 当前**没有任何自动检查在守"淡出位移跨过容差"**；只有 A 落地后移除 ignore 才会。
+- `6.0` 是测试常量，注释已声明它镜像 `eval/pixel-evidence.ps1` 的 `ChangeTolerance`、**无自动联动**；那边变更须同步重推（这是一个我主动登记的耦合风险，不是已解决的问题）。
+- 新测试文件本身无 `citations.json` 守护项（本笔按批准未动登记表，`expect` 仍 146）；其保护来自 `cargo test` 门禁本身。
+- off 两帧差 7.153% 的根因**仍未验证**；`-Marker "map:"` 空转门的改严与否**仍未做**（因已证拦不住翻绿）。
+
+### 8. 提交前实测（三笔各自）
+
+`ff55716`：`cargo build -p arch-view` 0、`--release` 0、`fmt --check` 0（rustfmt 要求签名单行化，按其意见执行后复核 diff 仍只含预期两处）、`test 246/0/3`、`clippy` 0。`bce9c90`：`fade_alpha_contract` 4 passed/1 ignored、`test 250/0/4`、`fmt --check` 0、`clippy` 0。本笔：`fmt` 0、`test 250/0/4`、`clippy` 0，`cite-check 146/146`、`ps-param-lint` 0、元测试 0。阈值与判据零改动；不进阶段 C′、不 push。
