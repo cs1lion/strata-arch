@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "kind": "criterion-form-verification",
+  "ticket": 28,
+  "subject": "search-clear 标签腿由绝对上限改为「与同 run off 基线的相对差」（票 27 连带面处置选项①）的落地与端到端复测",
+  "recordedAt": "2026-11-19T07:16:58+08:00",
+  "recordedByCommit": "b500386",
+  "harnessUnderTest": {
+    "script": "eval/pixel-evidence.ps1",
+    "assertionId": "search-clear-removes-panel-and-label",
+    "criterionCommit": "cc00e9a",
+    "registryCommit": "9df0345",
+    "thresholdKeyAdded": "SearchClearedMaxBgDelta",
+    "thresholdValue": 10,
+    "thresholdKeyRetired": "SearchClearedMaxBgPixels",
+    "retiredValue": 100,
+    "oldKeyResidueCount": 0,
+    "strongLegPreserved": "(($clearPanel[3] -eq 0)",
+    "prerequisiteLegAdded": "$settledOk['off']"
+  },
+  "criterionText": {
+    "before": "清除后连贯面板行数必须为 0，且标签底色 <= {0} 与基线一致（该态须已稳定）",
+    "after": "清除后连贯面板行数必须为 0，且标签底色与同 run off 基线之差 <= {0}px，两侧状态均须已稳定",
+    "booleanBefore": "((($clearPanel[3] -eq 0) -and ($clearLabel[2] -le $Thresholds.SearchClearedMaxBgPixels) -and $settledOk['clear']))",
+    "booleanAfter": "((($clearPanel[3] -eq 0) -and (([Math]::Abs($clearLabel[2] - $offLabel[2])) -le $Thresholds.SearchClearedMaxBgDelta) -and $settledOk['clear'] -and $settledOk['off']))"
+  },
+  "basisForThreshold": {
+    "method": "尺度分离 + 实测余量，不做分布拟合",
+    "observedDeltaNormalClear": 0,
+    "observedDeltaStuckLabel": 33050,
+    "labelBgFocusPixels": 33201,
+    "labelBgOffPixels": 151,
+    "ratioDefectOverTolerance": 3305,
+    "fivePercentLeakPixelsApprox": 1660,
+    "note": "两次独立 run 的正常清除差值均为 0（51-51 与 151-151）；标签真实存在时差值 33050，为容差 10 的 3305 倍。绝对上限之所以坏：它把「场景散点计数」（随票 27 由 51 抬到 151）与「标签是否残留」压在同一根轴上，与 151a49c 判定的面板区同病。"
+  },
+  "provenance": {
+    "exeSha256Full": "D2D09E123CC228D7B2854D91FFD2C609E26574EBB73D7A3427755AE99B3D1CC1",
+    "exePathsCompared": ["target/release/arch-view.exe", "out/edge-run/new2/arch-view.exe"],
+    "exePathsHashEqual": true,
+    "rustSourceUnchangedRange": "2c8f830..HEAD",
+    "rustSourceCommitsInRangecount": 0,
+    "rule": "任何前后对照必须先证明两侧二进制哈希相同或不同，不看 cargo 的 Finished 字样（该规则由票 27 §6.3 的作废抓屏固化而来）",
+    "attributionConclusion": "两次 run 用的是字节级同一份二进制，且其间无 Rust 改动 ⇒ 断言由红转绿只能归因于判据形式变化"
+  },
+  "runs": [
+    {
+      "dir": "out/edge-after2",
+      "criterionForm": "old-absolute-cap",
+      "generated": "11/18/2026 22:49:13",
+      "exe": "out/edge-run/new2/arch-view.exe",
+      "total": 27, "passed": 26, "failed": 1,
+      "thresholdUsed": "SearchClearedMaxBgPixels=100",
+      "criterion": "清除后连贯面板行数必须为 0，且标签底色 <= 100 与基线一致（该态须已稳定）",
+      "reading": "panelGatedRows=0 panelTotal=141 label=151 offLabel=151 offGatedRows=0 settled=True",
+      "assertionPass": false,
+      "derivedLabelDelta": 0,
+      "note": "同一读数在新形式下必为绿：panelGatedRows=0 成立、|151-151|=0 <= 10 成立 ⇒ 被撑破的是形式而非事实"
+    },
+    {
+      "dir": "out/opt1-verify",
+      "criterionForm": "new-relative-delta",
+      "generated": "11/19/2026 01:15:15",
+      "exe": "target/release/arch-view.exe",
+      "total": 27, "passed": 27, "failed": 0,
+      "exitCode": 0,
+      "thresholdUsed": "SearchClearedMaxBgDelta=10",
+      "criterion": "清除后连贯面板行数必须为 0，且标签底色与同 run off 基线之差 <= 10px，两侧状态均须已稳定",
+      "reading": "panelGatedRows=0 panelTotal=141 label=151 offLabel=151 labelDelta=0 offGatedRows=0 settled(clear=True,off=True)",
+      "assertionPass": true,
+      "neighbours": {
+        "search-off-panel-floor-zero": "offGatedRows=0 offTotal=141 offMaxRowHits=5 settled=True",
+        "search-focus-closes-panel": "focusGatedRows=0 focusTotal=273 focusMaxRowHits=4 settled=True",
+        "search-focus-label-visible": "bg=33201 text=2028 rows=1766-1834",
+        "search-states-settled": "五态两帧 total/gatedRows/maxRowHits 全等"
+      },
+      "p1Unaffected": "changed=7.893% meanAbs=1.461 maxCell=100.00% hotCells=428 p1-frames-settled 两态 0.000%（上限 0.1%）",
+      "oldFormResidueAssertions": 0,
+      "artifactCounts": { "files": 48, "png": 35 }
+    }
+  ],
+  "sensitivity": {
+    "harness": "离线重放（切已提交脚本的真实度量函数：PixelMetrics C# + Load-Pixels + Get-ColorExtent/Get-PanelExtent/Get-LabelExtent，按行区间取自同一文件，未复制实现）",
+    "harnessExitCode": 0,
+    "fidelitySelfProof": {
+      "description": "重放重算的 6 个读数必须与该 run report.json 记录值逐字相等，否则重放不可用于下结论",
+      "passed": 6, "of": 6,
+      "pairs": { "labelBgClear": 151, "labelBgOff": 151, "labelBgFocus": 33201, "panelGatedRowsClear": 0, "panelGatedRowsOff": 0, "panelGatedRowsResults": 159 }
+    },
+    "cases": [
+      { "id": "S1", "construct": "真实 clear vs 真实 off", "gatedRows": 0, "delta": 0, "verdict": "PASS", "expected": "PASS", "legFired": "none" },
+      { "id": "S2", "construct": "clear 换成 focus 帧（标签卡住）", "gatedRows": 0, "delta": 33050, "verdict": "FAIL", "expected": "FAIL", "legFired": "relative" },
+      { "id": "S3", "construct": "off 换成 focus 帧（基线侧异常）", "gatedRows": 0, "delta": 33050, "verdict": "FAIL", "expected": "FAIL", "legFired": "relative" },
+      { "id": "S4", "construct": "clear 换成 results 帧（面板未关）", "gatedRows": 159, "delta": 0, "verdict": "FAIL", "expected": "FAIL", "legFired": "strong", "note": "此时相对腿仍为 True ⇒ 两腿独立，相对化不削弱「面板没关」的防护" },
+      { "id": "S5", "construct": "掏空布尔式中的相对腿（对已提交文件临时替换为 $true 后跑 cite-check）", "failingGuardId": "pe-crit-clear-relative", "registry": "158 PASS=157 FAIL=1", "afterRestore": "158 PASS=158 FAIL=0", "expected": "仅该守护变红且身份逐字相符", "achieved": true }
+    ]
+  },
+  "frameComparisonAcrossRuns": {
+    "note": "同一二进制、两次独立 run 的 search 第 3 帧哈希前缀对比",
+    "order": ["off", "clear", "focus", "results"],
+    "edgeAfter2": ["0A3E3B6398F0", "01C29A64B24F", "314D28B6C4DD", "BF986013BA43"],
+    "opt1Verify": ["0A3E3B6398F0", "01C29A64B24F", "314D28B6C4DD", "D000AFEF8552"],
+    "identicalCount": 3, "differCount": 1,
+    "measurementsStillEqual": { "off": 141, "results": 50303, "gatedRowsResults": 159 },
+    "conclusion": "帧字节不等 ≠ 读数不等；做前后对照必须比读数而不是比帧哈希",
+    "rootCauseOfResultsFrameBytes": "未查（登记为未验证项）"
+  },
+  "commitChain": [
+    { "sha": "cc00e9a", "layer": "eval", "numstat": "17/5", "hunks": "@@ -103 +103,8 @@ , @@ -1062,4 +1069,9 @@" },
+    { "sha": "9df0345", "layer": "eval(registry)", "numstat": "7/3", "hunks": "@@ -257 +257 @@ , @@ -355,2 +355,6 @@", "registryExpect": "156->158" },
+    { "sha": "53c8335", "layer": "docs", "deletions": 0 },
+    { "sha": "b500386", "layer": "docs", "deletions": 0, "content": "端到端复测结果入档" }
+  ],
+  "transientStateRecorded": {
+    "at": "cc00e9a",
+    "citeCheck": "条目=156 PASS=155 FAIL=1",
+    "failingId": "pe-thr-clearedmax",
+    "metaTestFails": ["C1a", "C3b", "C4"],
+    "clearedBy": "9df0345",
+    "after": "cite-check 158/158 退出码 0；injection-selftest 14 例全 PASS 退出码 0",
+    "note": "分层落笔（判据与登记分两笔）必然造成中间态红；未合并两笔、未 amend"
+  },
+  "corrections": [
+    "草案曾声明删除面为 3 行，实测 numstat 为 5 行（漏算读数格式串与实参两行的改写）；以实测为准。",
+    "首版离线重放把诊断行写在函数内 Write-Output，被 $r = Judge ... 赋值吞成「字符串+布尔」数组 ⇒ 首跑的「4/4 符合预期」失真且逐例结论未打印；改 Write-Host 出诊断、只回传 [bool] 后重跑才有效。首跑数字不得引用。",
+    "两处校验式本身写错造成假告警：对全文件表行用单一列数期望（票 28 的 §2/§4 本就是 4 列表）、以及 Group-Object { $_.Name } 对字符串恒为 $null；改为按连续表块检查列数恒定与按小节序号分组计数。",
+    "给重放脚本加 -Dir 时先用 -replace 打补丁，把 param() 放到非首行且替换串中的 $Dir 被特殊解释，脚本跑坏（缺少帧文件，退出码 1）；整体重写后才有效。该次失败结果未用于任何结论。",
+    "本档 selfChecks 的首次复算脚本把取值函数命名为 RD，与 PowerShell 内置别名 rd（Remove-Item）冲突 ⇒ 调用实际打到 Remove-Item、返回空值；后果是「|label-offLabel| == 记录差值」这一条在空值上算出 0，恰好等于真值 0 而**假 OK**，同时第 [3] 条假 FAILED。重写为具名函数 Extract-Num 并对提取失败判 FAILED 后，才得到 8/8 的有效复算。教训：量具的函数名必须避开内置别名，且任何「相等」判定都必须先证明两侧都取到了数。",
+    "「同一份二进制」原为推定（前缀 D2D09E12 相同），本档已改为全长 64 位十六进制逐字比对实测（见 provenance.exePathsHashEqual）。"
+  ],
+  "boundaries": [
+    "只有 2 次独立 run 支撑 delta=0（edge-after2、opt1-verify），不是分布；若某次渲染改动使 label 与 offLabel 不同向漂移，本判据仍可能假红，届时重评形式而非调数值。",
+    "off 基线帧自身异常（空白帧被判有效）的反例未构造；现仅由 settledOk['off'] 与 search-off-panel-floor-zero 兜住。",
+    "渲染侧 alpha 无自动化覆盖（main.rs 属 binary）；同型乘法点三处未锁；7.153% 的 off 帧漂移根因未查。",
+    "pixel-evidence 属本机人工项，不进 CI；本档只保证文本形态被 cite-check 守护，不保证 CI 会执行它。"
+  ],
+  "selfChecks": {
+    "description": "以下每条都只读本档案自身字段即可复算；复算结果见 machineRecompute",
+    "checks": {
+      "deltaEqualsAbsLabel": "每个 run 的 |label - offLabel| 必须等于其 labelDelta 或 derivedLabelDelta",
+      "passedPlusFailedEqualsTotal": "每个 run 的 passed + failed 必须等于 total",
+      "oldCapBreachedAndNewCapGreen": "旧形式下 label(151) > retiredValue(100) 必须成立，同时新形式下 delta(0) <= thresholdValue(10) 必须成立",
+      "toleranceRatioConsistent": "ratioDefectOverTolerance 必须等于 observedDeltaStuckLabel / thresholdValue",
+      "defectScaleConsistent": "observedDeltaStuckLabel 必须等于 labelBgFocusPixels - labelBgOffPixels",
+      "frameComparisonCounts": "identicalCount + differCount 必须等于 order 数组长度",
+      "oldKeyFullyRetired": "oldKeyResidueCount 必须为 0",
+      "s5Identity": "S5 的 failingGuardId 必须唯一且 afterRestore 回到 158/0"
+    },
+    "machineRecompute": "已实跑复算：8 / 8 条成立，脚本退出码 0（2026-11-19，只读本档案字段，不读 out/** 与 report.json）。每条都做非空校验：数值提取失败即判 FAILED，不允许「取不到数还蒙对」。",
+    "selfChecksPassed": 8,
+    "selfChecksTotal": 8
+  },
+  "verificationOrder": [
+    "先比 exe 全长哈希（provenance.exePathsHashEqual）⇒ 确认两次 run 用的是字节级同一份二进制",
+    "再看 report.json 的 total/passed/failed 与目标断言 reading 逐字 ⇒ 确认端到端 27/27 与 labelDelta=0",
+    "然后跑离线重放（保真自证 6/6 + S1–S4 + S5）⇒ 确认判据能变红且两腿独立",
+    "最后复算本档案自身 8 条 selfChecks ⇒ 确认档案内部数字自洽，不是把外部读数抄一遍了事"
+  ]
+}
