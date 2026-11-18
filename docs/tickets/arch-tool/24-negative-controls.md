@@ -629,3 +629,60 @@ map 的实际绘制步 `bg.a *= item.opacity` **无任何 Rust 测试锁定**；
 ### 8. 提交前实测（三笔各自）
 
 `ff55716`：`cargo build -p arch-view` 0、`--release` 0、`fmt --check` 0（rustfmt 要求签名单行化，按其意见执行后复核 diff 仍只含预期两处）、`test 246/0/3`、`clippy` 0。`bce9c90`：`fade_alpha_contract` 4 passed/1 ignored、`test 250/0/4`、`fmt --check` 0、`clippy` 0。本笔：`fmt` 0、`test 250/0/4`、`clippy` 0，`cite-check 146/146`、`ps-param-lint` 0、元测试 0。阈值与判据零改动；不进阶段 C′、不 push。
+
+## 淡出容差与 fade 测试的登记守护落地（`5d71213`），并由此量化出一个更大的未 pin 缺口（2026-11-18 追加；上方原文一字不改）
+
+### 1. 新增 5 条守护
+
+| id | kind | 钉住什么 |
+| --- | --- | --- |
+| `pe-thr-changetol` | pattern-count | eval 侧 `ChangeTolerance = 6` |
+| `fade-test-file` | file-exists | 测试文件存在 **且** 被 `acceptance-gaps` 引用 |
+| `fade-test-discriminator` | pattern-count | T1 `fade_multiplies_not_replaces` 仍在 |
+| `fade-test-t5-parked` | pattern-count | T5 仍带 ignore 属性（防止未经 A 就被转成常驻守卫） |
+| `fade-test-change-tol-mirror` | pattern-count | Rust 侧 `const CHANGE_TOLERANCE: f32 = 6.0;` |
+
+**`pe-thr-changetol` 是补位**：写入前实测既有登记中 needle 含 `ChangeTolerance` 的条目数为 **0** —— 即 `changed` 读数的直接决定量此前**完全未被 pin**。本次仅 pin 已有字面量，未改任何阈值（`pe-thr-*` 前缀条目数 10 → 11，其余 10 条 needle 未动）。
+
+### 2. 本笔把 T5 的联动保护从「弱」升级为「强」，并实测证明
+
+第 D 节第 7 小项与 §8 第 33 条登记的说法是「`6.0` 镜像 eval 的 `ChangeTolerance`，**无自动联动**」。现在两侧被**同时 pin 到字面量 6**，效果强于运行时比较：
+
+- 任一侧单独漂移 ⇒ 该侧守护红（G1、G5）。
+- **两侧一起漂移**（G6：`6→7` 且 `6.0→7.0`）⇒ **两条守护同时报警**（`PASS=149 FAIL=2`），迫使一次显式的登记表变更。
+- 对照说明：若改成「运行时比较两侧是否相等」，共同漂移反而会**静默通过**。故此处不是"没做联动检查"，而是选了更强的形式。
+- 代码里那句「无自动联动」在**编译期意义上仍成立**，但就保护而言已被本笔超越；注释本身未改（改动它属实现类编辑，另笔待批）。
+
+### 3. 六例破坏反证（全部机判：报警集合与预期集合纯字符串等值比对，且要求无额外报警）
+
+| 例 | 动作 | 报警守护 | 汇总 |
+| --- | --- | --- | --- |
+| G1 | eval 容差 `6 → 7` | 仅 `pe-thr-changetol` | `PASS=150 FAIL=1` |
+| G2 | 测试文件改名 | **4 条同时**（file 报路径不存在；3 条 pattern-count 报文档不存在） | `PASS=147 FAIL=4` |
+| G3 | T1 改名 | 仅 `fade-test-discriminator` | `PASS=150 FAIL=1` |
+| G4 | 去掉 T5 的 ignore | 仅 `fade-test-t5-parked` | `PASS=150 FAIL=1` |
+| G5 | Rust 侧 `6.0 → 5.0` | 仅 `fade-test-change-tol-mirror` | `PASS=150 FAIL=1` |
+| G6 | **双侧共同漂到 7** | `pe-thr-changetol` + `fade-test-change-tol-mirror` | `PASS=149 FAIL=2` |
+
+每例随后立即还原并回读命中数（`eval=1`、`rust=1`、`ignore=1`、文件存在=True）；还原用 `git checkout` 且**目标文件此前均已提交**，符合本票第 3 节固化的规则。终态 `条目=151 PASS=151 FAIL=0 SKIP=0` 退出码 0；`cargo test --workspace` 仍 **250 passed / 0 failed / 4 ignored**（40 result 行）与 `bce9c90` 基线逐字一致。
+
+### 4. A 口径三段与删除面
+
+`expect` `146 → 151`；`rg -c -F` 回读 **151** == `ConvertFrom-Json` 条目 **151**；`cite-check 条目=151 PASS=151` 退出 0。`numstat 12/1`，hunk `@@ -257 +257 @@`（唯一删除即 expect 行）+ `@@ -373,0 +374,11 @@`（5 条纯插入）。
+
+### 5. 由本笔暴露的更大缺口（量化，不含猜测）
+
+按 `$Thresholds` 块逐条与登记表 needle 比对：**阈值项共 27 个，已 pin 11 个，未 pin 16 个**。
+
+未 pin 的 16 个中含 **P1 判据 `hotCells >= 10` 的两个构成参数**：
+
+- `CellSize = 32`（热点单元边长）
+- `HotCellChangedRatio = 0.30`（单元内变化占比门槛）
+
+⇒ 现状下有人把 `CellSize` 改成 64 或把占比改成 0.5，可让 `hotCells` 大幅变动而**无任何守护报警**——这与本笔修掉的 `ChangeTolerance` 漏洞同类，且同样能左右 P1 的判定。其余未 pin 项为 `FrameMin/MaxMeanLuminance`、5 个 loading/text 项、`FailureOrangeMinPixels`、`DiffTintMinPixels/Tolerance`、`P3MinHotCells`、`SearchPanelRowsMinHeightDiff`、`SearchLabelBgMinPixels/MinTextPixels/X0/Y0`。
+
+建议（未擅自执行，属登记表追加需再走 A 口径）：**优先补 pin `CellSize` 与 `HotCellChangedRatio`**（P1 直接依赖），其余按判据重要性分批。
+
+### 6. 本笔未做 / 仍未验证
+
+未动产品代码与任何阈值；未改代码注释那句「无自动联动」；未 pin 上述 16 项；同型乘法点仍剩三处（`1885`、`2569-2573`、`3068-3072`）；T5 仍为 ignored ⇒ "淡出位移跨过容差"仍无常驻检查；off 两帧差 7.153% 根因仍未验证；`-Marker "map:"` 空转门未改。
