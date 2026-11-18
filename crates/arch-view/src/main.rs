@@ -176,6 +176,20 @@ fn env_flag(name: &str, default: bool) -> bool {
     }
 }
 
+// ---- 票 27：边可见度分层 ----
+/// 普通浏览（无路径播放）时全部边的 alpha 上限。原实现为 1.0，使固定语料里 4363 条同色
+/// 高对比灰线叠成雾气（实测 1,802,340 个交叉对、94.5% 的边穿过第三方节点）；0.35 保留可辨
+/// 骨架但去掉雾气主体。
+const EDGE_PLAIN_OPACITY: f32 = 0.35;
+
+/// 播放态是否仍绘制上下文边。默认 false —— 即"只画路径/当前相关边"；
+/// `STRATA_SHOW_CONTEXT_EDGES=1` 恢复旧行为（0.68 全画），供逐边对照与诊断。
+/// 刻意不放进 `RenderTuning`：`for_segment` 为 base/A/B/BA/AB 各写了逐字段字面量，
+/// 新增字段要同时改 5 处并污染票 23 的 A/B 配对测量矩阵。
+fn show_context_edges() -> bool {
+    env_flag("STRATA_SHOW_CONTEXT_EDGES", false)
+}
+
 impl RenderTuning {
     fn from_env() -> Self {
         Self {
@@ -2637,8 +2651,19 @@ impl MapView {
                         );
                     }
                 }
-                let base_opacity =
-                    (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
+                // 票 27：边可见度分层。
+                //  - 播放态（fade_enabled）：默认不画上下文边（0.0），只保留下方 path_edges；
+                //  - 无路径的普通浏览：全部边降到 EDGE_PLAIN_OPACITY；
+                //  - 搜索聚焦态不在此处决定（下面 search_focus 分支保持原样），以免改变票 20 判据语义。
+                let base_opacity = if fade_enabled {
+                    if show_context_edges() {
+                        CONTEXT_OPACITY
+                    } else {
+                        0.0
+                    }
+                } else {
+                    EDGE_PLAIN_OPACITY
+                } * reveal_overall;
                 if !skip.edges {
                     let edges = map
                         .edges
@@ -2657,6 +2682,10 @@ impl MapView {
                                 }
                                 None => base_opacity,
                             };
+                            // 票 27：播放态默认隐藏上下文边 ⇒ 提前剔除，不进入批量路径构建。
+                            if opacity <= f32::EPSILON {
+                                return None;
+                            }
                             Some(EdgeDraw {
                                 from,
                                 to,
@@ -2955,6 +2984,11 @@ impl MapView {
                                 viewport_size,
                                 CULL_MARGIN,
                             )
+                    })
+                    .filter(|edge| {
+                        // 票 27：与模块视图同一策略——播放态默认不画上下文边（非 strong 的 0.68），
+                        // 仍保留 Current/Path（1.0）；开关同上。
+                        !(fade_enabled && !show_context_edges() && !edge.strong)
                     })
                     .map(|edge| EdgeDraw {
                         from: edge.from,

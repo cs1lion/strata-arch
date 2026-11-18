@@ -374,7 +374,8 @@ impl StrataTheme {
         } else if adjusted {
             1.75
         } else {
-            1.25
+            // 票 27：弱边由 1.25px 降到 0.95px；与渲染侧 alpha 0.35 合成后墨量约降至 1/4。
+            0.95
         };
         let width = px(base_w * zoom.clamp(0.65, 1.35));
         (color, width)
