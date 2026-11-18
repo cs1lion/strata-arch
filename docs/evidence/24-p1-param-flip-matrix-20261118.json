@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "kind": "param-flip-matrix",
+  "ticket": "24",
+  "subject": "未 pin 的 CellSize / HotCellChangedRatio 对 P1 判定的翻转能力矩阵（绿→红可达、红→绿不可达）",
+  "recordedAt": "2026-11-18T10:55:44+08:00",
+  "recordedByCommit": "a423fdc",
+  "harnessUnderTest": "eval/pixel-evidence.ps1 @ be1bd89（run 不可变版）；被淡出 α 锁定后的产品代码 ff55716 之后未变",
+  "method": {
+    "design": "固定被测二进制与判据表达式，只临时改 pixel-evidence 的 CellSize / HotCellChangedRatio 两个未 pin 参数；每例从已提交态出发（先 git checkout），跑完即还原",
+    "injectionGuard": "每次注入后都做\"写后回读断言\"：用 rg 从文件读回 CellSize/占比实际值并与意图比对，不符即 throw。加这道断言的直接原因是本组实验的第一版因 String.Replace 静默空转而把 E3 标错（见 corrections），仅靠 report.json 自记录的 thresholds 才发现",
+    "provenance": "每个 run 的 thresholdsUsed 与 exe/generated 均取自该 run 自己的 report.json，不由作者转录",
+    "restoreProof": "实验后 git diff 对 eval/pixel-evidence.ps1 为空；CellSize = 32、HotCellChangedRatio = 0.30、ChangeTolerance = 6、P1MinChangedRatio = 0.02 四行 rg -F 各命中 1；cite-check 条目=153 PASS=153 退出码 0"
+  },
+  "runs": [
+    {
+      "role": "baseline-green",
+      "label": "c99f3cc 基线（CellSize=32、占比=0.30）",
+      "dir": "out/rerun-b1-c99-base",
+      "exe": "out/bisect/arch-view-c99f3cc.exe",
+      "generated": "2026-11-18T10:49:00",
+      "thresholdsUsed": {
+        "CellSize": 32,
+        "HotCellChangedRatio": 0.3,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 27,
+        "failed": 0,
+        "failedIds": []
+      },
+      "p1": {
+        "changedRatioPct": 7.88,
+        "hotCells": 454,
+        "maxCellRatioPct": 100.0,
+        "meanAbs": 1.256,
+        "bbox": "37,142,2560,1816",
+        "gt0Pct": 7.943,
+        "meanMaxDeltaOverGt0": 19.45
+      },
+      "verdict": "GREEN"
+    },
+    {
+      "role": "perturb-c99",
+      "label": "c99f3cc + CellSize=512",
+      "dir": "out/rerun-b2-c99-cell512",
+      "exe": "out/bisect/arch-view-c99f3cc.exe",
+      "generated": "2026-11-18T10:49:50",
+      "thresholdsUsed": {
+        "CellSize": 512,
+        "HotCellChangedRatio": 0.3,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 25,
+        "failed": 2,
+        "failedIds": [
+          "p1-frames-distinguishable",
+          "p3-adjacent-frame-moves"
+        ]
+      },
+      "p1": {
+        "changedRatioPct": 7.89,
+        "hotCells": 2,
+        "maxCellRatioPct": 34.06,
+        "meanAbs": 1.264,
+        "bbox": "37,22,2670,1816",
+        "gt0Pct": 7.95,
+        "meanMaxDeltaOverGt0": 19.53
+      },
+      "verdict": "RED"
+    },
+    {
+      "role": "perturb-c99",
+      "label": "c99f3cc + CellSize=512 + 占比=0.99",
+      "dir": "out/rerun-b3-c99-cell512-r99",
+      "exe": "out/bisect/arch-view-c99f3cc.exe",
+      "generated": "2026-11-18T10:50:38",
+      "thresholdsUsed": {
+        "CellSize": 512,
+        "HotCellChangedRatio": 0.99,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 25,
+        "failed": 2,
+        "failedIds": [
+          "p1-frames-distinguishable",
+          "p3-adjacent-frame-moves"
+        ]
+      },
+      "p1": {
+        "changedRatioPct": 7.88,
+        "hotCells": 0,
+        "maxCellRatioPct": 34.06,
+        "meanAbs": 1.256,
+        "bbox": "37,142,2560,1816",
+        "gt0Pct": 7.943,
+        "meanMaxDeltaOverGt0": 19.45
+      },
+      "verdict": "RED"
+    },
+    {
+      "role": "baseline-red",
+      "label": "HEAD 基线（CellSize=32、占比=0.30）",
+      "dir": "out/post-refactor-pe",
+      "exe": "target/release/arch-view.exe",
+      "generated": "2026-11-18T09:00:33",
+      "thresholdsUsed": {
+        "CellSize": 32,
+        "HotCellChangedRatio": 0.3,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 26,
+        "failed": 1,
+        "failedIds": [
+          "p1-frames-distinguishable"
+        ]
+      },
+      "p1": {
+        "changedRatioPct": 1.52,
+        "hotCells": 18,
+        "maxCellRatioPct": 41.7,
+        "meanAbs": 0.586,
+        "bbox": "36,141,2560,1816",
+        "gt0Pct": 8.032,
+        "meanMaxDeltaOverGt0": 9.17
+      },
+      "verdict": "RED"
+    },
+    {
+      "role": "perturb-head-favorable",
+      "label": "HEAD + CellSize=16 + 占比=0.05（最有利于变绿）",
+      "dir": "out/rerun-b4-head-cell16-r05",
+      "exe": "target/release/arch-view.exe",
+      "generated": "2026-11-18T10:52:05",
+      "thresholdsUsed": {
+        "CellSize": 16,
+        "HotCellChangedRatio": 0.05,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 26,
+        "failed": 1,
+        "failedIds": [
+          "p1-frames-distinguishable"
+        ]
+      },
+      "p1": {
+        "changedRatioPct": 1.52,
+        "hotCells": 1539,
+        "maxCellRatioPct": 69.14,
+        "meanAbs": 0.586,
+        "bbox": "36,141,2560,1816",
+        "gt0Pct": 8.032,
+        "meanMaxDeltaOverGt0": 9.17
+      },
+      "verdict": "RED"
+    },
+    {
+      "role": "perturb-head-favorable",
+      "label": "HEAD + CellSize=8 + 占比=0.01（更极端有利）",
+      "dir": "out/rerun-b5-head-cell8-r01",
+      "exe": "target/release/arch-view.exe",
+      "generated": "2026-11-18T10:52:53",
+      "thresholdsUsed": {
+        "CellSize": 8,
+        "HotCellChangedRatio": 0.01,
+        "ChangeTolerance": 6,
+        "P1MinChangedRatio": 0.02,
+        "P1MinHotCells": 10,
+        "StaticMaxChangedRatio": 0.001
+      },
+      "assertions": {
+        "total": 27,
+        "passed": 26,
+        "failed": 1,
+        "failedIds": [
+          "p1-frames-distinguishable"
+        ]
+      },
+      "p1": {
+        "changedRatioPct": 1.52,
+        "hotCells": 4062,
+        "maxCellRatioPct": 100.0,
+        "meanAbs": 0.586,
+        "bbox": "36,141,2560,1816",
+        "gt0Pct": 8.032,
+        "meanMaxDeltaOverGt0": 9.17
+      },
+      "verdict": "RED"
+    }
+  ],
+  "matrix": {
+    "greenToRedAchieved": true,
+    "greenToRedEvidence": {
+      "baseline": "out/rerun-b1-c99-base",
+      "baselineVerdict": "GREEN",
+      "flippedRuns": [
+        "out/rerun-b2-c99-cell512",
+        "out/rerun-b3-c99-cell512-r99"
+      ]
+    },
+    "redToGreenAchieved": false,
+    "redToGreenEvidence": {
+      "baseline": "out/post-refactor-pe",
+      "baselineVerdict": "RED",
+      "favorableRuns": [
+        "out/rerun-b4-head-cell16-r05",
+        "out/rerun-b5-head-cell8-r01"
+      ],
+      "bestHotCellsReached": 4062.0,
+      "requiredMinHotCells": 10
+    },
+    "changedRatioImmuneToTheseParams": true,
+    "structuralReason": "FrameDiff 的 changed 计数只依赖 changeTolerance；CellSize 与占比只进入 cellChanged/cellTotal 的单元统计。故二者只能左右 hotCells 这一腿，不能抬动 changedRatio 这一腿。",
+    "empiricalConfirmation": "c99f3cc 侧 changed 在各扰动下为 [7.89, 7.88]% 对基线 7.88%；HEAD 侧有利扰动下为 [1.52, 1.52]% 对基线 1.52%，均在 ±0.02pp 内 ⇒ 不变性成立 = True"
+  },
+  "sideEffects": {
+    "alsoTurnedRed": [
+      "p1-frames-distinguishable",
+      "p3-adjacent-frame-moves"
+    ],
+    "note": "在 c99f3cc 的绿→红扰动中，除 p1-frames-distinguishable 外，p3-adjacent-frame-moves 同时报红 ⇒ 未 pin 参数的波及面不止 P1，P3MinHotCells 等参数的 pin 优先级应上调。",
+    "correctedScope": "上一轮曾把 p1-frames-settled 与 static-baseline-noise 也归因于 CellSize；本轮 R2/R3 复跑中二者均保持绿 ⇒ 那两条红是一次真实未停稳的偶然重合，不该记在参数扰动账上（见 corrections）。"
+  },
+  "corrections": [
+    {
+      "item": "E3 的标签与配置不符",
+      "whatWasRegistered": "上一轮（提交 a423fdc）登记 E3 为\"取最有利于变绿的 CellSize=16 + 占比=0.05\"",
+      "actual": "该 run 的 report.json 自记录 CellSize=512、占比=0.99，即实际是「最不利于变绿」的配置。成因：变异辅助函数用 String.Replace 去替换字面量 CellSize = 32，而前一次实验已把文件改成 512，替换静默空转且未报错。",
+      "disposition": "结论方向未被推翻，但\"红→绿不可达\"当时实为推理 + 一次错配实验。本轮以 R4（16/0.05，hotCells 抬到 1539）与 R5（8/0.01，抬到 4062）完成真正的有利侧实测：changed 仍 1.520% ⇒ 仍红。故该结论现由实测支撑。",
+      "guardAdded": "此后每次注入必须做写后回读断言（见 method.injectionGuard）。"
+    },
+    {
+      "item": "E1 的多判据归因过宽",
+      "whatWasRegistered": "上一轮登记 E1 中 p1-frames-settled 与 static-baseline-noise 一并变红，作为\"波及多判据\"的证据之一",
+      "actual": "本轮 R2（同配置 CellSize=512）复跑中 settled 与 static 均为绿 ⇒ 那两条红属抓取未停稳的偶然事件，不应记为参数扰动的必然后果。波及面收窄为：确证受影响的是 p3-adjacent-frame-moves。"
+    },
+    {
+      "item": "旧 E1/E2/E3 产物作废",
+      "actual": "out/flip-e1-*、out/flip-e2-*、out/flip-e3-* 保留在 gitignore 下但不作为本档证据；本档一律取自 out/rerun-b1..b5 与 out/post-refactor-pe，且后者均带注入确认。"
+    }
+  ],
+  "rederive": [
+    "先 git checkout -- eval/pixel-evidence.ps1（保证从已提交态出发）",
+    "把 CellSize / HotCellChangedRatio 改为目标值，并用 rg 读回文件实际值核对（不符即中止）",
+    "pwsh -NoProfile -File eval/pixel-evidence.ps1 -Exe out/bisect/arch-view-c99f3cc.exe -OutDir out/rerun-b2-c99-cell512",
+    "pwsh -NoProfile -File eval/pixel-evidence.ps1 -Exe target/release/arch-view.exe -OutDir out/rerun-b4-head-cell16-r05",
+    "git checkout -- eval/pixel-evidence.ps1 并复跑基线，须与 out/post-refactor-pe 的 pass 向量一致",
+    "读各 run 的 report.json：thresholds 段自记录本次扰动值，states.p1 给出 hotCells 与 changedRatio"
+  ],
+  "boundaries": [
+    "扰动只测了离散端点（512/0.99、16/0.05、8/0.01），未测连续谱，也未测两者的中间组合。",
+    "被测二进制为 out/bisect/ 下的历史构建，位于 gitignore；发布构建不逐位可复现（本档只依赖行为读数）。",
+    "本档证明的是\"翻转能力\"的可达性矩阵，不构成对 A/B 的任何取舍建议；产品裁决仍未决。",
+    "本档不改动任何阈值与判据：所有 run 的 ChangeTolerance、P1MinChangedRatio、P1MinHotCells、StaticMaxChangedRatio 快照均与登记表一致。"
+  ]
+}
