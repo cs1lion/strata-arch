@@ -74,3 +74,29 @@
 - **未验证**：`off` 基线帧若本身异常（如空白帧被判有效），相对差会失真——现仅由 `settledOk['off']` 与 `search-off-panel-floor-zero` 的 `gatedRows==0` 兜住，未构造过"基线帧空白"的实测反例。
 - **未验证**：容差 10 的统计来源不是分布拟合，而是尺度分离 + 实测余量 0；若后续渲染改动使 `label`/`offLabel` 两侧同时漂移且漂移量不同向，本判据可能出现新的假红/假绿，需按同法重评而非调数值。
 - **不做**：不调高绝对上限凑绿、不回退票 27 的线宽（那是"为通过而调渲染参数"）、不删除历史读数与原始理由注释。
+
+---
+
+## 7. 端到端复测结果（2026-11-19 用户授权抓屏；本节为追加，上文 §6 的"端到端未复测"原文保留不删，其结论已被本节推翻）
+
+**取用二进制溯源（先看证据再读结果）**：`cargo build --release --locked -p arch-view` 后 `target/release/arch-view.exe` 的 SHA256 前缀 = `D2D09E12`，与 §2 表中产生那条红的 `out/edge-after2` 所用二进制**同一份**；`git log 2c8f830..HEAD -- crates Cargo.toml Cargo.lock` 为空 ⇒ Rust 源自票 27 落地后一字未变，本批三笔只动 eval 与文档。⇒ 读数的变化只能归因于判据形式本身。（沿用 §"capture-before/after" 教训：不看 `Finished` 字样，只看哈希。）
+
+**抓屏 run**：`pwsh -NoProfile -File eval/pixel-evidence.ps1 -OutDir out/opt1-verify`，退出码 **0**；`report.json` 的 `generated = 11/19/2026 01:15:15`、`exe = target/release/arch-view.exe`、`total/passed/failed = 27/27/0`；产物 48 个文件、其中 35 张 PNG。run 目录为**显式指定**（`out/` 属 gitignore，仓内不可回读，故关键读数逐字抄录如下）。
+
+- 目标断言 `search-clear-removes-panel-and-label`：`pass = True`
+  - criterion 原文：`清除后连贯面板行数必须为 0，且标签底色与同 run off 基线之差 <= 10px，两侧状态均须已稳定`
+  - reading 原文：`panelGatedRows=0 panelTotal=141 label=151 offLabel=151 labelDelta=0 offGatedRows=0 settled(clear=True,off=True)`
+  - ⇒ 用户要求的三项全部实测成立：**`labelDelta = 0`、`panelGatedRows = 0`、`27/27`**。
+- 旧上限形式的残留断言数 = **0**（按 `criterion` 匹配"标签底色 <= 100 / 与基线一致（该态须已稳定）"）。
+- 同 run 相邻断言（未回归）：`search-off-panel-floor-zero`（`offGatedRows=0 offTotal=141` 通过）、`search-focus-closes-panel`（`focusGatedRows=0`）、`search-focus-label-visible`（`bg=33201 text=2028`）、`search-states-settled`（五态 `total/gatedRows/maxRowHits` 两帧全等）。
+- **P1 未被本批改动波及**：`p1-frames-distinguishable` = `changed=7.893% meanAbs=1.461 maxCell=100.00% hotCells=428 settled(off=True,on=True)`，与票 27 落地后同值；`p1-frames-settled` 两态 `0.000%`（上限 0.1%）。
+
+**同 run 用新帧再跑离线重放**（`replay-opt1-s1s4.ps1 -Dir out/opt1-verify`，退出码 0）：保真自证 **6/6 与该 run `report.json` 逐字相等**（151 / 151 / 33201 与 0 / 0 / 159），S1 `delta=0` PASS、S2 与 S3 `delta=33050` 由相对腿 FAIL、S4 `gatedRows=159` 由强腿 FAIL（此时 `delta=0` 仍 True）⇒ 逐例布尔 `[True, True, True, True]`，4/4 符合预期。
+
+**一次意外的可复现性观测（值得留档）**：同一二进制、两次独立 run（`edge-after2` 与 `opt1-verify`）的 search 帧哈希对比 —— `search-off-f03`、`search-clear-f03`、`search-focus-f03` **逐字节相同**，而 `search-results-f03` **不同**；但两侧的被测量完全一致（`off=141`、`results=50303`、`gatedRows=159`）。⇒ 结论：**"帧字节不同"与"读数不同"是两件事**，判据读数量一致时不必因像素哈希变化而重跑；反之若只比哈希会得出与判据无关的结论。此现象的根因（结果列表帧为何不稳定）本轮未查，登记为未验证项。
+
+**仍未闭合（本票最终状态）**：
+- 只有 **2 次**独立 run 支撑 `labelDelta = 0`（`edge-after2`、`opt1-verify`），未做过多次分布；若某次渲染改动使两侧散点**不同向**漂移，本判据仍可能假红，届时按同法重评形式而非调数值。
+- `off` 基线帧自身异常（空白帧被判有效）的反例仍未构造。
+- `search-results-f03` 跨 run 不稳定（字节级）根因未查。
+- README 的 27/28 两行仍未加存在性守护；未建 `docs/evidence` 档案与配套 A 口径登记（超出本批批准范围），关键读数以本节约逐字入档的方式获得仓内可回读性。
