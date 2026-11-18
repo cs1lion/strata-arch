@@ -686,3 +686,53 @@ map 的实际绘制步 `bg.a *= item.opacity` **无任何 Rust 测试锁定**；
 ### 6. 本笔未做 / 仍未验证
 
 未动产品代码与任何阈值；未改代码注释那句「无自动联动」；未 pin 上述 16 项；同型乘法点仍剩三处（`1885`、`2569-2573`、`3068-3072`）；T5 仍为 ignored ⇒ "淡出位移跨过容差"仍无常驻检查；off 两帧差 7.153% 根因仍未验证；`-Marker "map:"` 空转门未改。
+
+## P1 判据的两个构成参数已 pin（`362cf80`），并**收窄上一节一处措辞**（2026-11-18 追加；上方原文一字不改）
+
+### 1. 新增 2 条守护
+
+| id | needle（逐字含四空格缩进） | expect |
+| --- | --- | --- |
+| `pe-thr-cellsize` | `    CellSize = 32` | 1 |
+| `pe-thr-hotcellratio` | `    HotCellChangedRatio = 0.30` | 1 |
+
+写入前实测：两条各命中 1；既有登记中 needle 含 `CellSize` 与含 `HotCellChangedRatio` 的条目数均为 **0** ⇒ 纯补位。`pe-thr-*` 由 11 增至 **13**。未改任何阈值字面量（`32`、`0.30` 原样保留）。
+
+A 口径：`expect 151 → 153`；`rg -c -F` 回读 **153** == JSON 条目 **153**；`cite-check 条目=153 PASS=153 FAIL=0` 退出 0。`numstat 5/1`，唯一删除即 expect 行（`@@ -257 +257 @@`），2 条新条目纯插入（`@@ -375,0 +376,4 @@`）。
+
+### 2. 三例破坏反证（机判一致）
+
+| 例 | 动作 | 报警 |
+| --- | --- | --- |
+| S1 | `CellSize 32 → 64` | 仅 `pe-thr-cellsize` |
+| S2 | `占比 0.30 → 0.50` | 仅 `pe-thr-hotcellratio` |
+| S3 | `占比 0.30 → 0.15` | 仅 `pe-thr-hotcellratio` |
+
+三例各 `PASS=152 FAIL=1`，随后立即 `git checkout` 还原并回读两条 needle 均为 1。（留痕：首次我用 `Join-String` 打印预期集合，该写法无效 ⇒ 等值比对其实没执行，故用显式 `-join` 重跑三例才作数，首轮仅作观察。）
+
+### 3. 漏洞幅度的实测（临时实验，随即还原，不作基线）
+
+| 配置 | hotCells | 判定 |
+| --- | --- | --- |
+| HEAD，`CellSize=32`（基线） | 18 | p1 红 |
+| HEAD，`CellSize=64` | **1** | 仍红（该项本已红） |
+| `c99f3cc`，`CellSize=32`（基线） | 454 | 全绿 |
+| `c99f3cc`，`CellSize=64` | **128**（−71.8%） | **仍 27/27 绿** |
+| `c99f3cc`，`占比=0.90` | **250** | **仍 27/27 绿** |
+
+还原后复跑 HEAD 与基线**逐字一致**（`hotCells=18`、`changed=1.520%`、27 条、26 通过、1 失败、退出码 1）⇒ 实验无残迹。
+
+### 4. 对上一节一处措辞的收窄（原文保留）
+
+上一节第 5 小项写这两个参数"**同样左右 P1 判定**"。实测要求把话说准：
+
+- **成立的部分**：无守护时它们能**大幅拖动判据所消费的读数**（`hotCells` −71.8% ～ −94.4%），从而污染任何以 `hotCells` 为基准的复测与未来标定。
+- **未被证实的部分**：**两次试图无声翻转判定的攻击都失败了** —— `c99f3cc` 在 `CellSize=64` 与 `占比=0.90` 下仍 `27/27` 全绿、退出码 0。
+
+⇒ 准确表述应为"**无声改变读数**"，而非"无声翻转判定"。本笔按纪律以追加方式收窄，不回改上一节原句。
+
+### 5. 剩余未 pin 项（14 个，按判据重要性分批待办）
+
+`FrameMinMeanLuminance`、`FrameMaxMeanLuminance`、`LoadingTextMinPixels`、`LoadingTextMinBands`、`LoadingTextRowMinPixels`、`FailureOrangeMinPixels`、`DiffTintMinPixels`、`DiffTintTolerance`、`P3MinHotCells`、`SearchPanelRowsMinHeightDiff`、`SearchLabelBgMinPixels`、`SearchLabelMinTextPixels`、`SearchLabelX0`、`SearchLabelY0`。
+
+其余未闭合项不变：同型乘法点三处未锁；T5 仍 ignored；`7.153%` 根因未验证；`-Marker "map:"` 未改；产品裁决仍未决。
