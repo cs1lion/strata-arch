@@ -612,3 +612,19 @@ pub fn render_strata_canvas_surface(
         .size_full(),
     )
 }
+
+/// 票 24 D 节：map 实际绘制步的淡出 α 合成。此前 `a *= opacity` 内联在 `main.rs` 的绘制闭包里，
+/// 且无任何测试锁定（`resolve_module_node_style` 的单测锁的是 canvas 路径，map 命令不走它）。
+/// 提为纯函数以锁死「乘法而非替换」语义。
+///
+/// 约束：不得写成 `a = opacity`——压暗态（`a = 0.22`）与播放透明度（`0.68`）叠加必须得
+/// `0.1496`；替换会得 `0.68`，这正是判别性测试 `fade_multiplies_not_replaces` 要咬住的差异。
+pub fn apply_fade_alpha(bg: Hsla, border: Hsla, accent: Hsla, opacity: f32) -> (Hsla, Hsla, Hsla) {
+    let mut bg = bg;
+    bg.a *= opacity;
+    let mut border = border;
+    border.a *= opacity;
+    let mut accent = accent;
+    accent.a *= opacity;
+    (bg, border, accent)
+}

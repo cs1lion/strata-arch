@@ -2854,12 +2854,13 @@ impl MapView {
                             move |bounds, _, window, _| {
                                 use gpui::{quad, size, BorderStyle, Corners, Edges};
                                 for item in &nd {
-                                    let mut bg = item.bg;
-                                    bg.a *= item.opacity;
-                                    let mut border = item.border;
-                                    border.a *= item.opacity;
-                                    let mut accent = item.accent;
-                                    accent.a *= item.opacity;
+                                    let (bg, border, accent) =
+                                        arch_view::arch_view_canvas::apply_fade_alpha(
+                                            item.bg,
+                                            item.border,
+                                            item.accent,
+                                            item.opacity,
+                                        );
                                     let b = gpui::Bounds {
                                         origin: point(
                                             bounds.origin.x + px(item.rect.x),
