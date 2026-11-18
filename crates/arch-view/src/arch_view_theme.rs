@@ -211,8 +211,10 @@ impl StrataTheme {
             self.card_neighbor_bg
         } else {
             let mut tint: Hsla = rgb(palette_hex).into();
-            tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
-            tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+            // 必须与 main.rs 中 live 绘制路径的 tint 参数保持一致，否则 map 命令与 canvas
+            // 渲染路径会给出不同的节点底色（票 24 D 节：淡出可感知需要 fill 与层带底色差 ≥ 14）。
+            tint.s = (tint.s * 0.90).clamp(0.0, 1.0);
+            tint.l = (tint.l * 0.95).clamp(0.22, 0.42);
             tint
         };
         base_bg.a = alpha;

@@ -2809,8 +2809,12 @@ impl MapView {
                     } else {
                         let palette_hex = layer_palette(node.layer, node.is_unclassified);
                         let mut tint: gpui::Hsla = rgb(palette_hex).into();
-                        tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
-                        tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+                        // 淡出可感知的必要条件：填充与所在层带底色的最大通道差 ≥ 14。
+                        // 依据票 24 D 节实测：上下文 α 由 0.25(关闭态) → 0.68(播放态)，位移 = 0.43 ×
+                        // max|fill − base|，必须跨过像素容差 6 才谈得上「上下文退后」被看见。
+                        // 原参数（s×0.65、l×0.55 clamp 0.08..0.18）把主力组合压到 1.3 ⇒ 淡出不可见。
+                        tint.s = (tint.s * 0.90).clamp(0.0, 1.0);
+                        tint.l = (tint.l * 0.95).clamp(0.22, 0.42);
                         tint
                     };
                     let border = if focus == Some(node.id.as_str())

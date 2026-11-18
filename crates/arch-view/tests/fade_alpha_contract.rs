@@ -116,17 +116,11 @@ fn fade_preserves_rgb_channels() {
 /// T5（停靠守卫，S1 采纳）：把票 24 D 节量化出的 A 方案目标写成可执行断言。
 ///
 /// 断言内容：p1-on 与 p1-off 之间，节点填充色的逐像素最大位移必须跨过像素判据的容差，
-/// 位移 = `|CONTEXT_OPACITY − NON_PATH_OPACITY| × max|fill − 层带有效 base|`。
-/// 现状（`99fc678` 之后的暗卡片 palette）主力组合 unclassified-on-unclassified 仅 ≈1.3，
-/// 因此本断言**当前必失败** ⇒ 标 `#[ignore]` 停靠，不作为常驻红。
+/// 位移 = `|CONTEXT_OPACITY − NON_PATH_OPACITY| × max|fill − base|`。
 ///
-/// 使用方式：A（修渲染）落地后移除 `#[ignore]`，它即转为常驻守卫；若届时仍失败，
-/// 说明 palette 修复没真正恢复可感位移。
-///
-/// 注意：`6.0` 镜像 `eval/pixel-evidence.ps1` 的 `ChangeTolerance`（本 Rust 测试与之
-/// 无自动联动）。若那边容差变更，这里必须同步重推，否则断言语义失真。
+/// 状态：淡出参数修复后本断言已通过，故按原计划**移除 `#[ignore]`，转为常驻守卫**——
+/// 今后任何人把节点底色压回近画布色（淡出再次变得不可见）都会在此测试上直接变红。
 #[test]
-#[ignore = "票 24 D 节已知不足：当前 palette 的淡出位移跨不过容差；A（修渲染）落地后移除本 ignore 即转为常驻守卫"]
 fn salience_parked_guard_fade_displacement_exceeds_change_tolerance() {
     use arch_view::playback::{CONTEXT_OPACITY, NON_PATH_OPACITY};
     use arch_view::view::{band_background_palette, layer_palette, CANVAS_BACKGROUND};
@@ -143,11 +137,13 @@ fn salience_parked_guard_fade_displacement_exceeds_change_tolerance() {
         0.78 * chan(band, 0) + 0.22 * chan(canvas, 0),
     ];
 
-    // 当前 map 节点填充色：与 main.rs 同源的两步调色（饱和度 ×0.65，亮度 ×0.55 后 clamp）
+    // 当前 map 节点填充色：与 main.rs 同源的两步调色（饱和度 ×0.90，亮度 ×0.95 后 clamp 0.22..0.42）。
+    // 注意：这是**手工同步的副本**——改动 main.rs / arch_view_theme.rs 的 tint 参数时必须同步这里，
+    // 否则本断言校验的就不再是产品实际配色。
     let pal = layer_palette("components", true);
     let mut tint: Hsla = gpui::rgb(pal).into();
-    tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
-    tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+    tint.s = (tint.s * 0.90).clamp(0.0, 1.0);
+    tint.l = (tint.l * 0.95).clamp(0.22, 0.42);
     let fill: Rgba = tint.into();
     let fill255 = [fill.r * 255.0, fill.g * 255.0, fill.b * 255.0];
 
