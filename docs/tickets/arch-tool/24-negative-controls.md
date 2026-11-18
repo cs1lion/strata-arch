@@ -736,3 +736,47 @@ A 口径：`expect 151 → 153`；`rg -c -F` 回读 **153** == JSON 条目 **153
 `FrameMinMeanLuminance`、`FrameMaxMeanLuminance`、`LoadingTextMinPixels`、`LoadingTextMinBands`、`LoadingTextRowMinPixels`、`FailureOrangeMinPixels`、`DiffTintMinPixels`、`DiffTintTolerance`、`P3MinHotCells`、`SearchPanelRowsMinHeightDiff`、`SearchLabelBgMinPixels`、`SearchLabelMinTextPixels`、`SearchLabelX0`、`SearchLabelY0`。
 
 其余未闭合项不变：同型乘法点三处未锁；T5 仍 ignored；`7.153%` 根因未验证；`-Marker "map:"` 未改；产品裁决仍未决。
+
+## 未 pin 参数的翻转能力实测：绿→红可达、红→绿不可达，以及一处验收口径的自我修正（2026-11-18 追加；上方原文一字不改）
+
+本轮为**临时实验 + 逐字还原**：未动任何阈值与判据、未动 `citations.json`、未提交产品代码；实验后 `git diff -- eval/pixel-evidence.ps1` 为空（字节级还原），`cite-check 153/153` 退出码 0。
+
+### 1. 结论一：未 pin 的 `CellSize` / `HotCellChangedRatio` **能把一条真实的绿无声打死**（可达）
+
+被测对象取退化前二进制 `c99f3cc`（基线 `hotCells=454`、`26/26` 全绿、退出码 0）：
+
+| 例 | 扰动 | hotCells | changed | 结果 |
+| --- | --- | --- | --- | --- |
+| E1 | `CellSize=512` | 454 → **2** | 7.88% 不变 | **绿→红**，且同时红 4 条：`p1-frames-settled`、`p1-frames-distinguishable`、`p3-adjacent-frame-moves`、`static-baseline-noise` |
+| E2 | `CellSize=512` + `占比=0.99` | 454 → **0** | 7.88% 不变 | **绿→红**（干净形态：仅 `p1-frames-distinguishable` 与 `p3-adjacent-frame-moves` 红，`settled` 与 `static` 正常） |
+
+E1 的 4 条红中混入了一次真实未停稳（见第 4 小项），**判定翻转的纯净证据是 E2**。
+
+### 2. 结论二：**不能**用它把红无声洗成绿（不可达），且有结构性理由
+
+| 例 | 扰动 | hotCells | changed | 结果 |
+| --- | --- | --- | --- | --- |
+| E3 | HEAD，取**最有利于变绿**的 `CellSize=16` + `占比=0.05` | **0** | **1.520% 不变** | 仍红（`p1` 与 `p3-adjacent-frame-moves`），**红→绿未发生** |
+
+结构理由（代码 + 三组实测共同支撑）：`FrameDiff` 里 `changed` 计数只依赖 `changeTolerance`，`CellSize` 与单元占比只进入 `cellChanged/cellTotal` 的单元统计。实测印证：E1/E2/E3 三组扰动下 `changed` 恒为 7.88% / 1.520% 不变。
+
+⇒ 这两个参数**只能把判据推向失败，不能把它推向通过**。由于 `ChangeTolerance`、`P1MinChangedRatio`、`P1MinHotCells` 现已 pin，P1 不存在"被未 pin 参数无声洗绿"的路径；**但存在"被无声打死"的路径** —— 这一侧的防护正是本笔之前 `362cf80` 补 pin 的意义，现由实测确认其必要性。
+
+### 3. 结论三：验收口径自我修正（重要，防后续误用）
+
+上一笔（`cd1d4b1`）提交信息写过："**还原后复跑 HEAD 与基线逐字一致**（`hotCells=18`、`changed=1.520%`…）"。该措辞**过宽，此处收窄**（提交信息不可 amend，故以追加方式澄清）：
+
+- 本轮复跑实测：**27 条中有 3 条 reading 不同**，全部属亮度类 —— `loading-not-white` 的 `meanLuminance` 24.82→24.70、`loading-text-visible` 的 `bright=10789→8692`（**−19.4%**）、`failure-frame-valid` 的 24.47→24.46。
+- 而 **pass 向量 27/27 完全一致**，且 9 条判据相关读数（`p1-frames-distinguishable`、`p1-frames-settled`、`p3-adjacent-frame-moves`、`static-baseline-noise`、`search-states-settled`、`search-off-panel-floor-zero`、`search-panel-with-results`、`search-focus-closes-panel`、`search-clear-removes-panel-and-label`）**逐字相同**。
+
+⇒ 正确的"行为未变/还原无残迹"三重验收是：**① 被测文件 `git diff` 为空（字节级）② 断言 `id=pass` 向量逐字相同 ③ 判据相关读数逐字相同**。**不得**用"全部 reading 逐字相同"——loading/failure 亮度类读数自带抓取时刻方差（§2.2.1 已记 `PrintWindow` 首帧类问题），用它当验收会**误报有残迹**，进而误导回滚决策。本轮即差点踩此坑，靠逐条打印差异才查明。
+
+### 4. 附带发现
+
+- **波及面不止 P1**：E1/E2 中 `p3-adjacent-frame-moves` 一并报警 ⇒ 未 pin 参数影响多条判据，`P3MinHotCells` 与 `DiffTintTolerance`/`DiffTintMinPixels` 的 pin 优先级应上调。
+- **未停稳样本 +1**：E1 在 `c99f3cc` 上也出现 `p1-frames-settled` 红（此前该二进制 3/3 稳定）⇒ 未停稳不限于 `99fc678`。E1 的 `static-baseline-noise` 红究竟归因于 `CellSize` 还是同次未停稳，**未单独隔离**（E2 中 static 正常，倾向后者）。
+- **实验产物的耐久性**：E1–E3 与复跑的产物在被 gitignore 的 `out/flip-*` 下，本轮数字可按"改值→跑→还原→复跑"序列重放，但**不可从仓库内容复核**。若要闭合，需把这张可达性矩阵压缩归档为 `docs/evidence/24-p1-param-flip-matrix-20261118.json` 并补守护（纯新增 + A 口径，另笔待批）。
+
+### 5. 本笔未做
+
+未动任何阈值与判据（`CellSize` 仍 `32`、占比仍 `0.30`、容差仍 `6`，`rg -F` 各命中 1 可证）；未动 `citations.json`（`expect` 仍 153）；未归档上述矩阵；未测扰动的连续谱（只测 512/0.99 与 16/0.05 两个端点组合）；未量化 loading 亮度方差的成因与上界。
