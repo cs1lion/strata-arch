@@ -23,11 +23,11 @@ use arch_view::loading::{
 };
 use arch_view::playback::{PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
-use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState};
+use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState, SearchKey};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
-    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState,
+    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState, EdgeDisplayMode,
     EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM, MIN_ZOOM,
 };
 use gpui::{
@@ -2363,6 +2363,34 @@ impl MapView {
             f32::from(window.viewport_size().width),
             f32::from(window.viewport_size().height),
         );
+        if !self.search.is_open()
+            && !keystroke.modifiers.secondary()
+            && !keystroke.modifiers.alt
+        {
+            match keystroke.key.as_str() {
+                "e" | "E" => {
+                    self.state.cycle_edge_mode();
+                    cx.notify();
+                    return;
+                }
+                "0" | "r" | "R" => {
+                    self.state.fit_to_viewport(viewport_size);
+                    cx.notify();
+                    return;
+                }
+                "=" | "+" => {
+                    self.state.zoom_at_center(1.25, viewport_size);
+                    cx.notify();
+                    return;
+                }
+                "-" => {
+                    self.state.zoom_at_center(0.8, viewport_size);
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
         match self.search.handle(key, self.state.viewport()) {
             SearchAction::None => {}
             SearchAction::Opened => phase_marker("search:open"),
@@ -2587,11 +2615,24 @@ impl MapView {
                 }
                 let base_opacity =
                     (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
-                if !skip.edges {
+        let edge_mode = self.state.edge_mode();
+                if !skip.edges && edge_mode != EdgeDisplayMode::Hidden {
                     let edges = map
                         .edges
                         .iter()
                         .filter_map(|edge| {
+                    if edge_mode == EdgeDisplayMode::FocusedOnly {
+                        let related = match search_focus {
+                            Some(set) => set.focus == edge.source || set.focus == edge.target,
+                            None => self
+                                .state
+                                .selected()
+                                .is_some_and(|id| id == edge.source || id == edge.target),
+                        };
+                        if !related {
+                            return None;
+                        }
+                    }
                             let from = viewport.screen_point(edge.from);
                             let to = viewport.screen_point(edge.to);
                             if tuning.cull_viewport
@@ -3511,6 +3552,128 @@ impl Render for MapView {
             );
             root = root.child(panel);
         }
+        let edge_mode = self.state.edge_mode();
+        let module_count = self.state.map().nodes.len();
+        let edge_count = self.state.map().edges.len();
+        let zoom_pct = (viewport.zoom * 100.0).round() as i32;
+        let mut hud = div()
+            .id("map-hud-toolbar")
+            .absolute()
+            .right(px(12.))
+            .bottom(px(12.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(rgb(0x30363d))
+            .bg(rgb(0x161b22))
+            .text_xs()
+            .text_color(rgb(0xe6edf3))
+            .child(
+                div()
+                    .text_color(rgb(0x8b949e))
+                    .child(format!("{module_count} 模块 · {edge_count} 边")),
+            );
+
+        if self.playback.is_none() {
+            hud = hud.child(
+                div()
+                    .id("hud-search")
+                    .px(px(8.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("搜索 /")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
+                        let _ = this.search.handle(SearchKey::Open, this.state.viewport());
+                        cx.notify();
+                    })),
+            );
+        }
+
+        hud = hud
+            .child(
+                div()
+                    .id("hud-edge-mode")
+                    .px(px(8.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(if edge_mode == EdgeDisplayMode::All {
+                        rgb(0x1f2937)
+                    } else {
+                        rgb(0x1f3a5f)
+                    })
+                    .child(format!("{} (E)", edge_mode.label()))
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
+                        this.state.cycle_edge_mode();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("hud-zoom-out")
+                    .px(px(6.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("−")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        this.interrupt_reveal();
+                        let size = (
+                            f32::from(window.viewport_size().width),
+                            f32::from(window.viewport_size().height),
+                        );
+                        this.state.zoom_at_center(0.8, size);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .text_color(rgb(0xc9d1d9))
+                    .child(format!("{zoom_pct}%")),
+            )
+            .child(
+                div()
+                    .id("hud-zoom-in")
+                    .px(px(6.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("+")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        this.interrupt_reveal();
+                        let size = (
+                            f32::from(window.viewport_size().width),
+                            f32::from(window.viewport_size().height),
+                        );
+                        this.state.zoom_at_center(1.25, size);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("hud-fit")
+                    .px(px(8.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(rgb(0x1f2937))
+                    .child("适应 0")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        this.interrupt_reveal();
+                        let size = (
+                            f32::from(window.viewport_size().width),
+                            f32::from(window.viewport_size().height),
+                        );
+                        this.state.fit_to_viewport(size);
+                        cx.notify();
+                    })),
+            );
+        root = root.child(hud);
 
         // P5：揭示进度只由 GPUI 动画时钟驱动（固定时长），帧率只决定中间帧疏密。
         let mut element = if self.reveal.is_active() {
