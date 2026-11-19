@@ -58,3 +58,24 @@ T6 是被 M3 逼出来的，不是凭空加的——用例 doc 注释与本档 `
 - **无守护**：`arch_view_canvas.rs:499` 的 `e.opacity *= reveal_alpha` 仍在裸奔（本票范围外，留此指针）。
 - **未做**：`main.rs:2890` 那处调用仍是全限定名（未顺手改成短名——多 1 行删除，超出声明的删除面）。
 - 未 push、未开 PR。
+
+---
+
+## 7. 像素中立性复测与一条**未结案**异常（2026-11-19 追加；§6 首条"未抓屏"与五要素表"10 条守护"两句原文保留，均由本节更正）
+
+**先更正本票自己的两处过期陈述**：① 五要素表写"10 条守护"，实际登记为 **11 条**——反证 Z4 暴露 `pub fn scale_alpha` 这条 literal 子串守护看不见改名（`scale_alphaX(` 仍含该子串，175/175 全绿），据此拆成两条精确签名守护；② §6 首条与状态行的"未抓屏"已被本次授权复测取代（结论见下，且**尚未完全结案**）。
+
+**抓屏 run**：`pwsh -NoProfile -File eval/pixel-evidence.ps1 -OutDir out/alpha-verify`，退出码 **0**、`27/27/0`。诊断用裁剪图落盘在 `out/diag-focus/label-old.png` 与 `out/diag-focus/label-new.png`（`out/**` 属 gitignore，不进仓，仅作本机可复核指针）。
+**二进制溯源（这次要求"不同"）**：build **前** 手里的 exe 仍是搬迁前的 `D2D09E12…`；`cargo build --release --locked` 真编译 14.43s 后为 `5C4A3B657A439F1F52A67FF92421073ECCCABC915A0165D770FB04F382216605`。票 28 要求两侧哈希**相同**（判据改动与渲染无关），本票要求**不同**（本次确实改了 Rust）——同一条规则的两种用法。
+
+**已证实为像素中立（三重证据）**：
+1. **帧逐字节相同**：`search-off-f03`、`search-results-f03`、`search-nomatch-f03`、`search-clear-f03` 以及 `p1-off-f02`、`p1-on-f02`、`p1-on-f03` 在旧/新二进制之间**哈希完全相同**。这些帧正是走 `scale_alpha` / `scale_alpha3` / `apply_fade_alpha` 且 `opacity ≠ 1` 的路径 ⇒ 搬迁没有改变任何输出像素。
+2. **P1 读数逐字相同**：`changed=7.893%`、`hotCells=428`、`meanAbs=1.461`、`maxCell=100.00%`、`bbox=(36,141)-(2560,1816)`、`settled 0.000%/0.000%`，且 `deltaBuckets` **全字段**相同（`framePixels=5125912`、`gt0/gt1/gt3/gt6/gt12/gt24 = 7.961/7.96/7.957/7.893/7.714/0.624`、**`meanMaxDeltaOverGt0 = 22.32`**、`toleranceUsed=6`）。⇒ 用户点名的三项（`7.893%` / `428` / `22.32`）全部逐字复现。
+3. **pass 向量 0 处不同**：27 条断言的 `pass` 全部与票 28 复测一致；22/27 条 `reading` 逐字相同。
+
+**5 处 reading 不同的分类**：
+- 2 处属**已登记的抓取时刻方差**：`loading-not-white`（`meanLuminance 24.82 → 24.83`）、`loading-text-visible`（`bright 10795 → 10830`，`bands=3`、`bbox` 相同）。
+- 3 处集中在 **focus 态几何**：`search-focus-label-visible`（`bg=33201 → 12861`、`text=2028 → 894`、`rows 1766-1834 → 1727-1795`）、`search-focus-closes-panel`（`focusTotal 273 → 68`、`maxRowHits 4 → 2`）、`search-states-settled` 的 focus 分量。三条**都仍 PASS**，未触碰任何阈值。
+
+**未结案异常（如实登记，不粉饰）**：focus 帧整帧 43.4% 抽样像素不同、差异铺满全画面；裁剪图显示新 run 里标签被右边缘**裁断**为「聚焦 external:」，左侧可见节点换成 `node:util` / `png-chunk-tex`——这是**相机/布局位移**，而 alpha 不参与几何；本批 Rust diff 里 `pan|zoom|viewport|camera|focus_set` 表达式命中为 0。已排除的两个解释：① 动画未停——每个 run 内 `focus f02` 与 `f03` **逐字节相同**；② 同二进制本来就不可复现——同一旧二进制 `D2D09E12` 的两次独立 run（`edge-after2` 与 `opt1-verify`）focus f03 哈希**完全相同**（此处订正：我一度把 `edge-before` 当同二进制对照，实为 `2c8f830^` 的另一份二进制，不能这么用）。⇒ 新二进制目前**只有 1 次 run**，尚不能区分"新二进制引入确定性差异"与"该 run 的一次性状态差异"。**判别办法**：用新二进制再抓一次屏，落回 `314D28B6C4DD` 即为一次性差异、落 `328434B3A514` 即需另开票查（本票不顺手改判据）。
+**顺带挖到的一条线索**：产品侧早有 `STRATA_EVIDENCE_VIEWPORT=panX,panY,zoom`（`main.rs` 注释"仅用于跨配置在同一相机位抓帧比较"），而 `eval/pixel-evidence.ps1` **没有用它** ⇒ focus 态读数对相机状态敏感。是否钉住视口属新决策，交用户裁决，不在本批实施。

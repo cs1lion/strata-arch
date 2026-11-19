@@ -91,6 +91,48 @@
     }
   ],
   "restoredAfterEachMutation": true,
+  "pixelReverify": {
+    "authorizedAt": "2026-11-19（用户授权第 5 笔抓屏）",
+    "runDir": "out/alpha-verify",
+    "exitCode": 0,
+    "assertions": "27/27/0",
+    "binaryProof": {
+      "preBuildSha256": "D2D09E123CC228D7B2854D91FFD2C609E26574EBB73D7A3427755AE99B3D1CC1",
+      "postBuildSha256": "5C4A3B657A439F1F52A67FF92421073ECCCABC915A0165D770FB04F382216605",
+      "note": "build 前手里的二进制仍是搬迁前那份（D2D09E12），cargo 真编译 14.43s 后才变成 5C4A3B65 ⇒ 本次这次改动源码变了，两侧哈希必须「不同」才算有效（与票 28 要求「相同」方向相反，同一规则的两种用法）"
+    },
+    "p1UnchangedVerbatim": {
+      "changedRatio": "7.893%（gt6Pct）", "hotCells": 428, "meanAbs": 1.461, "maxCellRatio": "100.00%",
+      "changedBbox": "(36,141)-(2560,1816)", "meanMaxDeltaOverGt0": 22.32, "toleranceUsed": 6,
+      "gt0Pct": 7.961, "gt1Pct": 7.96, "gt3Pct": 7.957, "gt12Pct": 7.714, "gt24Pct": 0.624, "framePixels": 5125912,
+      "settled": "off 0.000% / on 0.000%（上限 0.1%）"
+    },
+    "frameByteIdentityAcrossBinaries": {
+      "compared": "out/opt1-verify（旧二进制）vs out/alpha-verify（新二进制），同判据同 fixture",
+      "identical": ["search-off-f03", "search-results-f03", "search-nomatch-f03", "search-clear-f03", "p1-off-f02", "p1-on-f02", "p1-on-f03"],
+      "differing": ["search-focus-f03"],
+      "conclusion": "P1 淡出两态帧与 off/clear/results/nomatch 逐字节相同，而这些帧正是经过 scale_alpha / scale_alpha3 / apply_fade_alpha 且 opacity≠1 的路径 ⇒ α 搬迁对渲染输出可证为像素中立。"
+    },
+    "assertionVectorCompare": {
+      "passVectorDifferences": 0, "readingIdenticalCount": "22 / 27",
+      "differingReadings": [
+        { "id": "loading-not-white", "old": "meanLuminance=24.82", "new": "meanLuminance=24.83", "class": "已登记的抓取时刻方差" },
+        { "id": "loading-text-visible", "old": "bright=10795 bands=3 bbox 同", "new": "bright=10830 bands=3 bbox 同", "class": "已登记的抓取时刻方差（+0.3%）" },
+        { "id": "search-states-settled", "old": "focus: total 273->273 maxRowHits 4", "new": "focus: total 68->68 maxRowHits 2", "class": "focus 几何差异" },
+        { "id": "search-focus-closes-panel", "old": "focusTotal=273 focusMaxRowHits=4", "new": "focusTotal=68 focusMaxRowHits=2", "class": "focus 几何差异（判据仍 PASS）" },
+        { "id": "search-focus-label-visible", "old": "bg=33201 text=2028 rows=1766-1834", "new": "bg=12861 text=894 rows=1727-1795", "class": "focus 几何差异（判据仍 PASS，阈值 SearchLabelBgMinPixels 之上）" }
+      ]
+    },
+    "focusAnomalyFinding": {
+      "observed": "focus 态整帧 43.4% 抽样像素不同，bbox 覆盖全屏；标签区同高（69 行）但变窄（maxRowHits 545→216）且上移 39px；裁剪图可见左侧节点由外部页节点变为 node:util / png-chunk-tex，标签文本被右边缘裁断为「聚焦 external:」；两 run 的 stdout 均为同一模块 external:@site/src upstream=3 downstream=0",
+      "notCausedByThisBatch": "git diff 49c5432^..HEAD -- crates/ 中不含任何 pan/zoom/viewport/camera/focus_set 表达式（rg 为空）；且同批未变的 off/clear/P1 帧逐字节相同",
+      "nature": "跨 run 的相机/视口位置差异（focus 会移动相机，票 20 的 Esc 复原语义即以此为前提），每个 run 内部 f02==f03 已静止 ⇒ 不是动画未停",
+      "lead": "产品侧早有固定相机钩子 STRATA_EVIDENCE_VIEWPORT=panX,panY,zoom（main.rs 注释「仅用于跨配置在同一相机位抓帧比较」），但 eval/pixel-evidence.ps1 未使用它 ⇒ focus 态读数对相机状态敏感。候选处置：抓帧时钉住视口。本批未实施，交用户裁决",
+      "sameBinaryReproducibility": "同一旧二进制 D2D09E12 的两次独立 run（out/edge-after2 与 out/opt1-verify）focus f03 哈希逐字相同（314D28B6C4DD）⇒ 旧二进制下该帧可复现；新二进制 5C4A3B65 目前只有 1 次 run，得 328434B3A514 ⇒ 尚不能区分『新二进制带来确定性变化』与『该 run 的一次性状态差异』。（订正：先前我误把 edge-before 当作同二进制对照——它是 2c8f830^ 的另一份二进制，不能用于复现性论证。）",
+      "whyAlphaCannotExplainIt": "alpha 只改颜色不改几何：新 run 里标签被右边缘裁断、左侧可见节点换成 node:util / png-chunk-tex，属相机/布局位移，而本批 Rust diff 不含任何 pan/zoom/viewport/camera/focus_set 表达式，且同批的 off/clear/P1 帧逐字节相同。",
+      "nextStepNeeded": "用新二进制再跑一次抓屏（n=2）：若落回 314D28B6C4DD ⇒ 判为一次性状态差异、搬迁仍为像素中立；若仍为 328434B3A514 ⇒ 说明与新二进制相关，须另开票查（不得在本票顺手改判据或阈值）。需用户授权再抓一次屏。"
+    }
+  },
   "selfChecks": {
     "description": "每条只读本档案字段即可复算，不依赖 out/** 与 git 历史",
     "checks": {
