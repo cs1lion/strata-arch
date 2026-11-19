@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "kind": "alpha-multiply-site-inventory",
+  "ticket": 29,
+  "subject": "main.rs 的 8 条内联 α 乘法点搬迁清单、判别性反证与真实盲区（M3 逼出 T6）",
+  "recordedAt": "2026-11-19T08:05:00+08:00",
+  "recordedByCommit": "43962d0",
+  "harnessUnderTest": {
+    "binFile": "crates/arch-view/src/main.rs",
+    "libFile": "crates/arch-view/src/arch_view_canvas.rs",
+    "testFile": "crates/arch-view/tests/alpha_scale_contract.rs",
+    "refactorCommit": "49c5432",
+    "testCommit": "43962d0",
+    "testsTotal": 6
+  },
+  "scopeCorrection": {
+    "claim": "上一轮草案称有 9 个裸点（含 main.rs 的 overlay.opacity *= overlay_reveal，并给了 1912 / 3141 两个行号）",
+    "status": "不实，已撤回",
+    "measured": "main.rs 内联乘法语句实测为 8 条 / 3 个绘制块；全仓唯一的 opacity *= 在 arch_view_canvas.rs:499（canvas 路径，不在本票范围）",
+    "secondClaim": "草案又称 main.rs:2937 已把 overlay 交给 apply_fade_alpha",
+    "secondStatus": "不实：main.rs 此前只有 2890 一个调用点（搬迁后为 2890 与 3105 两个）"
+  },
+  "sites": [
+    {
+      "block": "A",
+      "owner": "TimelineView 节点色带",
+      "beforeLines": [1899, 1901],
+      "beforeStatements": ["bg.a *= item.opacity;", "border.a *= item.opacity;"],
+      "statements": 2,
+      "afterLines": [1899, 1900],
+      "afterForm": "scale_alpha(item.bg, item.opacity) / scale_alpha(item.border, item.opacity)",
+      "helper": "scale_alpha",
+      "opacitySource": "main.rs:1864  node_opacity = if full_scale { 1.0 } else { 0.55 }",
+      "guardedBy": ["T1 timeline_alpha_multiplies_not_replaces", "T4 scale_alpha_preserves_color_channels", "T5 scale_alpha_composes_multiplicatively", "T6 scale_alpha_has_no_floor_or_clamp"]
+    },
+    {
+      "block": "B",
+      "owner": "map 层带 fill / border / header",
+      "beforeLines": [2583, 2585, 2587],
+      "beforeStatements": ["fill_c.a *= opacity;", "border_c.a *= opacity;", "header_c.a *= opacity;"],
+      "statements": 3,
+      "afterLines": [2585, 2586],
+      "afterForm": "scale_alpha3((fill_c, border_c, header_c), *opacity)",
+      "helper": "scale_alpha3",
+      "opacitySource": "main.rs:2525  self.reveal.opacity_for_stage(index)（经 band_draws 元组传入，类型 &f32）",
+      "inputAlpha": { "fill": 0.78, "border": 0.28, "header": 0.90, "source": "arch_view_theme.rs:171-178 band_style" },
+      "guardedBy": ["T2 band_tiers_multiply_not_replace", "T3 scale_alpha3_agrees_with_apply_fade_alpha"],
+      "compilerCaughtDetail": "opacity 在此块是 &f32（元组解构自 &band_draws），原式靠 impl MulAssign<&f32> for f32 才编得过；改为函数调用必须写 *opacity，首版提交失败即因此（E0308 expected f32 found &f32）"
+    },
+    {
+      "block": "C",
+      "owner": "map 符号节点 bg / border / accent",
+      "beforeLines": [3107, 3109, 3111],
+      "beforeStatements": ["bg.a *= item.opacity;", "border.a *= item.opacity;", "accent.a *= item.opacity;"],
+      "statements": 3,
+      "afterLines": [3105],
+      "afterForm": "apply_fade_alpha(item.bg, item.border, item.accent, item.opacity)",
+      "helper": "apply_fade_alpha（与矩形模块节点同一函数）",
+      "opacitySource": "与矩形节点同一套：search_focus 命中 1.0 / 否则 base_opacity（fade_enabled 时 CONTEXT_OPACITY 或 0.0，否则 EDGE_PLAIN_OPACITY）× reveal_overall",
+      "guardedBy": ["T3（与 scale_alpha3 等价性）", "fade_alpha_contract.rs 的 T1–T5（同一函数的既有锁定）"]
+    }
+  ],
+  "excludedFromScope": [
+    { "where": "main.rs:2855", "text": "b.a = 0.65;", "reason": "设计上的**替换**语义（不是乘法），纳入即误伤" },
+    { "where": "arch_view_canvas.rs:499", "text": "e.opacity *= reveal_alpha;", "reason": "canvas 渲染器路径，与 map 的 8 点不同链路；本任务范围是锁 main.rs，未纳入 ⇒ 该点至今无守护，作为边界登记" },
+    { "where": "arch_view_theme.rs（9 处 .a = alpha 形式）", "text": "color.a = (0.78 * reveal_alpha).clamp(0.0, 1.0) 等", "reason": "替换语义且带 clamp，与乘法点语义不同；混入会使守护对正当改动报错" }
+  ],
+  "mutations": [
+    {
+      "id": "M1",
+      "injected": "scale_alpha: out.a *= opacity 改为 out.a = opacity（替换语义）",
+      "redCount": 5, "greenCount": 0, "testsAtTime": 5,
+      "redIds": ["timeline_alpha_multiplies_not_replaces", "band_tiers_multiply_not_replace", "scale_alpha3_agrees_with_apply_fade_alpha", "scale_alpha_preserves_color_channels", "scale_alpha_composes_multiplicatively"],
+      "note": "原预期「等价性测试 T3 可能仍绿」是错的：scale_alpha3 内部即调用 scale_alpha，与 apply_fade_alpha 必然分叉，实测被咬住。T6 加入后同一注入会红 6 条。"
+    },
+    {
+      "id": "M2",
+      "injected": "scale_alpha3 只对第一个通道缩放（漏乘型缺陷）",
+      "redCount": 2, "greenCount": 3, "testsAtTime": 5,
+      "redIds": ["scale_alpha3_agrees_with_apply_fade_alpha", "band_tiers_multiply_not_replace"],
+      "note": "其余 3 条仍绿（它们直接调用 scale_alpha）⇒ 用例之间不冗余，各守一段"
+    },
+    {
+      "id": "M3",
+      "injected": "scale_alpha 改为 (a * opacity).max(0.05)（加 α 地板）",
+      "firstRun": { "redCount": 0, "greenCount": 5, "testsAtTime": 5 },
+      "finding": "真实盲区：T1–T5 的输入全部落在钳制区间之外，加地板能无声通过",
+      "closedBy": "T6 scale_alpha_has_no_floor_or_clamp（喂 0.02×0.5=0.01、1.0×0.0=0、0.04×1.0=0.04）",
+      "rerun": { "redCount": 1, "greenCount": 5, "testsAtTime": 6, "redIds": ["scale_alpha_has_no_floor_or_clamp"] },
+      "note": "T6 不是凭空加的，是被 M3 逼出来的；doc 注释里写明了这一点"
+    }
+  ],
+  "restoredAfterEachMutation": true,
+  "selfChecks": {
+    "description": "每条只读本档案字段即可复算，不依赖 out/** 与 git 历史",
+    "checks": {
+      "statementSum": "sites[].statements 之和必须等于 8",
+      "everySiteMoved": "每个 site 的 beforeLines 与 afterLines 都非空，且 afterForm 含其 helper 名",
+      "mutationCoverageSums": "每条 mutation 的 redCount + greenCount 必须等于其 testsAtTime",
+      "m3GapThenClosure": "M3.firstRun.redCount 必须为 0（盲区存在）且 M3.rerun.redCount 必须为 1 且 redIds 含 T6（盲区被关掉）",
+      "exclusionsHaveReasons": "excludedFromScope 每条 reason 非空（防范围漂移）",
+      "testFileCitedInGaps": "harnessUnderTest.testFile 必须与登记守护里的路径逐字一致",
+      "scopeCorrectionsRecorded": "scopeCorrection 两条不实声明都必须留原文（不得抹掉错误历史）"
+    }
+  },
+  "boundaries": [
+    "本票只锁「乘法而非替换」的算术语义；不锁这些 α 值本身是否好看（画面质量仍是人测项）。",
+    "block B 存在双层 reveal 施加的可能叠加：band_style 内部已按 0.78·reveal_alpha 写 alpha，外层又乘一次 reveal。本票未判定它是缺陷还是刻意设计（且因 49c5432 是逐字搬运算术，行为与搬前一致）；若要重查需先证明产品意图，不得顺手改。",
+    "arch_view_canvas.rs:499 的 opacity *= 仍无任何守护。",
+    "α 值随场景/状态变化的实际像素效果，本批未抓屏验证（按用户指令）。"
+  ],
+  "guardsToRegister": [
+    "main-fade-alpha-calls", "main-scale-alpha-calls", "main-scale-alpha3-calls",
+    "main-no-inline-alpha-multiply", "main-no-inline-opacity-multiply", "canvas-scale-alpha-defs",
+    "alpha-test-file", "alpha-test-discriminator", "alpha-test-no-floor-guard", "ev-p29-sites-file"
+  ],
+  "guardCount": 10,
+  "registryExpectAfter": 175
+}
