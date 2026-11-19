@@ -111,9 +111,23 @@
   ],
   "guardsToRegister": [
     "main-fade-alpha-calls", "main-scale-alpha-calls", "main-scale-alpha3-calls",
-    "main-no-inline-alpha-multiply", "main-no-inline-opacity-multiply", "canvas-scale-alpha-defs",
+    "main-no-inline-alpha-multiply", "main-no-inline-opacity-multiply",
+    "canvas-scale-alpha-def", "canvas-scale-alpha3-def",
     "alpha-test-file", "alpha-test-discriminator", "alpha-test-no-floor-guard", "ev-p29-sites-file"
   ],
-  "guardCount": 10,
-  "registryExpectAfter": 175
+  "guardCount": 11,
+  "registryExpectAfter": 176,
+  "guardRevision": {
+    "reason": "反证 Z4 实测暴露一条弱守护：原拟的 canvas-scale-alpha-defs（literal 子串 pub fn scale_alpha，expect 2）在把 scale_alpha3 改名为 scale_alphaX 后仍然全绿（175/175），因为 scale_alphaX( 里仍含子串 pub fn scale_alpha ⇒ 前缀子串匹配使改名不被发现。",
+    "fix": "拆成两条精确签名守护：canvas-scale-alpha-def（needle `pub fn scale_alpha(c: Hsla`）与 canvas-scale-alpha3-def（needle `pub fn scale_alpha3(trio:`），各 expect 1 ⇒ 守护总数 10 变 11、expect 175 变 176。拆分后重放：改名为 scale_alphaX ⇒ 恰 canvas-scale-alpha3-def 红（175/1）；改名为 scale_alphaY ⇒ 恰 canvas-scale-alpha-def 红（175/1）。",
+    "measuredGuards": {
+      "Z1_main_back_to_inline": "失败项恰为 [main-no-inline-alpha-multiply, main-scale-alpha-calls]（174/2）",
+      "Z2_rename_T6": "失败项恰为 [alpha-test-no-floor-guard]（175/1）",
+      "Z4a_rename_scale_alpha3": "失败项恰为 [canvas-scale-alpha3-def]（175/1）",
+      "Z4b_rename_scale_alpha": "失败项恰为 [canvas-scale-alpha-def]（175/1）",
+      "Z5_remove_gaps_citation": "失败项恰为 [ev-p29-sites-file]（175/1）",
+      "Z6_test_file_absent": "失败项恰为 [alpha-test-discriminator, alpha-test-file, alpha-test-no-floor-guard]（173/3）"
+    },
+    "residualBoundary": "Z3 实测：把本档的 `\"statements\": 3` 改成 2 之后 cite-check 仍 176/176 全绿 ⇒ file-exists 只验『文件存在 + 路径已在 gaps 被引用』，**不验文件内容**。本档数值的自洽性目前只由 selfChecks 的复算脚本保证，而该脚本未纳入 cite-check（未做，留此指针）。"
+  },
 }
