@@ -640,3 +640,8 @@ cargo test --locked
     - **selfChecks 不是装饰**：8 条检查全部只读本档案字段复算，实跑 **8/8 成立、退出码 0**（不读 `out/**`，故 gitignore 的产物不再是结论依赖）。首版复算脚本把函数命名为 `RD`，与内置别名 `rd`（Remove-Item）冲突 ⇒ 取值为空，结果一条**假 OK**（`|null−null| = 0` 恰好等于真值 0）一条**假 FAILED**；改为 `Extract-Num` 并规定"提取失败即判 FAILED、相等判定必须先证明两侧都取到数"后才有效。教训已写入档案 `corrections`。
     - **配套守护**：紧随的 registry 笔追加 5 条 `ev-p28-*`（`file-exists` 1 条 + `pattern-count` 4 条：容差常数、二进制同一性标志、复算计数、跨 run 帧差异计数），每条 needle 事先 `rg -c -F` 数准命中 1；登记面按 A 口径使 `reg-count-selfguard` 的 expect 由 158 升到 163。
     - **本项仍未做**：掏空反证只针对判据腿（`pe-crit-clear-*`），本批 5 条 `ev-p28-*` 的"能变红"另按 registry 笔的实测为准；`labelDelta=0` 的样本量仍是 2 次；`off` 空白帧反例、`results` 帧字节不稳定根因、渲染侧 alpha 自动化覆盖、第 6 个 CI 门禁步骤从未在 GitHub runner 执行——一字未动，继续挂账。
+44. （2026-11-19）补上第 42、43 两项自认的缺口「README 27/28 两行无存在性守护」：新增 `readme-ticket27-row`、`readme-ticket28-row`（`1c4c0ab`，numstat 5/1，唯一删除即 `reg-count-selfguard` 的 expect 行），A 口径 `expect 163 → 165`（`rg -c -F` 与 `.citations` 数组长度双双回读 = 165，`cite-check 条目=165 PASS=165 FAIL=0 SKIP=0` 退出码 0）。
+    - **needle 双重预数**：写入前用 `rg -c --pcre2` 数准，写入后再从 JSON **回读 needle** 走守护同一调用路径复数，三条（含既有 26）命中均为 1 == expect；并确认两个标题短语在 README 全文各仅 1 行 ⇒ `expect 1` 不靠巧合、不随正文追加漂移。
+    - **能变红的实测（逐条掏空已提交 README，判失败项身份，之后 `git checkout --` 还原并复测 165/0）**：抹掉 27 行行首锚 ⇒ 恰 `readme-ticket27-row` FAIL（164/1）；改写 28 行标题 ⇒ 恰 `readme-ticket28-row` FAIL（164/1）。
+    - **一条实测出的守护边界（必须写清，不得读成"整行已受保护"）**：只在标题**后缀**加字（"边可见度分层" → "边可见度分层改动"）**不会变红**，仍 165/165。原因：needle 是"行首锚 + 票号 + 标题前缀"的正则前缀匹配，守的是"这一行还在、票号与标题前缀未被抹掉"，**不守状态列、证据列与后缀措辞**。这与既有 26 行守护同性质。若要守整行内容需改成全行精确匹配，代价是任何措辞订正都会撞红——本批不扩大改动面，边界如实登记于此。
+    - **本项仍未做**：这三条 README 守护只在本机 `cite-check` 实测，CI 侧从未执行（第 6 个门禁步骤的旧账）；`out/**` 读数、渲染侧 alpha 自动化、`labelDelta` 样本量 2 次、`off` 空白帧反例、`results` 帧字节根因——一字未动，继续挂账。
