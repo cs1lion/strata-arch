@@ -4,6 +4,8 @@
 //! `visual_theme_regression.rs` 里锁 `bg.a = 0.22` 的那条测试走的是 canvas 路径，
 //! 而 `map` 命令不调用 canvas 渲染入口。本文件测的 `apply_fade_alpha` 正是 `map`
 //! 现在实际调用的函数（`main.rs` 模块节点绘制闭包），因此构成对 live 路径的约束。
+//! 【范围补正（票 29，2026-11-19）】本文件只锁**矩形模块节点**这一个调用点（`main.rs:2890`）；
+//! 符号节点、`map` 层带与 TimelineView 节点共 8 条同型乘法点的锁定见 `tests/alpha_scale_contract.rs`。
 //!
 //! 判别性说明：`fade_multiplies_not_replaces`（T1）是唯一能区分「乘法」与「替换」的断言
 //! ——若实现被写成 `a = opacity`，T2/T3 恰好仍然通过（因为它们的输入 `a` 本就是 1.0），
