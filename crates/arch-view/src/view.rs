@@ -391,6 +391,38 @@ pub enum Level {
 struct SavedView {
     viewport: Viewport,
 }
+/// 自动启用边降噪的边数阈值：超过该数量时默认仅展示聚焦/选中相关边。
+pub const EDGE_AUTO_FOCUS_THRESHOLD: usize = 200;
+
+/// 模块视图下的边显示模式（用于大仓视觉降噪）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EdgeDisplayMode {
+    /// 显示全部模块依赖边。
+#[default]
+All,
+/// 仅显示与当前聚焦或选中模块相关的边。
+FocusedOnly,
+/// 隐藏普通模块依赖边（路径回放边仍保留）。
+Hidden,
+    }
+
+impl EdgeDisplayMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::All => Self::FocusedOnly,
+            Self::FocusedOnly => Self::Hidden,
+            Self::Hidden => Self::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "边: 全部",
+            Self::FocusedOnly => "边: 仅聚焦",
+            Self::Hidden => "边: 隐藏",
+        }
+    }
+}
 
 pub struct CanvasState {
     map: MapLayout,
@@ -401,10 +433,16 @@ pub struct CanvasState {
     saved: Option<SavedView>,
     transition: Option<CameraTransition>,
     transition_enabled: bool,
+    edge_mode: EdgeDisplayMode,
 }
 
 impl CanvasState {
     pub fn new(map: MapLayout) -> Self {
+        let edge_mode = if map.edges.len() > EDGE_AUTO_FOCUS_THRESHOLD {
+            EdgeDisplayMode::FocusedOnly
+        } else {
+            EdgeDisplayMode::All
+        };
         Self {
             map,
             symbols: None,
@@ -414,7 +452,59 @@ impl CanvasState {
             saved: None,
             transition: None,
             transition_enabled: true,
+            edge_mode,
         }
+    }
+
+    pub fn edge_mode(&self) -> EdgeDisplayMode {
+        self.edge_mode
+    }
+
+    pub fn cycle_edge_mode(&mut self) -> EdgeDisplayMode {
+        self.edge_mode = self.edge_mode.cycle();
+        self.edge_mode
+    }
+
+    pub fn set_edge_mode(&mut self, mode: EdgeDisplayMode) {
+        self.edge_mode = mode;
+    }
+
+    /// 以视口中心为锚点缩放，并取消进行中的相机转场。
+    pub fn zoom_at_center(&mut self, factor: f32, viewport_size: (f32, f32)) {
+        self.transition = None;
+        let anchor = Point {
+            x: viewport_size.0 * 0.5,
+            y: viewport_size.1 * 0.5,
+        };
+        self.viewport.zoom_at(anchor, factor);
+    }
+
+    /// 将当前视图完整居中适配到视口内。
+    pub fn fit_to_viewport(&mut self, viewport_size: (f32, f32)) {
+        self.transition = None;
+        let (content_w, content_h) = match &self.symbols {
+            Some(symbols) => (symbols.width, symbols.height),
+            None => (self.map.width, self.map.height),
+        };
+        if content_w <= 0.0
+            || content_h <= 0.0
+            || viewport_size.0 <= 0.0
+            || viewport_size.1 <= 0.0
+        {
+            self.viewport = Viewport::default();
+            return;
+        }
+        let margin = 48.0;
+        let avail_w = (viewport_size.0 - margin * 2.0).max(64.0);
+        let avail_h = (viewport_size.1 - margin * 2.0).max(64.0);
+        let zoom = (avail_w / content_w)
+            .min(avail_h / content_h)
+            .clamp(MIN_ZOOM, 1.0);
+        self.viewport = Viewport {
+            pan_x: (viewport_size.0 - content_w * zoom) * 0.5,
+            pan_y: (viewport_size.1 - content_h * zoom) * 0.5,
+            zoom,
+        };
     }
 
     pub fn level(&self) -> Level {
@@ -732,3 +822,26 @@ fn build_symbol_layout(module: &str, artifact: &CallGraphArtifact) -> SymbolLayo
         edges,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_display_mode_cycles_in_order() {
+        let mode = EdgeDisplayMode::default();
+        assert_eq!(mode, EdgeDisplayMode::All);
+        assert_eq!(mode.label(), "边: 全部");
+
+        let focused = mode.cycle();
+        assert_eq!(focused, EdgeDisplayMode::FocusedOnly);
+        assert_eq!(focused.label(), "边: 仅聚焦");
+
+        let hidden = focused.cycle();
+        assert_eq!(hidden, EdgeDisplayMode::Hidden);
+        assert_eq!(hidden.label(), "边: 隐藏");
+
+        assert_eq!(hidden.cycle(), EdgeDisplayMode::All);
+    }
+}
+
