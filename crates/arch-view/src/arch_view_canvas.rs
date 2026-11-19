@@ -628,3 +628,27 @@ pub fn apply_fade_alpha(bg: Hsla, border: Hsla, accent: Hsla, opacity: f32) -> (
     accent.a *= opacity;
     (bg, border, accent)
 }
+
+/// 票 29：单色 α 缩放。提为纯函数以锁死「乘法而非替换」语义——此前该写法内联在 `main.rs`
+/// 的 `TimelineView` 绘制闭包（`bg.a *= item.opacity` / `border.a *= item.opacity`）且无测试锁定。
+///
+/// 约束：不得写成 `c.a = opacity`。判别输入必须取 `a != 1.0`（见
+/// `tests/alpha_scale_contract.rs` 的 `timeline_alpha_multiplies_not_replaces`）——
+/// 若喂 `a = 1.0`，乘法与替换恰好同值，测试会失去判别性（`fade_alpha_contract.rs` 的 T2/T3 教训）。
+pub fn scale_alpha(c: Hsla, opacity: f32) -> Hsla {
+    let mut out = c;
+    out.a *= opacity;
+    out
+}
+
+/// 票 29：三色一组的 α 缩放（`map` 层带的 fill / border / header）。与 `apply_fade_alpha`
+/// 语义等价（等价性由 `symbol_and_band_agree_with_apply_fade_alpha` 钉住），独立成函数只为让
+/// `main.rs` 内不再残留任何内联 `*.a *=` 乘法（负向守护 `main-no-inline-alpha-multiply` 的前提）。
+pub fn scale_alpha3(trio: (Hsla, Hsla, Hsla), opacity: f32) -> (Hsla, Hsla, Hsla) {
+    let (first, second, third) = trio;
+    (
+        scale_alpha(first, opacity),
+        scale_alpha(second, opacity),
+        scale_alpha(third, opacity),
+    )
+}

@@ -15,6 +15,7 @@ use arch_core::callgraph::{build_call_graph, CallGraphArtifact};
 use arch_core::commit_diff::{diff_commits_cancellable, CommitDiffError, DiffProgress};
 use arch_core::guided_path::build_path;
 use arch_core::layers::build_layers;
+use arch_view::arch_view_canvas::{apply_fade_alpha, scale_alpha, scale_alpha3};
 use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
 use arch_view::layout::{layout_map, LayoutConfig, MapLayout, Point as LayoutPoint};
 use arch_view::loading::{
@@ -1895,10 +1896,8 @@ impl Render for TimelineView {
                         move |bounds, _, window, _| {
                             use gpui::{quad, size, BorderStyle, Corners, Edges};
                             for item in &draws {
-                                let mut bg = item.bg;
-                                bg.a *= item.opacity;
-                                let mut border = item.border;
-                                border.a *= item.opacity;
+                                let bg = scale_alpha(item.bg, item.opacity);
+                                let border = scale_alpha(item.border, item.opacity);
                                 let b = gpui::Bounds {
                                     origin: point(
                                         bounds.origin.x + px(item.rect.x),
@@ -2578,13 +2577,13 @@ impl MapView {
                                         ),
                                         size: size(px(sr.width.max(0.0)), px(sr.height.max(0.0))),
                                     };
-                                    // apply opacity by drawing with alpha; gpui quads take colors (Hsla) - adjust alpha
-                                    let mut fill_c = fill_c;
-                                    fill_c.a *= opacity;
-                                    let mut border_c = border_c;
-                                    border_c.a *= opacity;
-                                    let mut header_c = header_c;
-                                    header_c.a *= opacity;
+                                    // 层带三级色统一乘以 reveal α，不得写成替换。
+                                    // 更正（票 29）：原注释只说"gpui quads 吃颜色所以在这里调 alpha"，
+                                    // 未说明 `band_style(..., 1.0)` 内部已把 reveal 以**替换**方式写进 alpha
+                                    // （fill 0.78·ra / border 0.28·ra / header 0.90·ra）。本处传入的
+                                    // reveal_alpha 固定 1.0，真正的 reveal 值由下面这次乘法施加，两者不重复。
+                                    let (fill_c, border_c, header_c) =
+                                        scale_alpha3((fill_c, border_c, header_c), *opacity);
                                     window.paint_quad(quad(
                                         b,
                                         Corners::all(
@@ -3103,12 +3102,12 @@ impl MapView {
                             move |bounds, _, window, _| {
                                 use gpui::{quad, size, BorderStyle, Corners, Edges};
                                 for item in &items {
-                                    let mut bg = item.bg;
-                                    bg.a *= item.opacity;
-                                    let mut border = item.border;
-                                    border.a *= item.opacity;
-                                    let mut accent = item.accent;
-                                    accent.a *= item.opacity;
+                                    let (bg, border, accent) = apply_fade_alpha(
+                                        item.bg,
+                                        item.border,
+                                        item.accent,
+                                        item.opacity,
+                                    );
                                     let b = gpui::Bounds {
                                         origin: point(
                                             bounds.origin.x + px(item.rect.x),
