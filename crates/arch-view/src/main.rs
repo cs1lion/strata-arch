@@ -296,7 +296,8 @@ impl<T: Render> Render for LoadingShell<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkbenchTab {
     Map,
-    Timeline,
+    Timeline, 
+    Diff,
 }
 
 /// 顶层统一工作台：在单窗口顶部提供 Map / Timeline 切换，按需懒加载另一个视图。
@@ -305,8 +306,10 @@ struct WorkbenchView {
     active: WorkbenchTab,
     map: Option<Entity<LoadingShell<MapView>>>,
     timeline: Option<Entity<TimelineView>>,
+    diff: Option<Entity<LoadingShell<DiffView>>>,
     reveal_requested: bool,
     autoplay: bool,
+    fade_enabled: bool,
 }
 
 impl WorkbenchView {
@@ -334,6 +337,28 @@ impl WorkbenchView {
                     let view = cx.new(|_| TimelineView::loading(self.autoplay));
                     spawn_timeline_loading(view.clone(), self.repo.clone(), self.autoplay, cx);
                     self.timeline = Some(view);
+                }
+            }
+            WorkbenchTab::Diff => {
+                if self.diff.is_none() {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let shell_cancel = cancel.clone();
+                    let shell = cx.new(move |_| {
+                        LoadingShell::<DiffView>::new(
+                            "正在计算最近提交结构 diff",
+                            "解析 HEAD~1..HEAD",
+                            ).with_cancel(shell_cancel)
+                        });
+                    spawn_diff_loading(
+                        shell.clone(),
+                        self.repo.clone(),
+                        "HEAD~1".to_string(),
+                        "HEAD".to_string(),
+                        self.fade_enabled,
+                        cancel,
+                        cx,
+                        );
+                    self.diff = Some(shell);
                 }
             }
         }
@@ -402,7 +427,23 @@ impl Render for WorkbenchView {
                             .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                                 this.switch_to(WorkbenchTab::Timeline, cx);
                             })),
-                    ),
+                    )
+                .child(
+                div()
+                .id("tab-diff")
+                .px(px(10.))
+                .py(px(4.))
+                .rounded(px(5.))
+                .bg(if active == WorkbenchTab::Diff {
+                    rgb(0x1f3a5f)
+                    } else {
+                    rgb(0x161b22)
+                    })
+                .child("结构差异 Diff")
+                .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                    this.switch_to(WorkbenchTab::Diff, cx);
+                    })),
+                )
             )
             .child(div().text_color(rgb(0x8b949e)).child(repo_name));
 
@@ -417,6 +458,9 @@ impl Render for WorkbenchView {
                 if let Some(timeline) = &self.timeline {
                     content = content.child(timeline.clone());
                 }
+            }
+            WorkbenchTab::Diff => {
+                if let Some(diff) = &self.diff { content = content.child(diff.clone()); }
             }
         }
 
@@ -598,7 +642,7 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     map: Some(shell),
                     timeline: None,
                     reveal_requested,
-                    autoplay: false,
+                    autoplay: false, diff: None, fade_enabled: true,
                 })
             },
         )
@@ -856,7 +900,7 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     map: None,
                     timeline: Some(view),
                     reveal_requested: true,
-                    autoplay,
+                    autoplay, diff: None, fade_enabled: true,
                 })
             },
         )
@@ -1046,14 +1090,14 @@ fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                 });
                 spawn_diff_loading(
                     shell.clone(),
-                    window_repo,
+                    window_repo.clone(),
                     from,
                     to,
                     fade_enabled,
                     window_cancel,
                     cx,
                 );
-                shell
+                cx.new(|_| WorkbenchView { repo: window_repo, active: WorkbenchTab::Diff, map: None, timeline: None, diff: Some(shell), reveal_requested: true, autoplay: false, fade_enabled }) // shell
             },
         )
         .expect("open diff window");
