@@ -733,7 +733,7 @@ impl CanvasState {
             } else if edge.target == selected && edge.source != selected {
                 set.insert(edge.source.clone());
             }
-        
+        }
         set
         
             
