@@ -44,7 +44,7 @@ use arch_view::view::{
     EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN,
 };
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt, AnyElement,
+    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt,
     App, Application, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
     ScrollDelta, ScrollWheelEvent, Stateful, Timer, Window, WindowBounds, WindowOptions,
