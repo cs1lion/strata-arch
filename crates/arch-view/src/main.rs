@@ -427,7 +427,7 @@ impl Render for WorkbenchView {
                             .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                                 this.switch_to(WorkbenchTab::Timeline, cx);
                             })),
-                    ),
+                    )
                 .child(
                 div()
                 .id("tab-diff")
