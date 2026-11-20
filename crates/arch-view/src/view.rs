@@ -7,7 +7,7 @@ use crate::layout::{MapLayout, NodeLayout, Point, Rect};
 use crate::playback::{EdgeRole, PlaybackState};
 use arch_core::callgraph::CallGraphArtifact;
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 4.0;
@@ -830,6 +830,68 @@ impl CanvasState {
                 .collect(),
         }
     }
+}
+
+/// 在调用图中按 BFS 查找从 `from_module` 到 `to_module` 的最短可达符号对（完全确定性）。
+pub fn find_reachable_symbol_pair(
+    from_module: &str,
+    to_module: &str,
+    artifact: &CallGraphArtifact,
+) -> Option<(String, String)> {
+    let targets = artifact
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.module == to_module)
+        .map(|symbol| symbol.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if targets.is_empty() {
+        return None;
+    }
+
+    let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for edge in &artifact.edges {
+        adj.entry(edge.source.as_str())
+            .or_default()
+            .push(edge.target.as_str());
+    }
+    for neighbors in adj.values_mut() {
+        neighbors.sort_unstable();
+        neighbors.dedup();
+    }
+
+    let mut starts = artifact
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.module == from_module)
+        .map(|symbol| symbol.id.as_str())
+        .collect::<Vec<_>>();
+    starts.sort_unstable();
+    starts.dedup();
+
+    let mut visited = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    for start in starts {
+        if targets.contains(start) {
+            return Some((start.to_string(), start.to_string()));
+        }
+        if visited.insert(start) {
+            queue.push_back((start, start));
+        }
+    }
+
+    while let Some((origin, current)) = queue.pop_front() {
+        if let Some(neighbors) = adj.get(current) {
+            for &next in neighbors {
+                if targets.contains(next) {
+                    return Some((origin.to_string(), next.to_string()));
+                }
+                if visited.insert(next) {
+                    queue.push_back((origin, next));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn build_symbol_layout(module: &str, artifact: &CallGraphArtifact) -> SymbolLayout {
