@@ -3056,6 +3056,7 @@ impl MapView {
                     rect: arch_view::layout::Rect,
                     opacity: f32,
                     label: Option<String>,
+                    subtitle: Option<String>,
                     marker: Option<u32>,
                 }
                 let hovered = self.state.hovered().map(str::to_string);
@@ -3158,10 +3159,17 @@ impl MapView {
                     } else {
                         None
                     };
+                    let (label, subtitle) = if labels {
+                        let (title, dir) = split_module_label(&node.id);
+                        (Some(title), if viewport.zoom >= 0.85 { dir } else { None })
+                            } else {
+                        (None, None)
+                            };
                     node_overlays.push(ModuleNodeOverlay {
                         rect: drawn_rect,
                         opacity,
-                        label: if labels { Some(visual.label) } else { None },
+                        label,
+                        subtitle,
                         marker,
                     });
                 }
@@ -3220,21 +3228,22 @@ impl MapView {
                 }
                 for overlay_item in &node_overlays {
                     if let Some(label) = &overlay_item.label {
-                        root = root.child(
-                            div()
+                            let mut text_box = div()
                                 .absolute()
                                 .left(px(overlay_item.rect.x + 10.))
                                 .top(px(overlay_item.rect.y))
-                                .w(px((overlay_item.rect.width - 16.0).max(0.0)))
+                                .w(px((overlay_item.rect.width - 18.0).max(0.0)))
                                 .h(px(overlay_item.rect.height))
                                 .opacity(overlay_item.opacity)
                                 .flex()
-                                .items_center()
+                                .flex_col()
+                                .justify_center()
                                 .overflow_hidden()
-                                .text_xs()
-                                .text_color(rgb(0xe6edf3))
-                                .child(label.clone()),
-                        );
+                    .child(div().text_xs().text_color(rgb(0xf0f6fc)).child(label.clone()));
+                    if let Some(subtitle) = &overlay_item.subtitle {
+                        text_box = text_box.child(div().text_size(px(10.)).text_color(rgb(0x8b949e)).child(subtitle.clone()));
+                    }root = root.child(text_box);
+                        
                     }
                     if let Some(color) = overlay_item.marker {
                         root = root.child(
@@ -4619,10 +4628,17 @@ fn selection_border(
         default
     }
 }
-#[cfg(test)]
+                /// 将模块路径拆分为（文件名主标题, 精简目录副标题），超长目录左侧省略。
+fn split_module_label(id: &str) -> (String, Option<String>) {
+    let Some((dir, file)) = id.rsplit_once('/') else { return (id.to_string(), None); };
+    if dir.is_empty() { return (file.to_string(), None); } const MAX_DIR_CHARS: usize = 22;
+    let subtitle = if dir.chars().count() > MAX_DIR_CHARS { let tail = dir.chars().rev().take(MAX_DIR_CHARS - 2).collect::<Vec<_>>().into_iter().rev().collect::<String>(); format!("…{tail}") } else { dir.to_string() }; (file.to_string(), Some(subtitle)) }
+                #[cfg(test)]
 mod tests {
-    use super::reveal_default_on;
+    use super::{reveal_default_on, split_module_label};
 
+    #[test] fn split_module_label_extracts_file_and_dir() { assert_eq!(split_module_label("src/components/Button.tsx"), ("Button.tsx".to_string(), Some("src/components".to_string()))); assert_eq!(split_module_label("index.ts"), ("index.ts".to_string(), None)); }
+    #[test] fn split_module_label_truncates_long_directory_safely() { let (title, sub) = split_module_label("packages/core/src/features/editor/toolbar/Button.tsx"); assert_eq!(title, "Button.tsx"); let sub = sub.expect("subtitle"); assert!(sub.starts_with('…')); assert!(sub.chars().count() <= 22); }
     #[test]
     fn reveal_is_on_by_default() {
         assert!(reveal_default_on(false), "未给开关时必须默认开启");
