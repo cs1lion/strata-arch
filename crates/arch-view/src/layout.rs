@@ -129,13 +129,13 @@ impl Default for LayoutConfig {
         Self {
             width: 1200.0,
             height: 800.0,
-            band_gap: 16.0,
-            band_header: 24.0,
-            band_padding: 10.0,
-            node_width: 150.0,
-            node_height: 40.0,
-            node_gap_x: 12.0,
-            node_gap_y: 10.0,
+            band_gap: 24.0,
+            band_header: 28.0,
+            band_padding: 14.0,
+            node_width: 168.0,
+            node_height: 44.0,
+            node_gap_x: 16.0,
+            node_gap_y: 12.0,
             overlap_area_threshold: 0.0,
         }
     }
@@ -151,15 +151,30 @@ pub fn layout_map(artifact: &LayersArtifact, config: LayoutConfig) -> MapLayout 
     let mut nodes = Vec::new();
     let mut cursor_y = 0.0;
 
-    for layer in LAYER_ORDER {
-        let layer_modules = artifact
-            .modules
-            .iter()
-            .filter(|module| module.layer == layer)
-            .collect::<Vec<_>>();
-        if layer_modules.is_empty() {
-            continue;
-        }
+    let mut layer_groups: Vec<(&'static str, Vec<String>)> = LAYER_ORDER
+        .iter()
+        .filter_map(|&layer| {
+            let ids = artifact
+                .modules
+                .iter()
+                .filter(|m| m.layer == layer)
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                None
+            } else {
+                Some((layer, ids))
+            }
+        })
+        .collect();
+    let edge_pairs = artifact
+        .edges
+        .iter()
+        .map(|e| (e.source.clone(), e.target.clone()))
+        .collect::<Vec<_>>();
+    order_layers_for_readability(&mut layer_groups, &edge_pairs);
+
+    for (layer, layer_modules) in layer_groups {
 
         let rows = layer_modules.len().div_ceil(columns);
         let band_height = config.band_header
@@ -177,7 +192,7 @@ pub fn layout_map(artifact: &LayersArtifact, config: LayoutConfig) -> MapLayout 
             is_external,
         });
 
-        for (index, module) in layer_modules.iter().enumerate() {
+        for (index, module_id) in layer_modules.iter().enumerate() {
             let row = index / columns;
             let column = index % columns;
             let x = config.band_padding + column as f32 * (config.node_width + config.node_gap_x);
@@ -194,7 +209,7 @@ pub fn layout_map(artifact: &LayersArtifact, config: LayoutConfig) -> MapLayout 
             );
             let z_index = 1000 + nodes.len() as i32;
             nodes.push(NodeLayout {
-                id: module.id.clone(),
+                id: module_id.clone(),
                 layer,
                 rect,
                 label_rect,
@@ -262,5 +277,177 @@ pub fn layout_map(artifact: &LayersArtifact, config: LayoutConfig) -> MapLayout 
         edges,
         overlap_area,
         overlap_area_threshold: config.overlap_area_threshold,
+    }
+}
+fn dir_prefix(id: &str) -> &str {
+    match id.rsplit_once('/') {
+        Some((dir, _)) => dir,
+        None => "",
+    }
+}
+
+fn normalized_positions(layer_ids: &[String]) -> BTreeMap<String, f32> {
+    let denom = layer_ids.len().saturating_sub(1).max(1) as f32;
+    layer_ids
+        .iter()
+        .enumerate()
+        .map(|(idx, id)| (id.clone(), idx as f32 / denom))
+        .collect()
+}
+
+fn reorder_layer_by_barycenter(
+    layer_ids: &mut [String],
+    ref_positions: &BTreeMap<String, f32>,
+    adj: &BTreeMap<String, Vec<String>>,
+) {
+    let current = normalized_positions(layer_ids);
+    let mut scored = layer_ids
+        .iter()
+        .map(|id| {
+            let mut sum = 0.0_f32;
+            let mut count = 0usize;
+            if let Some(neighbors) = adj.get(id) {
+                for neighbor in neighbors {
+                    if let Some(&pos) = ref_positions.get(neighbor) {
+                        sum += pos;
+                        count += 1;
+                    }
+                }
+            }
+            let score = if count > 0 {
+                sum / count as f32
+            } else {
+                current.get(id).copied().unwrap_or(0.5)
+            };
+            (id.clone(), score)
+        })
+        .collect::<Vec<_>>();
+
+    scored.sort_by(|(id_a, score_a), (id_b, score_b)| {
+        score_a
+            .total_cmp(score_b)
+            .then_with(|| dir_prefix(id_a).cmp(dir_prefix(id_b)))
+            .then_with(|| id_a.cmp(id_b))
+    });
+
+    for (slot, (id, _)) in layer_ids.iter_mut().zip(scored) {
+        *slot = id;
+    }
+}
+
+/// 按目录前缀聚类并执行 2 轮跨层重心扫描，减少相邻层连线交叉（完全确定性）。
+fn order_layers_for_readability(
+    layers: &mut [(&'static str, Vec<String>)],
+    edges: &[(String, String)],
+) {
+    for (_, ids) in layers.iter_mut() {
+        ids.sort_by(|a, b| dir_prefix(a).cmp(dir_prefix(b)).then_with(|| a.cmp(b)));
+    }
+    if layers.len() < 2 || edges.is_empty() {
+        return;
+    }
+
+    let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (src, dst) in edges {
+        if src == dst {
+            continue;
+        }
+        adj.entry(src.clone()).or_default().push(dst.clone());
+        adj.entry(dst.clone()).or_default().push(src.clone());
+    }
+
+    for _ in 0..2 {
+        for idx in 1..layers.len() {
+            let ref_pos = normalized_positions(&layers[idx - 1].1);
+            reorder_layer_by_barycenter(&mut layers[idx].1, &ref_pos, &adj);
+        }
+        for idx in (0..layers.len() - 1).rev() {
+            let ref_pos = normalized_positions(&layers[idx + 1].1);
+            reorder_layer_by_barycenter(&mut layers[idx].1, &ref_pos, &adj);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn count_two_layer_crossings(
+        top: &[String],
+        bottom: &[String],
+        edges: &[(String, String)],
+    ) -> usize {
+        let top_idx = top
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect::<BTreeMap<_, _>>();
+        let bottom_idx = bottom
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect::<BTreeMap<_, _>>();
+        let mapped = edges
+            .iter()
+            .filter_map(|(s, t)| {
+                let a = *top_idx.get(s.as_str())?;
+                let b = *bottom_idx.get(t.as_str())?;
+                Some((a, b))
+            })
+            .collect::<Vec<_>>();
+        let mut crossings = 0;
+        for (i, &(a1, b1)) in mapped.iter().enumerate() {
+            for &(a2, b2) in mapped.iter().skip(i + 1) {
+                if (a1 < a2 && b1 > b2) || (a1 > a2 && b1 < b2) {
+                    crossings += 1;
+                }
+            }
+        }
+        crossings
+    }
+
+    #[test]
+    fn barycenter_ordering_reduces_cross_layer_crossings() {
+        let mut layers = vec![
+            ("ui", vec!["src/ui/a.ts".to_string(), "src/ui/b.ts".to_string()]),
+            (
+                "domain",
+                vec!["src/domain/x.ts".to_string(), "src/domain/y.ts".to_string()],
+            ),
+        ];
+        // 初始字典序存在 1 处交叉：a -> y, b -> x
+        let edges = vec![
+            ("src/ui/a.ts".to_string(), "src/domain/y.ts".to_string()),
+            ("src/ui/b.ts".to_string(), "src/domain/x.ts".to_string()),
+        ];
+        let before = count_two_layer_crossings(&layers[0].1, &layers[1].1, &edges);
+        assert_eq!(before, 1);
+
+        order_layers_for_readability(&mut layers, &edges);
+        let after = count_two_layer_crossings(&layers[0].1, &layers[1].1, &edges);
+        assert_eq!(after, 0);
+    }
+
+    #[test]
+    fn directory_clustering_groups_same_folder_modules() {
+        let mut layers = vec![(
+            "domain",
+            vec![
+                "src/z/one.ts".to_string(),
+                "src/a/beta.ts".to_string(),
+                "src/z/two.ts".to_string(),
+                "src/a/alpha.ts".to_string(),
+            ],
+        )];
+        order_layers_for_readability(&mut layers, &[]);
+        assert_eq!(
+            layers[0].1,
+            vec![
+                "src/a/alpha.ts".to_string(),
+                "src/a/beta.ts".to_string(),
+                "src/z/one.ts".to_string(),
+                "src/z/two.ts".to_string(),
+            ]
+        );
     }
 }
