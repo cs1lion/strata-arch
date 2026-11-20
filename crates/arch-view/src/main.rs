@@ -293,7 +293,143 @@ impl<T: Render> Render for LoadingShell<T> {
         self.render_status_panel(cx)
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkbenchTab {
+    Map,
+    Timeline,
+}
 
+/// 顶层统一工作台：在单窗口顶部提供 Map / Timeline 切换，按需懒加载另一个视图。
+struct WorkbenchView {
+    repo: PathBuf,
+    active: WorkbenchTab,
+    map: Option<Entity<LoadingShell<MapView>>>,
+    timeline: Option<Entity<TimelineView>>,
+    reveal_requested: bool,
+    autoplay: bool,
+}
+
+impl WorkbenchView {
+    fn switch_to(&mut self, tab: WorkbenchTab, cx: &mut Context<Self>) {
+        if self.active == tab {
+            return;
+        }
+        match tab {
+            WorkbenchTab::Map => {
+                if self.map.is_none() {
+                    let shell = cx
+                        .new(|_| LoadingShell::<MapView>::new("正在准备架构地图", "构建分层"));
+                    spawn_map_loading(
+                        shell.clone(),
+                        self.repo.clone(),
+                        None,
+                        self.reveal_requested,
+                        cx,
+                    );
+                    self.map = Some(shell);
+                }
+            }
+            WorkbenchTab::Timeline => {
+                if self.timeline.is_none() {
+                    let view = cx.new(|_| TimelineView::loading(self.autoplay));
+                    spawn_timeline_loading(view.clone(), self.repo.clone(), self.autoplay, cx);
+                    self.timeline = Some(view);
+                }
+            }
+        }
+        self.active = tab;
+        cx.notify();
+    }
+}
+
+impl Render for WorkbenchView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.active;
+        let repo_name = self
+            .repo
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("strata-arch")
+            .to_string();
+
+        let top_bar = div()
+            .id("workbench-tabs")
+            .w_full()
+            .h(px(36.))
+            .px(px(12.))
+            .bg(rgb(0x0d1117))
+            .border_b_1()
+            .border_color(rgb(0x21262d))
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_xs()
+            .text_color(rgb(0xe6edf3))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(div().text_color(rgb(0x8b949e)).child("Strata"))
+                    .child(
+                        div()
+                            .id("tab-map")
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(5.))
+                            .bg(if active == WorkbenchTab::Map {
+                                rgb(0x1f3a5f)
+                            } else {
+                                rgb(0x161b22)
+                            })
+                            .child("架构地图 Map")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.switch_to(WorkbenchTab::Map, cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("tab-timeline")
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(5.))
+                            .bg(if active == WorkbenchTab::Timeline {
+                                rgb(0x1f3a5f)
+                            } else {
+                                rgb(0x161b22)
+                            })
+                            .child("演化时间线 Timeline")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.switch_to(WorkbenchTab::Timeline, cx);
+                            })),
+                    ),
+            )
+            .child(div().text_color(rgb(0x8b949e)).child(repo_name));
+
+        let mut content = div().flex_1().w_full().relative().overflow_hidden();
+        match self.active {
+            WorkbenchTab::Map => {
+                if let Some(map) = &self.map {
+                    content = content.child(map.clone());
+                }
+            }
+            WorkbenchTab::Timeline => {
+                if let Some(timeline) = &self.timeline {
+                    content = content.child(timeline.clone());
+                }
+            }
+        }
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x0d1117))
+            .child(top_bar)
+            .child(content)
+    }
+}
+    
 /// 冒烟诊断：`STRATA_SMOKE_LOG=1` 时把 gpui 的 log 输出到 stderr，
 /// 用于在无 GPU 的 CI 上定位帧请求循环为什么没启动（不改变正常运行的输出）。
 fn install_smoke_logger() {
@@ -451,12 +587,19 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     cx.new(|_| LoadingShell::<MapView>::new("正在准备架构地图", "构建分层"));
                 spawn_map_loading(
                     shell.clone(),
-                    window_repo,
+                    window_repo.clone(),
                     playback_request,
                     reveal_requested,
                     cx,
                 );
-                shell
+                cx.new(|_| WorkbenchView {
+                    repo: window_repo,
+                    active: WorkbenchTab::Map,
+                    map: Some(shell),
+                    timeline: None,
+                    reveal_requested,
+                    autoplay: false,
+                })
             },
         )
         .expect("open map window");
@@ -694,6 +837,7 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let application = Application::new();
     phase_marker("app:created");
     application.run(move |cx: &mut App| {
+        arch_view::arch_view_theme::StrataTheme::init_global(cx);
         phase_marker("app:entry");
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let window_repo = repo;
@@ -705,8 +849,15 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
             move |_window, cx| {
                 phase_marker("window:callback");
                 let view = cx.new(|_| TimelineView::loading(autoplay));
-                spawn_timeline_loading(view.clone(), window_repo, autoplay, cx);
-                view
+                spawn_timeline_loading(view.clone(), window_repo.clone(), autoplay, cx);
+                cx.new(|_| WorkbenchView {
+                    repo: window_repo,
+                    active: WorkbenchTab::Timeline,
+                    map: None,
+                    timeline: Some(view),
+                    reveal_requested: true,
+                    autoplay,
+                })
             },
         )
         .expect("open timeline window");
