@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -591,7 +591,6 @@ fn spawn_map_loading(
                     press_origin: None,
                     drag_last: None,
                     dragged: false,
-                    last_click: None,
                     transition_generation: 0,
                     transition_delta: Rc::new(Cell::new(0.0)),
                     reveal,
@@ -2193,7 +2192,6 @@ impl Render for TimelineView {
         }
     }
 }
-const DOUBLE_CLICK_MS: u128 = 380;
 const INSPECTOR_MAX_ITEMS: usize = 8;
 
 struct MapView {
@@ -2206,7 +2204,6 @@ struct MapView {
     press_origin: Option<LayoutPoint>,
     drag_last: Option<LayoutPoint>,
     dragged: bool,
-    last_click: Option<(String, Instant)>,
     /// 转场代际：每次启动新转场 +1，让 `with_animation` 的元素 id 重新计时。
     transition_generation: u64,
     /// 当前帧的转场进度，由 `with_animation` 的 animator 写入、帧回调读取。
@@ -2329,23 +2326,15 @@ impl MapView {
         if self.dragged {
             return;
         }
+        let prev_selected = self.state.selected().map(str::to_string);
         let hit = self.state.select_at(position);
         if matches!(self.state.level(), Level::Modules) {
-            let now = Instant::now();
             if let Some(module) = hit {
-                let is_double_click = self.last_click.as_ref().is_some_and(|(prev, ts)| {
-                    prev == &module && now.duration_since(*ts).as_millis() <= DOUBLE_CLICK_MS
-                });
-                if is_double_click {
-                    self.last_click = None;
-                    if self.state.drill_down(&module, &self.callgraph) {
-                        self.search.reset();
-                    }
-                } else {
-                    self.last_click = Some((module, now));
+                if prev_selected.as_deref() == Some(module.as_str())
+                    && self.state.drill_down(&module, &self.callgraph)
+                {
+                    self.search.reset();
                 }
-            } else {
-                self.last_click = None;
             }
         }
     }
@@ -2386,7 +2375,6 @@ impl MapView {
                     if matches!(self.state.level(), Level::Modules) {
                         if let Some(module) = self.state.selected().map(str::to_string) {
                             if self.state.drill_down(&module, &self.callgraph) {
-                                self.last_click = None;
                                 self.search.reset();
                             }
                             cx.notify();
@@ -2396,7 +2384,6 @@ impl MapView {
                 }
                 "escape" => {
                     if self.search.focus_label().is_none() && self.state.clear_selection() {
-                        self.last_click = None;
                         cx.notify();
                         return;
                     }
@@ -3665,7 +3652,6 @@ impl Render for MapView {
                                         .on_click(cx.listener(
                                             |this, _event: &ClickEvent, _window, cx| {
                                                 this.state.clear_selection();
-                                                this.last_click = None;
                                                 cx.notify();
                                             },
                                         )),
@@ -3692,7 +3678,6 @@ impl Render for MapView {
                                     move |this, _event: &ClickEvent, _window, cx| {
                                         this.interrupt_reveal();
                                         if this.state.drill_down(&drill_id, &this.callgraph) {
-                                            this.last_click = None;
                                             this.search.reset();
                                         }
                                         cx.notify();
