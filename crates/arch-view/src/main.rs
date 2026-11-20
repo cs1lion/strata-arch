@@ -360,6 +360,7 @@ impl WorkbenchView {
                         );
                     self.diff = Some(shell);
                 }
+            }
         }
         self.active = tab;
         cx.notify();
