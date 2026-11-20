@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
+  schedule:
+    - cron: "0 6 * * 1"
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -51,7 +52,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
             'openbox >/dev/null 2>&1 & sleep 1; exec cargo test --locked -p arch-view -p arch-core -- --skip tsx_golden_baseline --skip excalidraw_golden_baseline'
       - name: windows window smoke
@@ -117,7 +119,8 @@ jobs:
           mkdir -p out
           export STRATA_PHASE_MARKERS=1
           # blade 在 Linux 走 Vulkan（不是 GL）：显式指定 lavapipe，避免隐式选驱动。
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           # 必须有窗口管理器：无 WM 的虚拟显示里 gpui 的 X11 后端不会启动帧请求循环，
           # `on_next_frame` 永不回调（取证见 docs/acceptance-gaps.md 2.2.2 与 CI run 42501294926）。
           # 软件渲染只用于验证窗口真的出帧，不代表真实 GPU 表现。
@@ -133,7 +136,17 @@ jobs:
             echo "== linux smoke: FAIL (exit ${status}) =="
             exit 1
           fi
-
+  workflow-lint:
+    name: workflow lint (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: run actionlint
+        shell: bash
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+                   ./actionlint -color
+                   
   clippy:
     name: clippy gate (workspace, all targets, -D warnings)
     runs-on: ubuntu-latest
@@ -175,7 +188,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/reveal
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           for i in 1 2 3; do
             xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
               "openbox >/dev/null 2>&1 & sleep 1; exec pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/soft-$i.json" \
@@ -185,7 +199,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           for i in 1 2 3; do
             xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
               "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/soft-1cpu-$i.json" \
@@ -197,7 +212,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
             "openbox >/dev/null 2>&1 & sleep 1; exec pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 60000 -OutJson out/reveal/small-soft.json" \
             2>&1 | tee "out/reveal/small-soft.log"
@@ -205,7 +221,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          VK_ICD_FILENAMES="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -n1)"
+          export VK_ICD_FILENAMES
           xvfb-run -a -s "-screen 0 1280x1024x24" bash -c \
             "openbox >/dev/null 2>&1 & sleep 1; exec taskset -c 0 pwsh -NoProfile -File eval/frame-timing.ps1 -Mode reveal -Repo tests/fixtures/layers -Exe target/release/arch-view -RevealAutoCloseMs 30000 -OutJson out/reveal/small-1cpu.json" \
             2>&1 | tee "out/reveal/small-1cpu.log"
