@@ -2192,6 +2192,7 @@ impl Render for TimelineView {
         }
     }
 }
+const INSPECTOR_MAX_ITEMS: usize = 8;
 
 struct MapView {
     state: CanvasState,
@@ -2325,11 +2326,13 @@ impl MapView {
         if self.dragged {
             return;
         }
+        let prev_selected = self.state.selected().map(str::to_string);
         let hit = self.state.select_at(position);
         if matches!(self.state.level(), Level::Modules) {
             if let Some(module) = hit {
-                // 搜索只在模块级可用；下钻后回到初始态，避免标签指向已离开的层级。
-                if self.state.drill_down(&module, &self.callgraph) {
+                if prev_selected.as_deref() == Some(module.as_str())
+                    && self.state.drill_down(&module, &self.callgraph)
+                {
                     self.search.reset();
                 }
             }
@@ -2368,6 +2371,23 @@ impl MapView {
             && !keystroke.modifiers.alt
         {
             match keystroke.key.as_str() {
+                "enter" => {
+                    if matches!(self.state.level(), Level::Modules) {
+                        if let Some(module) = self.state.selected().map(str::to_string) {
+                            if self.state.drill_down(&module, &self.callgraph) {
+                                self.search.reset();
+                            }
+                            cx.notify();
+                            return;
+                        }
+                    }
+                }
+                "escape" => {
+                    if self.search.focus_label().is_none() && self.state.clear_selection() {
+                        cx.notify();
+                        return;
+                    }
+                }
                 "e" | "E" => {
                     self.state.cycle_edge_mode();
                     cx.notify();
@@ -2640,19 +2660,30 @@ impl MapView {
                             {
                                 return None;
                             }
-                            let opacity = match search_focus {
-                                Some(set) => {
-                                    set.edge_opacity(&edge.source, &edge.target) * reveal_overall
-                                }
-                                None => base_opacity,
-                            };
-                            Some(EdgeDraw {
-                                from,
-                                to,
-                                adjusted: edge.direction_adjusted,
-                                strong: false,
-                                opacity,
-                            })
+                            let selected_id = self.state.selected();
+                    let is_selected_edge = search_focus.is_none()
+                        && selected_id
+                            .is_some_and(|id| id == edge.source || id == edge.target);
+                    let opacity = match search_focus {
+                        Some(set) => {
+                            set.edge_opacity(&edge.source, &edge.target) * reveal_overall
+                        }
+                        None if selected_id.is_some() => {
+                            if is_selected_edge {
+                                reveal_overall
+                            } else {
+                                CONTEXT_OPACITY * reveal_overall
+                            }
+                        }
+                        None => base_opacity,
+                    };
+                    Some(EdgeDraw {
+                        from,
+                        to,
+                        adjusted: edge.direction_adjusted,
+                        strong: is_selected_edge,
+                        opacity,
+                    })
                         })
                         .collect::<Vec<_>>();
                     root = root.child(edge_canvas(
@@ -2749,7 +2780,8 @@ impl MapView {
                     label: Option<String>,
                     marker: Option<u32>,
                 }
-                let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
+                let hovered = self.state.hovered().map(str::to_string);
+            let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
                 let mut node_overlays: Vec<ModuleNodeOverlay> = Vec::new();
                 for index in indices {
                     if skip.nodes {
@@ -2768,9 +2800,19 @@ impl MapView {
                                 }
                             })
                             .unwrap_or(1.0),
-                        None => search_focus
-                            .map(|set| set.module_opacity(&node.id))
-                            .unwrap_or(1.0),
+                        None => match search_focus {
+                        Some(set) => set.module_opacity(&node.id),
+                        None if selected.is_some() => {
+                            if selected.as_deref() == Some(node.id.as_str())
+                                || highlighted.contains(&node.id)
+                            {
+                                1.0
+                            } else {
+                                CONTEXT_OPACITY
+                            }
+                        }
+                        None => 1.0,
+                    },
                     };
                     let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
                     let opacity = opacity * self.reveal.opacity_for_stage(stage);
@@ -2806,7 +2848,11 @@ impl MapView {
                         || selected.as_deref() == Some(node.id.as_str())
                     {
                         theme.card_border_selected
-                    } else if highlighted.contains(&node.id) {
+                } else if hovered.as_deref() == Some(node.id.as_str()) {
+                    let mut b = accent;
+                    b.a = 0.85;
+                    b
+                } else if highlighted.contains(&node.id) {
                         let mut b = accent;
                         b.a = 0.65;
                         b
@@ -3288,6 +3334,9 @@ impl Render for MapView {
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
                 if !event.dragging() {
+                    if this.state.hover_at(Self::screen_position(event.position)) {
+                        cx.notify();
+                    }
                     return;
                 }
                 this.interrupt_reveal();
@@ -3551,6 +3600,194 @@ impl Render for MapView {
                     })),
             );
             root = root.child(panel);
+        }
+        if matches!(self.state.level(), Level::Modules) {
+            if let Some(selected_id) = self.state.selected().map(str::to_string) {
+                if let Some(node) = self.state.map().nodes.iter().find(|n| n.id == selected_id) {
+                    let short_name = selected_id
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&selected_id)
+                        .to_string();
+                    let layer_name = node.layer;
+                    let symbol_count = self
+                        .state
+                        .module_symbol_count(&selected_id, &self.callgraph);
+                    let (upstream, downstream) = self.state.module_neighbors(&selected_id);
+                    let up_total = upstream.len();
+                    let down_total = downstream.len();
+
+                    let mut inspector = div()
+                        .id("module-inspector")
+                        .absolute()
+                        .right(px(12.))
+                        .top(px(52.))
+                        .w(px(280.))
+                        .px(px(12.))
+                        .py(px(10.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(rgb(0x30363d))
+                        .bg(rgb(0x161b22))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .text_xs()
+                        .text_color(rgb(0xe6edf3))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(8.))
+                                .child(div().text_color(rgb(0xf0f6fc)).child(short_name))
+                                .child(
+                                    div()
+                                        .id("inspector-close")
+                                        .px(px(6.))
+                                        .py(px(2.))
+                                        .rounded(px(4.))
+                                        .bg(rgb(0x1f2937))
+                                        .child("×")
+                                        .on_click(cx.listener(
+                                            |this, _event: &ClickEvent, _window, cx| {
+                                                this.state.clear_selection();
+                                                cx.notify();
+                                            },
+                                        )),
+                                ),
+                        )
+                        .child(div().text_color(rgb(0x8b949e)).child(selected_id.clone()))
+                        .child(
+                            div()
+                                .text_color(rgb(0x79c0ff))
+                                .child(format!("层: {layer_name} · {symbol_count} 个符号")),
+                        );
+
+                    if symbol_count > 0 {
+                        let drill_id = selected_id.clone();
+                        inspector = inspector.child(
+                            div()
+                                .id("inspector-drill")
+                                .px(px(8.))
+                                .py(px(4.))
+                                .rounded(px(4.))
+                                .bg(rgb(0x1f3a5f))
+                                .child("下钻符号视图 (双击 / Enter)")
+                                .on_click(cx.listener(
+                                    move |this, _event: &ClickEvent, _window, cx| {
+                                        this.interrupt_reveal();
+                                        if this.state.drill_down(&drill_id, &this.callgraph) {
+                                            this.search.reset();
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                        );
+                    }
+
+                    inspector = inspector.child(
+                        div()
+                            .text_color(rgb(0x8b949e))
+                            .child(format!("上游依赖 ({up_total})")),
+                    );
+                    if upstream.is_empty() {
+                        inspector = inspector
+                            .child(div().text_color(rgb(0x6e7681)).child("无上游依赖"));
+                    } else {
+                        for (idx, dep) in upstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
+                        {
+                            let target = dep.clone();
+                            inspector = inspector.child(
+                                div()
+                                    .id(("insp-up", idx as u64))
+                                    .px(px(6.))
+                                    .py(px(3.))
+                                    .rounded(px(4.))
+                                    .bg(rgb(0x0d1117))
+                                    .child(dep)
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, window, cx| {
+                                            this.interrupt_reveal();
+                                            let size = (
+                                                f32::from(window.viewport_size().width),
+                                                f32::from(window.viewport_size().height),
+                                            );
+                                            if let Some(center) = this.state.select_module(&target)
+                                            {
+                                                if this.state.begin_fly_to(Some(center), size) {
+                                                    this.transition_generation += 1;
+                                                    this.transition_delta = Rc::new(Cell::new(0.0));
+                                                    Self::schedule_transition_step(
+                                                        this, window, cx,
+                                                    );
+                                                }
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                            );
+                        }
+                        if up_total > INSPECTOR_MAX_ITEMS {
+                            inspector = inspector.child(div().text_color(rgb(0x6e7681)).child(
+                                format!("... 另有 {} 项", up_total - INSPECTOR_MAX_ITEMS),
+                            ));
+                        }
+                    }
+
+                    inspector = inspector.child(
+                        div()
+                            .text_color(rgb(0x8b949e))
+                            .child(format!("下游依赖 ({down_total})")),
+                    );
+                    if downstream.is_empty() {
+                        inspector = inspector
+                            .child(div().text_color(rgb(0x6e7681)).child("无下游依赖"));
+                    } else {
+                        for (idx, dep) in
+                            downstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
+                        {
+                            let target = dep.clone();
+                            inspector = inspector.child(
+                                div()
+                                    .id(("insp-down", idx as u64))
+                                    .px(px(6.))
+                                    .py(px(3.))
+                                    .rounded(px(4.))
+                                    .bg(rgb(0x0d1117))
+                                    .child(dep)
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, window, cx| {
+                                            this.interrupt_reveal();
+                                            let size = (
+                                                f32::from(window.viewport_size().width),
+                                                f32::from(window.viewport_size().height),
+                                            );
+                                            if let Some(center) = this.state.select_module(&target)
+                                            {
+                                                if this.state.begin_fly_to(Some(center), size) {
+                                                    this.transition_generation += 1;
+                                                    this.transition_delta = Rc::new(Cell::new(0.0));
+                                                    Self::schedule_transition_step(
+                                                        this, window, cx,
+                                                    );
+                                                }
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                            );
+                        }
+                        if down_total > INSPECTOR_MAX_ITEMS {
+                            inspector = inspector.child(div().text_color(rgb(0x6e7681)).child(
+                                format!("... 另有 {} 项", down_total - INSPECTOR_MAX_ITEMS),
+                            ));
+                        }
+                    }
+
+                    root = root.child(inspector);
+                }
+            }
         }
         let edge_mode = self.state.edge_mode();
         let module_count = self.state.map().nodes.len();
