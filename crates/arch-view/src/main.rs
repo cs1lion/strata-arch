@@ -26,7 +26,7 @@ use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
 use arch_view::search::{interpret_key, FocusLabel, KeyModifiers, SearchAction, SearchState, SearchKey};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
-    group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
+    find_reachable_symbol_pair, group_edges, layer_palette, node_visual_geometry, paint_symbol_edges,
     paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState, EdgeDisplayMode,
     EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN, MAX_ZOOM, MIN_ZOOM,
 };
@@ -573,6 +573,7 @@ fn spawn_map_loading(
 
         let built_view = cx.update(|cx| {
             let evidence_camera = evidence_viewport();
+         let map_repo = repo.clone();
             cx.new(move |cx| {
                 let search = SearchState::new(&layout);
                 let focus_handle = cx.focus_handle();
@@ -584,6 +585,10 @@ fn spawn_map_loading(
                         }
                         state
                     },
+                    repo: map_repo,
+                    path_from: None,
+                    path_to: None,
+                    path_status: None,
                     callgraph,
                     playback,
                     ticker_running: false,
@@ -2196,6 +2201,10 @@ const INSPECTOR_MAX_ITEMS: usize = 8;
 
 struct MapView {
     state: CanvasState,
+    repo: PathBuf,
+    path_from: Option<String>,
+    path_to: Option<String>,
+    path_status: Option<String>,
     callgraph: CallGraphArtifact,
     playback: Option<PlaybackState>,
     ticker_running: bool,
@@ -2337,6 +2346,50 @@ impl MapView {
                 }
             }
         }
+    }
+
+    fn trigger_interactive_path(&mut self, cx: &mut Context<Self>) {
+        let (Some(from_mod), Some(to_mod)) = (self.path_from.clone(), self.path_to.clone()) else {
+            self.path_status = None;
+            return;
+        };
+        if from_mod == to_mod {
+            self.path_status = Some("起点与终点模块相同，请选择不同模块".to_string());
+            return;
+        }
+        let Some((from_sym, to_sym)) =
+            find_reachable_symbol_pair(&from_mod, &to_mod, &self.callgraph)
+        else {
+            self.path_status = Some("两模块间无可达调用路径".to_string());
+            return;
+        };
+        self.path_status = Some("正在构建调用路径...".to_string());
+        let repo = self.repo.clone();
+        cx.spawn(async move |this, cx| {
+            let built = cx
+                .background_executor()
+                .spawn(async move {
+                    build_path(&repo, env!("CARGO_PKG_VERSION"), &from_sym, &to_sym)
+                        .map_err(|error| format!("构建路径失败: {error}"))
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                match built {
+                    Ok(path) => {
+                        view.playback = Some(PlaybackState::new(&path));
+                        view.ticker_running = false;
+                        view.fly_to_anchor = None;
+                        view.search.reset();
+                        view.path_status = None;
+                    }
+                    Err(message) => {
+                        view.path_status = Some(message);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 用户任何交互都立即结束揭示并落到最终态；已结束/默认关时无操作。
@@ -3686,6 +3739,110 @@ impl Render for MapView {
                         );
                     }
 
+                    let is_from = self.path_from.as_deref() == Some(selected_id.as_str());
+                    let is_to = self.path_to.as_deref() == Some(selected_id.as_str());
+                    let from_id = selected_id.clone();
+                    let to_id = selected_id.clone();
+                    inspector = inspector.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .id("inspector-set-from")
+                                    .px(px(8.))
+                                    .py(px(4.))
+                                    .rounded(px(4.))
+                                    .bg(if is_from {
+                                        rgb(0x1f3a5f)
+                                    } else {
+                                        rgb(0x1f2937)
+                                    })
+                                    .child(if is_from {
+                                        "✓ 路径起点"
+                                    } else {
+                                        "设为路径起点"
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, _window, cx| {
+                                            this.interrupt_reveal();
+                                            this.path_from = Some(from_id.clone());
+                                            this.trigger_interactive_path(cx);
+                                            cx.notify();
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("inspector-set-to")
+                                    .px(px(8.))
+                                    .py(px(4.))
+                                    .rounded(px(4.))
+                                    .bg(if is_to {
+                                        rgb(0x1f3a5f)
+                                    } else {
+                                        rgb(0x1f2937)
+                                    })
+                                    .child(if is_to {
+                                        "✓ 路径终点"
+                                    } else {
+                                        "设为路径终点"
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, _window, cx| {
+                                            this.interrupt_reveal();
+                                            this.path_to = Some(to_id.clone());
+                                            this.trigger_interactive_path(cx);
+                                            cx.notify();
+                                        },
+                                    )),
+                            ),
+                    );
+                    if self.path_from.is_some()
+                        || self.path_to.is_some()
+                        || self.path_status.is_some()
+                    {
+                        let from_label = self
+                            .path_from
+                            .as_deref()
+                            .and_then(|id| id.rsplit('/').next())
+                            .unwrap_or("未选");
+                        let to_label = self
+                            .path_to
+                            .as_deref()
+                            .and_then(|id| id.rsplit('/').next())
+                            .unwrap_or("未选");
+                        let summary = match &self.path_status {
+                            Some(status) => status.clone(),
+                            None => format!("路径: {from_label} -> {to_label}"),
+                        };
+                        inspector = inspector.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(6.))
+                                .child(div().text_color(rgb(0xd29922)).child(summary))
+                                .child(
+                                    div()
+                                        .id("inspector-clear-path")
+                                        .px(px(6.))
+                                        .py(px(2.))
+                                        .rounded(px(4.))
+                                        .bg(rgb(0x1f2937))
+                                        .child("清除")
+                                        .on_click(cx.listener(
+                                            |this, _event: &ClickEvent, _window, cx| {
+                                                this.path_from = None;
+                                                this.path_to = None;
+                                                this.path_status = None;
+                                                cx.notify();
+                                            },
+                                        )),
+                                ),
+                        );
+                    }
                     inspector = inspector.child(
                         div()
                             .text_color(rgb(0x8b949e))
