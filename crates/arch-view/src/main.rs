@@ -776,6 +776,7 @@ fn spawn_map_loading(
                     path_from: None,
                     path_to: None,
                     path_status: None,
+                    layer_filter: None,
                     callgraph,
                     playback,
                     ticker_running: false,
@@ -2400,6 +2401,7 @@ struct MapView {
     path_from: Option<String>,
     path_to: Option<String>,
     path_status: Option<String>,
+    layer_filter: Option<&'static str>,
     callgraph: CallGraphArtifact,
     playback: Option<PlaybackState>,
     ticker_running: bool,
@@ -2631,7 +2633,9 @@ impl MapView {
                     }
                 }
                 "escape" => {
-                    if self.search.focus_label().is_none() && self.state.clear_selection() {
+                    if self.search.focus_label().is_none()
+                        && (self.state.clear_selection() || self.layer_filter.take().is_some())
+                    {
                         cx.notify();
                         return;
                     }
@@ -2885,6 +2889,13 @@ impl MapView {
                     (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
         let edge_mode = self.state.edge_mode();
                 if !skip.edges && edge_mode != EdgeDisplayMode::Hidden {
+        let layer_nodes = self.layer_filter.map(|target_layer| {
+            map.nodes
+                .iter()
+                .filter(|node| node.layer == target_layer)
+                .map(|node| node.id.as_str())
+                .collect::<BTreeSet<_>>()
+        });
                     let edges = map
                         .edges
                         .iter()
@@ -2892,10 +2903,16 @@ impl MapView {
                     if edge_mode == EdgeDisplayMode::FocusedOnly {
                         let related = match search_focus {
                             Some(set) => set.focus == edge.source || set.focus == edge.target,
-                            None => self
-                                .state
-                                .selected()
-                                .is_some_and(|id| id == edge.source || id == edge.target),
+                            None => {
+                            if let Some(id) = self.state.selected() {
+                                id == edge.source || id == edge.target
+                            } else if let Some(nodes) = &layer_nodes {
+                                nodes.contains(edge.source.as_str())
+                                    || nodes.contains(edge.target.as_str())
+                            } else {
+                                false
+                            }
+                        }
                         };
                         if !related {
                             return None;
@@ -2909,6 +2926,12 @@ impl MapView {
                                 return None;
                             }
                             let selected_id = self.state.selected();
+                    let is_layer_edge = search_focus.is_none()
+                        && selected_id.is_none()
+                        && layer_nodes.as_ref().is_some_and(|nodes| {
+                            nodes.contains(edge.source.as_str())
+                                || nodes.contains(edge.target.as_str())
+                        });
                     let is_selected_edge = search_focus.is_none()
                         && selected_id
                             .is_some_and(|id| id == edge.source || id == edge.target);
@@ -2923,13 +2946,20 @@ impl MapView {
                                 CONTEXT_OPACITY * reveal_overall
                             }
                         }
+                        None if layer_nodes.is_some() => {
+                            if is_layer_edge {
+                                reveal_overall
+                            } else {
+                                0.18 * reveal_overall
+                            }
+                        }
                         None => base_opacity,
                     };
                     Some(EdgeDraw {
                         from,
                         to,
                         adjusted: edge.direction_adjusted,
-                        strong: is_selected_edge,
+                        strong: is_selected_edge || is_layer_edge,
                         opacity,
                     })
                         })
@@ -3057,6 +3087,13 @@ impl MapView {
                                 1.0
                             } else {
                                 CONTEXT_OPACITY
+                            }
+                        }
+                        None if self.layer_filter.is_some() => {
+                            if self.layer_filter == Some(node.layer) {
+                                1.0
+                            } else {
+                                0.28
                             }
                         }
                         None => 1.0,
@@ -4263,6 +4300,87 @@ impl Render for MapView {
                     })),
             );
         root = root.child(hud);
+
+        if matches!(self.state.level(), Level::Modules)
+            && overlay.is_none()
+            && !self.state.map().bands.is_empty()
+        {
+            let active_layer = self.layer_filter;
+            let mut legend = div()
+                .id("map-layer-legend")
+                .absolute()
+                .left(px(12.))
+                .bottom(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(10.))
+                .py(px(6.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(rgb(0x30363d))
+                .bg(rgb(0x161b22))
+                .text_xs()
+                .text_color(rgb(0xe6edf3));
+
+            for (idx, band) in self.state.map().bands.iter().enumerate() {
+                let layer_name = band.layer;
+                let swatch_hex = layer_palette(band.layer, band.is_unclassified);
+                let is_active = active_layer == Some(layer_name);
+                legend = legend.child(
+                    div()
+                        .id(("legend-layer", idx as u64))
+                        .px(px(7.))
+                        .py(px(3.))
+                        .rounded(px(4.))
+                        .bg(if is_active {
+                            rgb(0x1f3a5f)
+                        } else {
+                            rgb(0x1f2937)
+                        })
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .child(
+                            div()
+                                .w(px(8.))
+                                .h(px(8.))
+                                .rounded(px(4.))
+                                .bg(rgb(swatch_hex)),
+                        )
+                        .child(format!("{} ({})", band.layer, band.node_count))
+                        .on_click(cx.listener(
+                            move |this, _event: &ClickEvent, _window, cx| {
+                                this.interrupt_reveal();
+                                this.layer_filter = if this.layer_filter == Some(layer_name) {
+                                    None
+                                } else {
+                                    Some(layer_name)
+                                };
+                                cx.notify();
+                            },
+                        )),
+                );
+            }
+
+            if active_layer.is_some() {
+                legend = legend.child(
+                    div()
+                        .id("legend-clear")
+                        .px(px(6.))
+                        .py(px(3.))
+                        .rounded(px(4.))
+                        .bg(rgb(0x30363d))
+                        .child("全部")
+                        .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                            this.layer_filter = None;
+                            cx.notify();
+                        })),
+                );
+            }
+
+            root = root.child(legend);
+        }
 
         // P5：揭示进度只由 GPUI 动画时钟驱动（固定时长），帧率只决定中间帧疏密。
         let mut element = if self.reveal.is_active() {
