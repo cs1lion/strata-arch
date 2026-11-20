@@ -430,6 +430,7 @@ pub struct CanvasState {
     neighbors: BTreeMap<String, BTreeSet<String>>,
     viewport: Viewport,
     selected: Option<String>,
+    hovered: Option<String>,
     saved: Option<SavedView>,
     transition: Option<CameraTransition>,
     transition_enabled: bool,
@@ -449,6 +450,7 @@ impl CanvasState {
             neighbors: BTreeMap::new(),
             viewport: Viewport::default(),
             selected: None,
+            hovered: None,
             saved: None,
             transition: None,
             transition_enabled: true,
@@ -684,6 +686,7 @@ impl CanvasState {
         self.symbols = Some(layout);
         self.neighbors = neighbors;
         self.selected = None;
+        self.hovered = None;
         self.transition = None;
         self.viewport = Viewport::default();
         true
@@ -697,6 +700,7 @@ impl CanvasState {
         self.symbols = None;
         self.neighbors.clear();
         self.selected = None;
+        self.hovered = None;
         self.transition = None;
         self.viewport = saved.viewport;
         true
@@ -716,10 +720,87 @@ impl CanvasState {
     }
 
     pub fn highlighted(&self) -> BTreeSet<String> {
-        match &self.selected {
-            Some(selected) => self.neighbors.get(selected).cloned().unwrap_or_default(),
-            None => BTreeSet::new(),
+        let Some(selected) = self.selected.as_deref() else {
+            return BTreeSet::new();
+        };
+        if self.symbols.is_some() {
+            return self.neighbors.get(selected).cloned().unwrap_or_default();
         }
+        let mut set = BTreeSet::new();
+        for edge in &self.map.edges {
+            if edge.source == selected && edge.target != selected {
+                set.insert(edge.target.clone());
+            } else if edge.target == selected && edge.source != selected {
+                set.insert(edge.source.clone());
+            }
+        
+        set
+        
+            
+            
+        
+    }
+
+    pub fn hovered(&self) -> Option<&str> {
+        self.hovered.as_deref()
+    }
+
+    /// 命中测试更新悬停节点，仅在悬停目标变化时返回 `true`。
+    pub fn hover_at(&mut self, screen: Point) -> bool {
+        let world = self.viewport.world_point(screen);
+        let next = self
+            .current_nodes()
+            .into_iter()
+            .filter(|(_, hit_rect, _)| hit_rect.contains(world))
+            .max_by_key(|(_, _, z_index)| *z_index)
+            .map(|(id, _, _)| id);
+        if self.hovered == next {
+            false
+        } else {
+            self.hovered = next;
+            true
+        }
+    }
+
+    pub fn clear_selection(&mut self) -> bool {
+        self.selected.take().is_some()
+    }
+
+    /// 按模块 ID 直接选中（仅模块视图生效），返回其世界坐标中心点以便相机居中。
+    pub fn select_module(&mut self, id: &str) -> Option<Point> {
+        if self.symbols.is_some() {
+            return None;
+        }
+        let node = self.map.nodes.iter().find(|n| n.id == id)?;
+        self.selected = Some(node.id.clone());
+        Some(node.rect.center())
+    }
+
+    /// 返回模块视图下指定模块的 `(上游列表, 下游列表)`（去重、字典序、不含自身）。
+    pub fn module_neighbors(&self, id: &str) -> (Vec<String>, Vec<String>) {
+        let mut upstream = BTreeSet::new();
+        let mut downstream = BTreeSet::new();
+        for edge in &self.map.edges {
+            if edge.target == id && edge.source != id {
+                upstream.insert(edge.source.clone());
+            }
+            if edge.source == id && edge.target != id {
+                downstream.insert(edge.target.clone());
+            }
+        }
+        (
+            upstream.into_iter().collect(),
+            downstream.into_iter().collect(),
+        )
+    }
+
+    /// 统计指定模块在调用图中的符号数量（用于决定是否允许下钻）。
+    pub fn module_symbol_count(&self, module: &str, artifact: &CallGraphArtifact) -> usize {
+        artifact
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.module == module)
+            .count()
     }
 
     pub fn pan_by(&mut self, dx: f32, dy: f32) {
