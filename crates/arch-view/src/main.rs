@@ -3661,7 +3661,7 @@ impl Render for MapView {
                                         .py(px(2.))
                                         .rounded(px(4.))
                                         .bg(rgb(0x1f2937))
-                                        .child("✕")
+                                        .child("×")
                                         .on_click(cx.listener(
                                             |this, _event: &ClickEvent, _window, cx| {
                                                 this.state.clear_selection();
@@ -3691,7 +3691,7 @@ impl Render for MapView {
                                 .on_click(cx.listener(
                                     move |this, _event: &ClickEvent, _window, cx| {
                                         this.interrupt_reveal();
-                                        if this.state.drill_down(&drill_id, &self.callgraph) {
+                                        if this.state.drill_down(&drill_id, &this.callgraph) {
                                             this.last_click = None;
                                             this.search.reset();
                                         }
