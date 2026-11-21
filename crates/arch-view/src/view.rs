@@ -1042,7 +1042,16 @@ mod tests {
 
     #[test]
     fn begin_transition_respects_motion_toggle() {
-        let mut state = CanvasState::new(MapLayout::default());
+        let map = MapLayout {
+            width: 1200.0,
+            height: 800.0,
+            bands: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            overlap_area: 0.0,
+            overlap_area_threshold: 0.0,
+        };
+        let mut state = CanvasState::new(map);
         state.viewport.pan_x = 120.0;
         assert!(state.transition_enabled());
 
