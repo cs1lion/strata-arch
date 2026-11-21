@@ -900,10 +900,16 @@ impl MapView {
                     label: Option<String>,
                     subtitle: Option<String>,
                     marker: Option<u32>,
+                    degree_badge: Option<(String, bool)>,
                 }
                 let hovered = self.state.hovered().map(str::to_string);
                 let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
                 let mut node_overlays: Vec<ModuleNodeOverlay> = Vec::new();
+                let mut node_degrees: std::collections::BTreeMap<&str, (usize, usize)> = std::collections::BTreeMap::new();
+                for edge in &map.edges {
+                    node_degrees.entry(edge.source.as_str()).or_insert((0, 0)).1 += 1;
+                    node_degrees.entry(edge.target.as_str()).or_insert((0, 0)).0 += 1;
+                }
                 for index in indices {
                     if skip.nodes {
                         break;
@@ -1012,12 +1018,23 @@ impl MapView {
                     } else {
                         (None, None)
                     };
+                    let degree_badge = if labels && viewport.zoom >= 0.9 {
+                        let (in_deg, out_deg) = node_degrees.get(node.id.as_str()).copied().unwrap_or((0, 0));
+                        if in_deg > 0 || out_deg > 0 {
+                          Some((format!("↓{in_deg} ↑{out_deg}"), in_deg >= 4))
+                          } else {
+                          None
+                        }
+                        } else {
+                        None
+                          };  
                     node_overlays.push(ModuleNodeOverlay {
                         rect: drawn_rect,
                         opacity,
                         label,
                         subtitle,
                         marker,
+                        degree_badge,
                     });
                 }
                 if !node_draws.is_empty() {
@@ -1079,7 +1096,7 @@ impl MapView {
                             .absolute()
                             .left(px(overlay_item.rect.x + 10.))
                             .top(px(overlay_item.rect.y))
-                            .w(px((overlay_item.rect.width - 18.0).max(0.0)))
+                            .w(px((overlay_item.rect.width - if overlay_item.degree_badge.is_some() { 56.0 } else { 18.0 }).max(0.0)))
                             .h(px(overlay_item.rect.height))
                             .opacity(overlay_item.opacity)
                             .flex()
@@ -1101,6 +1118,13 @@ impl MapView {
                             );
                         }
                         root = root.child(text_box);
+                    }
+                    if let Some((badge_text, is_hub)) = &overlay_item.degree_badge {
+                        root = root.child(
+                          div().absolute().left(px(overlay_item.rect.x + overlay_item.rect.width - 52.)).top(px(overlay_item.rect.y)).w(px(44.)).h(px(overlay_item.rect.height))
+                            .opacity(overlay_item.opacity).flex().items_center().justify_end().overflow_hidden().text_size(px(9.))
+                            .text_color(if *is_hub { theme.hint_amber } else { theme.text_muted }).child(badge_text.clone()),
+                            );
                     }
                     if let Some(color) = overlay_item.marker {
                         root = root.child(

@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{prelude::*, px, size, App, Application, Bounds, WindowBounds, WindowOptions};
+use gpui::{prelude::*, px, size, App, Application, Bounds, Entity, Window, WindowBounds, WindowOptions};
 
 const USAGE: &str = "用法:
   arch-view map <目标仓库> [--auto-close-ms <毫秒>] [--reveal|--no-reveal] [--from <入口ID> --to <符号ID>]
@@ -128,6 +128,48 @@ fn main() -> ExitCode {
 fn reveal_default_on(explicit_off: bool) -> bool {
     !explicit_off
 }
+fn launch_workbench_window<F>(
+    width: f32,
+    height: f32,
+    expect_msg: &'static str,
+    auto_close_ms: Option<u64>,
+    build_view: F,
+) where
+    F: FnOnce(&mut Window, &mut App) -> Entity<WorkbenchView> + 'static,
+{
+    phase_marker("app:created");
+    Application::new().run(move |cx: &mut App| {
+        arch_view::arch_view_theme::StrataTheme::init_global(cx);
+        phase_marker("app:entry");
+        let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            move |window, cx| {
+                phase_marker("window:callback");
+                build_view(window, cx)
+            },
+        )
+        .expect(expect_msg);
+        phase_marker("window:created");
+        cx.activate(true);
+        phase_marker("window:activated");
+
+        if let Some(milliseconds) = auto_close_ms {
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(milliseconds))
+                    .await;
+                phase_marker("quit:auto");
+                let _ = cx.update(|cx| cx.quit());
+            })
+            .detach();
+        }
+    });
+    phase_marker("main:end");
+}
 
 fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let target = args
@@ -182,57 +224,27 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 
     // 先开窗：分层/调用图/布局都在窗口打开后的后台任务里完成，
     // 长操作期间窗口显示阶段文案，用户可随时关闭或点取消。
-    phase_marker("app:created");
-    Application::new().run(move |cx: &mut App| {
-        arch_view::arch_view_theme::StrataTheme::init_global(cx);
-        phase_marker("app:entry");
-        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-        let window_repo = repo;
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |_window, cx| {
-                phase_marker("window:callback");
-                let shell =
-                    cx.new(|_| LoadingShell::<MapView>::new("正在准备架构地图", "构建分层"));
-                spawn_map_loading(
-                    shell.clone(),
-                    window_repo.clone(),
-                    playback_request,
-                    reveal_requested,
-                    cx,
-                );
-                cx.new(|_| WorkbenchView {
-                    repo: window_repo,
-                    active: WorkbenchTab::Map,
-                    map: Some(shell),
-                    timeline: None,
-                    reveal_requested,
-                    autoplay: false,
-                    diff: None,
-                    fade_enabled: true,
-                })
-            },
-        )
-        .expect("open map window");
-        phase_marker("window:created");
-        cx.activate(true);
-        phase_marker("window:activated");
-
-        if let Some(milliseconds) = auto_close_ms {
-            cx.spawn(async move |cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(milliseconds))
-                    .await;
-                phase_marker("quit:auto");
-                let _ = cx.update(|cx| cx.quit());
-            })
-            .detach();
-        }
+        launch_workbench_window(1200.0, 800.0, "open map window", auto_close_ms, move |_window, cx| {
+        let shell =
+            cx.new(|_| LoadingShell::<MapView>::new("正在准备架构地图", "构建分层"));
+        spawn_map_loading(
+            shell.clone(),
+            repo.clone(),
+            playback_request,
+            reveal_requested,
+            cx,
+        );
+        cx.new(|_| WorkbenchView {
+            repo,
+            active: WorkbenchTab::Map,
+            map: Some(shell),
+            timeline: None,
+            reveal_requested,
+            autoplay: false,
+            diff: None,
+            fade_enabled: true,
+        })
     });
-    phase_marker("main:end");
 
     Ok(())
 }
@@ -267,51 +279,26 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let repo = PathBuf::from(&target);
 
     // 先开窗：数据准备移到窗口打开后的后台任务里，首帧只呈现加载态。
-    let application = Application::new();
-    phase_marker("app:created");
-    application.run(move |cx: &mut App| {
-        arch_view::arch_view_theme::StrataTheme::init_global(cx);
-        phase_marker("app:entry");
-        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-        let window_repo = repo;
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |_window, cx| {
-                phase_marker("window:callback");
-                let view = cx.new(|_| TimelineView::loading(autoplay));
-                spawn_timeline_loading(view.clone(), window_repo.clone(), autoplay, cx);
-                cx.new(|_| WorkbenchView {
-                    repo: window_repo,
-                    active: WorkbenchTab::Timeline,
-                    map: None,
-                    timeline: Some(view),
-                    reveal_requested: true,
-                    autoplay,
-                    diff: None,
-                    fade_enabled: true,
-                })
-            },
-        )
-        .expect("open timeline window");
-        phase_marker("window:created");
-        cx.activate(true);
-        phase_marker("window:activated");
-
-        if let Some(milliseconds) = auto_close_ms {
-            cx.spawn(async move |cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(milliseconds))
-                    .await;
-                phase_marker("quit:auto");
-                let _ = cx.update(|cx| cx.quit());
+     launch_workbench_window(
+        1200.0,
+        800.0,
+        "open timeline window",
+        auto_close_ms,
+        move |_window, cx| {
+            let view = cx.new(|_| TimelineView::loading(autoplay));
+            spawn_timeline_loading(view.clone(), repo.clone(), autoplay, cx);
+            cx.new(|_| WorkbenchView {
+                repo,
+                active: WorkbenchTab::Timeline,
+                map: None,
+                timeline: Some(view),
+                reveal_requested: true,
+                autoplay,
+                diff: None,
+                fade_enabled: true,
             })
-            .detach();
-        }
-    });
-    phase_marker("main:end");
+        },
+    );
 
     Ok(())
 }
@@ -362,63 +349,34 @@ fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 
     // 先开窗：`diff_commits` 在窗口打开后的后台任务里执行，并在每个阶段更新文案。
     // 超过 2 秒的路径不能再让用户面对「没有窗口」的静止画面。
-    phase_marker("app:created");
-    Application::new().run(move |cx: &mut App| {
-        arch_view::arch_view_theme::StrataTheme::init_global(cx);
-        phase_marker("app:entry");
-        let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
-        let window_repo = repo;
-        let window_cancel = cancel.clone();
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |_window, cx| {
-                phase_marker("window:callback");
-                let shell_cancel = window_cancel.clone();
-                let shell = cx.new(move |_| {
-                    LoadingShell::<DiffView>::new("正在计算结构 diff", "解析提交")
-                        .with_cancel(shell_cancel)
-                });
-                spawn_diff_loading(
-                    shell.clone(),
-                    window_repo.clone(),
-                    from,
-                    to,
-                    fade_enabled,
-                    window_cancel,
-                    cx,
-                );
-                cx.new(|_| WorkbenchView {
-                    repo: window_repo,
-                    active: WorkbenchTab::Diff,
-                    map: None,
-                    timeline: None,
-                    diff: Some(shell),
-                    reveal_requested: true,
-                    autoplay: false,
-                    fade_enabled,
-                }) // shell
-            },
-        )
-        .expect("open diff window");
-        phase_marker("window:created");
-        cx.activate(true);
-        phase_marker("window:activated");
-
-        if let Some(milliseconds) = auto_close_ms {
-            cx.spawn(async move |cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(milliseconds))
-                    .await;
-                phase_marker("quit:auto");
-                let _ = cx.update(|cx| cx.quit());
-            })
-            .detach();
-        }
+     let window_cancel = cancel.clone();
+    launch_workbench_window(1100.0, 760.0, "open diff window", auto_close_ms, move |_window, cx| {
+        let shell_cancel = window_cancel.clone();
+        let shell = cx.new(move |_| {
+            LoadingShell::<DiffView>::new("正在计算结构 diff", "解析提交")
+                .with_cancel(shell_cancel)
+        });
+        spawn_diff_loading(
+            shell.clone(),
+            repo.clone(),
+            from,
+            to,
+            fade_enabled,
+            window_cancel,
+            cx,
+        );
+        cx.new(|_| WorkbenchView {
+            repo,
+            active: WorkbenchTab::Diff,
+            map: None,
+            timeline: None,
+            diff: Some(shell),
+            reveal_requested: true,
+            autoplay: false,
+            fade_enabled,
+        })
     });
-    phase_marker("main:end");
+
 
     Ok(())
 }
