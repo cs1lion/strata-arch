@@ -186,7 +186,7 @@ impl StrataTheme {
         }
     }
     pub fn porcelain_light() -> Self {
-    /// 在Self {
+    Self {
 canvas_bg: rgb(0xf6f8fa).into(),
 dot_grid: rgba(0xd0d7de99).into(),
 dot_grid_major: rgba(0x8c959f88).into(),
