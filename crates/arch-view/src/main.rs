@@ -969,7 +969,11 @@ impl TimelineView {
             .gap(px(10.))
             .px(px(24.));
         for line in self.content.status_lines() {
-            let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
+            let color = if failed {
+                theme.warning_fg
+            } else {
+                theme.text_primary
+            };
             panel = panel.child(div().text_sm().text_color(color).child(line));
         }
         if let TimelineContent::Loading(loading) = &self.content {
@@ -985,13 +989,13 @@ impl TimelineView {
                     .w(px(280.))
                     .h(px(4.))
                     .rounded(px(2.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(
                         div()
                             .w(px(280.0 * progress))
                             .h(px(4.))
                             .rounded(px(2.))
-                            .bg(rgb(0x58a6ff)),
+                            .bg(theme.accent_blue),
                     ),
             );
         }
@@ -1170,7 +1174,7 @@ impl Render for TimelineView {
                 let border = if selected.as_deref() == Some(node.id.as_str()) {
                     theme.card_border_selected
                 } else if heat.neutral {
-                    rgb(0x8a7a5a).into()
+                    theme.heat_neutral_border
                 } else {
                     theme.card_border_default
                 };
@@ -1236,7 +1240,7 @@ impl Render for TimelineView {
                         .items_center()
                         .px(px(8.))
                         .text_xs()
-                        .text_color(rgb(0xe6edf3))
+                        .text_color(theme.text_primary)
                         .child(node.id.clone())
                         .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                             if let Some(timeline) = this.timeline_mut() {
@@ -1257,7 +1261,11 @@ impl Render for TimelineView {
                     .w(px(10.))
                     .h(px(if active { 12. } else { 8. }))
                     .rounded(px(2.))
-                    .bg(if active { rgb(0x58a6ff) } else { rgb(0x3d4b5c) })
+                    .bg(if active {
+                        theme.accent_blue
+                    } else {
+                        theme.tick_inactive
+                    })
                     .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                         let accepted = this
                             .timeline_mut()
@@ -1295,9 +1303,9 @@ impl Render for TimelineView {
                     .py(px(2.))
                     .rounded(px(3.))
                     .bg(if playback_enabled {
-                        rgb(0x2c3a4a)
+                        theme.control_bg
                     } else {
-                        rgb(0x50241f)
+                        theme.toggle_off_bg
                     })
                     .child(if playback_enabled {
                         "动画:开"
@@ -1315,7 +1323,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(if playing { "暂停" } else { "播放" })
                     .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                         if this.playback.is_playing() {
@@ -1332,7 +1340,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child("前一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_back() {
@@ -1350,7 +1358,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child("后一步")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.step_forward() {
@@ -1368,7 +1376,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child("首")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.jump_to_first() {
@@ -1386,7 +1394,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child("尾")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if this.playback.jump_to_last() {
@@ -1404,7 +1412,7 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(format!("速度 {speed}x"))
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.playback.cycle_speed();
@@ -1420,8 +1428,8 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(999.))
-                    .bg(rgb(0x5a2d23))
-                    .text_color(rgb(0xffd0c2))
+                    .bg(theme.badge_danger_bg)
+                    .text_color(theme.badge_danger_fg)
                     .child(format!("降级: {label}")),
             );
         }
@@ -1441,20 +1449,20 @@ impl Render for TimelineView {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(999.))
-                    .bg(rgb(0x3a2f1a))
-                    .text_color(rgb(0xd98a3d))
+                    .bg(theme.badge_warn_bg)
+                    .text_color(theme.amber_fg)
                     .child(format!("状态: {}", markers.join(" / "))),
             );
         }
         if let Some(notice) = ready.timeline.gap_notice() {
             badges = badges.child(
                 div()
-                    .text_color(rgb(0xe07b39))
+                    .text_color(theme.warning_fg)
                     .child(format!("采样空洞: {notice}")),
             );
         }
         if ended {
-            badges = badges.child(div().text_color(rgb(0xd98a3d)).child("播放结束"));
+            badges = badges.child(div().text_color(theme.amber_fg).child("播放结束"));
         }
 
         let mut footer = div()
@@ -1472,7 +1480,7 @@ impl Render for TimelineView {
             .border_color(theme.hud_border)
             .bg(theme.hud_panel_bg)
             .text_xs()
-            .text_color(rgb(0xe6edf3))
+            .text_color(theme.text_primary)
             .child(
                 div()
                     .flex()
@@ -1482,7 +1490,7 @@ impl Render for TimelineView {
                     .child(div().child(commit).child(format!("  [{position}/{ticks}]")))
                     .child(
                         div()
-                            .text_color(rgb(0x8b9bb0))
+                            .text_color(theme.text_slate)
                             .child(ready.timeline.sampling_label()),
                     ),
             )
@@ -1491,13 +1499,13 @@ impl Render for TimelineView {
                     .w_full()
                     .h(px(4.))
                     .rounded(px(2.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(
                         div()
                             .w(gpui::relative(progress_ratio))
                             .h(px(4.))
                             .rounded(px(2.))
-                            .bg(rgb(0x58a6ff)),
+                            .bg(theme.accent_blue),
                     ),
             )
             .child(
@@ -1529,7 +1537,7 @@ impl Render for TimelineView {
                 ),
                 None => format!("{selected} · 无历史"),
             };
-            footer = footer.child(div().text_color(rgb(0x8b9bb0)).child(text));
+            footer = footer.child(div().text_color(theme.text_slate).child(text));
         }
 
         root = root.child(footer);
@@ -2399,14 +2407,14 @@ impl MapView {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(0xf0f6fc))
+                                    .text_color(theme.text_bright)
                                     .child(label.clone()),
                             );
                         if let Some(subtitle) = &overlay_item.subtitle {
                             text_box = text_box.child(
                                 div()
                                     .text_size(px(10.))
-                                    .text_color(rgb(0x8b949e))
+                                    .text_color(theme.text_secondary)
                                     .child(subtitle.clone()),
                             );
                         }
@@ -2717,6 +2725,7 @@ static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 impl Render for MapView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let skip = RenderSkip::from_env();
         let trace = frame_trace_enabled();
         if trace {
@@ -2782,7 +2791,7 @@ impl Render for MapView {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x0d1117))
+            .bg(theme.canvas_bg)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
@@ -2849,9 +2858,9 @@ impl Render for MapView {
                     .px(px(10.))
                     .py(px(4.))
                     .rounded(px(4.))
-                    .bg(rgb(0x161b22))
+                    .bg(theme.card_bg)
                     .text_xs()
-                    .text_color(rgb(0x8b9bb0))
+                    .text_color(theme.text_slate)
                     .child("层归属为推断结果 · 点击/拖动立即跳过揭示"),
             );
         }
@@ -2866,9 +2875,9 @@ impl Render for MapView {
                     .px(px(10.))
                     .py(px(4.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .text_xs()
-                    .text_color(rgb(0xe6edf3))
+                    .text_color(theme.text_primary)
                     .child("← 返回地图")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.interrupt_reveal();
@@ -2911,9 +2920,9 @@ impl Render for MapView {
                 .px(px(10.))
                 .py(px(6.))
                 .rounded(px(6.))
-                .bg(rgb(0x161b22))
+                .bg(theme.card_bg)
                 .text_xs()
-                .text_color(rgb(0xe6edf3))
+                .text_color(theme.text_primary)
                 .child(status);
 
             panel = panel.child(
@@ -2921,7 +2930,7 @@ impl Render for MapView {
                     .id("pb-back")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("◀")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if let Some(playback) = this.playback.as_mut() {
@@ -2935,7 +2944,7 @@ impl Render for MapView {
                     .id("pb-play")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child(if overlay.playing { "暂停" } else { "播放" })
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if let Some(playback) = this.playback.as_mut() {
@@ -2983,7 +2992,7 @@ impl Render for MapView {
                     .id("pb-next")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("▶")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         if let Some(playback) = this.playback.as_mut() {
@@ -2997,7 +3006,7 @@ impl Render for MapView {
                     .id("pb-animation")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child(if overlay.animation {
                         "动画: 开"
                     } else {
@@ -3016,7 +3025,7 @@ impl Render for MapView {
                     .id("pb-fly-to")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child(if overlay.fly_to {
                         "fly-to: 开"
                     } else {
@@ -3035,7 +3044,7 @@ impl Render for MapView {
                     .id("pb-transition")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child(if transition_enabled {
                         "转场: 开"
                     } else {
@@ -3052,7 +3061,7 @@ impl Render for MapView {
                     .id("pb-exit")
                     .px(px(6.))
                     .rounded(px(4.))
-                    .bg(rgb(0x5f2b2b))
+                    .bg(theme.chip_danger_bg)
                     .child("退出路径")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.playback = None;
@@ -3088,27 +3097,27 @@ impl Render for MapView {
                         .py(px(10.))
                         .rounded(px(8.))
                         .border_1()
-                        .border_color(rgb(0x30363d))
-                        .bg(rgb(0x161b22))
+                        .border_color(theme.hud_border)
+                        .bg(theme.card_bg)
                         .flex()
                         .flex_col()
                         .gap(px(8.))
                         .text_xs()
-                        .text_color(rgb(0xe6edf3))
+                        .text_color(theme.text_primary)
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .justify_between()
                                 .gap(px(8.))
-                                .child(div().text_color(rgb(0xf0f6fc)).child(short_name))
+                                .child(div().text_color(theme.text_bright).child(short_name))
                                 .child(
                                     div()
                                         .id("inspector-close")
                                         .px(px(6.))
                                         .py(px(2.))
                                         .rounded(px(4.))
-                                        .bg(rgb(0x1f2937))
+                                        .bg(theme.chip_bg)
                                         .child("×")
                                         .on_click(cx.listener(
                                             |this, _event: &ClickEvent, _window, cx| {
@@ -3118,10 +3127,14 @@ impl Render for MapView {
                                         )),
                                 ),
                         )
-                        .child(div().text_color(rgb(0x8b949e)).child(selected_id.clone()))
                         .child(
                             div()
-                                .text_color(rgb(0x79c0ff))
+                                .text_color(theme.text_secondary)
+                                .child(selected_id.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_color(theme.info_blue)
                                 .child(format!("层: {layer_name} · {symbol_count} 个符号")),
                         );
 
@@ -3133,7 +3146,7 @@ impl Render for MapView {
                                 .px(px(8.))
                                 .py(px(4.))
                                 .rounded(px(4.))
-                                .bg(rgb(0x1f3a5f))
+                                .bg(theme.chip_active_bg)
                                 .child("下钻符号视图 (双击 / Enter)")
                                 .on_click(cx.listener(
                                     move |this, _event: &ClickEvent, _window, cx| {
@@ -3163,9 +3176,9 @@ impl Render for MapView {
                                     .py(px(4.))
                                     .rounded(px(4.))
                                     .bg(if is_from {
-                                        rgb(0x1f3a5f)
+                                        theme.chip_active_bg
                                     } else {
-                                        rgb(0x1f2937)
+                                        theme.chip_bg
                                     })
                                     .child(if is_from {
                                         "✓ 路径起点"
@@ -3187,7 +3200,11 @@ impl Render for MapView {
                                     .px(px(8.))
                                     .py(px(4.))
                                     .rounded(px(4.))
-                                    .bg(if is_to { rgb(0x1f3a5f) } else { rgb(0x1f2937) })
+                                    .bg(if is_to {
+                                        theme.chip_active_bg
+                                    } else {
+                                        theme.chip_bg
+                                    })
                                     .child(if is_to {
                                         "✓ 路径终点"
                                     } else {
@@ -3227,14 +3244,14 @@ impl Render for MapView {
                                 .items_center()
                                 .justify_between()
                                 .gap(px(6.))
-                                .child(div().text_color(rgb(0xd29922)).child(summary))
+                                .child(div().text_color(theme.hint_amber).child(summary))
                                 .child(
                                     div()
                                         .id("inspector-clear-path")
                                         .px(px(6.))
                                         .py(px(2.))
                                         .rounded(px(4.))
-                                        .bg(rgb(0x1f2937))
+                                        .bg(theme.chip_bg)
                                         .child("清除")
                                         .on_click(cx.listener(
                                             |this, _event: &ClickEvent, _window, cx| {
@@ -3249,12 +3266,12 @@ impl Render for MapView {
                     }
                     inspector = inspector.child(
                         div()
-                            .text_color(rgb(0x8b949e))
+                            .text_color(theme.text_secondary)
                             .child(format!("上游依赖 ({up_total})")),
                     );
                     if upstream.is_empty() {
                         inspector =
-                            inspector.child(div().text_color(rgb(0x6e7681)).child("无上游依赖"));
+                            inspector.child(div().text_color(theme.text_muted).child("无上游依赖"));
                     } else {
                         for (idx, dep) in upstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
                         {
@@ -3265,7 +3282,7 @@ impl Render for MapView {
                                     .px(px(6.))
                                     .py(px(3.))
                                     .rounded(px(4.))
-                                    .bg(rgb(0x0d1117))
+                                    .bg(theme.canvas_bg)
                                     .child(dep)
                                     .on_click(cx.listener(
                                         move |this, _event: &ClickEvent, window, cx| {
@@ -3291,7 +3308,7 @@ impl Render for MapView {
                         }
                         if up_total > INSPECTOR_MAX_ITEMS {
                             inspector =
-                                inspector.child(div().text_color(rgb(0x6e7681)).child(format!(
+                                inspector.child(div().text_color(theme.text_muted).child(format!(
                                     "... 另有 {} 项",
                                     up_total - INSPECTOR_MAX_ITEMS
                                 )));
@@ -3300,12 +3317,12 @@ impl Render for MapView {
 
                     inspector = inspector.child(
                         div()
-                            .text_color(rgb(0x8b949e))
+                            .text_color(theme.text_secondary)
                             .child(format!("下游依赖 ({down_total})")),
                     );
                     if downstream.is_empty() {
                         inspector =
-                            inspector.child(div().text_color(rgb(0x6e7681)).child("无下游依赖"));
+                            inspector.child(div().text_color(theme.text_muted).child("无下游依赖"));
                     } else {
                         for (idx, dep) in
                             downstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
@@ -3317,7 +3334,7 @@ impl Render for MapView {
                                     .px(px(6.))
                                     .py(px(3.))
                                     .rounded(px(4.))
-                                    .bg(rgb(0x0d1117))
+                                    .bg(theme.canvas_bg)
                                     .child(dep)
                                     .on_click(cx.listener(
                                         move |this, _event: &ClickEvent, window, cx| {
@@ -3342,7 +3359,7 @@ impl Render for MapView {
                             );
                         }
                         if down_total > INSPECTOR_MAX_ITEMS {
-                            inspector = inspector.child(div().text_color(rgb(0x6e7681)).child(
+                            inspector = inspector.child(div().text_color(theme.text_muted).child(
                                 format!("... 另有 {} 项", down_total - INSPECTOR_MAX_ITEMS),
                             ));
                         }
@@ -3368,13 +3385,13 @@ impl Render for MapView {
             .py(px(6.))
             .rounded(px(8.))
             .border_1()
-            .border_color(rgb(0x30363d))
-            .bg(rgb(0x161b22))
+            .border_color(theme.hud_border)
+            .bg(theme.card_bg)
             .text_xs()
-            .text_color(rgb(0xe6edf3))
+            .text_color(theme.text_primary)
             .child(
                 div()
-                    .text_color(rgb(0x8b949e))
+                    .text_color(theme.text_secondary)
                     .child(format!("{module_count} 模块 · {edge_count} 边")),
             );
 
@@ -3385,7 +3402,7 @@ impl Render for MapView {
                     .px(px(8.))
                     .py(px(3.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("搜索 /")
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.interrupt_reveal();
@@ -3403,9 +3420,9 @@ impl Render for MapView {
                     .py(px(3.))
                     .rounded(px(4.))
                     .bg(if edge_mode == EdgeDisplayMode::All {
-                        rgb(0x1f2937)
+                        theme.chip_bg
                     } else {
-                        rgb(0x1f3a5f)
+                        theme.chip_active_bg
                     })
                     .child(format!("{} (E)", edge_mode.label()))
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
@@ -3420,7 +3437,7 @@ impl Render for MapView {
                     .px(px(6.))
                     .py(px(3.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("−")
                     .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                         this.interrupt_reveal();
@@ -3434,7 +3451,7 @@ impl Render for MapView {
             )
             .child(
                 div()
-                    .text_color(rgb(0xc9d1d9))
+                    .text_color(theme.text_contrast)
                     .child(format!("{zoom_pct}%")),
             )
             .child(
@@ -3443,7 +3460,7 @@ impl Render for MapView {
                     .px(px(6.))
                     .py(px(3.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("+")
                     .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                         this.interrupt_reveal();
@@ -3461,7 +3478,7 @@ impl Render for MapView {
                     .px(px(8.))
                     .py(px(3.))
                     .rounded(px(4.))
-                    .bg(rgb(0x1f2937))
+                    .bg(theme.chip_bg)
                     .child("适应 0")
                     .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                         this.interrupt_reveal();
@@ -3492,10 +3509,10 @@ impl Render for MapView {
                 .py(px(6.))
                 .rounded(px(8.))
                 .border_1()
-                .border_color(rgb(0x30363d))
-                .bg(rgb(0x161b22))
+                .border_color(theme.hud_border)
+                .bg(theme.card_bg)
                 .text_xs()
-                .text_color(rgb(0xe6edf3));
+                .text_color(theme.text_primary);
 
             for (idx, band) in self.state.map().bands.iter().enumerate() {
                 let layer_name = band.layer;
@@ -3508,9 +3525,9 @@ impl Render for MapView {
                         .py(px(3.))
                         .rounded(px(4.))
                         .bg(if is_active {
-                            rgb(0x1f3a5f)
+                            theme.chip_active_bg
                         } else {
-                            rgb(0x1f2937)
+                            theme.chip_bg
                         })
                         .flex()
                         .items_center()
@@ -3542,7 +3559,7 @@ impl Render for MapView {
                         .px(px(6.))
                         .py(px(3.))
                         .rounded(px(4.))
-                        .bg(rgb(0x30363d))
+                        .bg(theme.chip_muted_bg)
                         .child("全部")
                         .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                             this.layer_filter = None;

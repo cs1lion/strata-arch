@@ -4,8 +4,8 @@ use std::sync::Arc;
 use arch_view::loading::{LoadStatus, LoadingStage, LoadingState};
 use arch_view::view::{Viewport, MAX_ZOOM, MIN_ZOOM};
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, AnyView, Context, Entity, IntoElement, MouseButton,
-    Render, Window,
+    div, prelude::*, px, AnyElement, AnyView, Context, Entity, IntoElement, MouseButton, Render,
+    Window,
 };
 
 use super::phase_marker;
@@ -161,11 +161,16 @@ impl<T: Render> LoadingShell<T> {
     }
 
     fn render_status_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let failed = matches!(self.status, LoadStatus::Failed { .. });
-        let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
+        let color = if failed {
+            theme.warning_fg
+        } else {
+            theme.text_primary
+        };
         let mut panel = div()
             .size_full()
-            .bg(rgb(0x0d1117))
+            .bg(theme.canvas_bg)
             .flex()
             .flex_col()
             .items_center()
@@ -188,13 +193,13 @@ impl<T: Render> LoadingShell<T> {
                     .w(px(280.))
                     .h(px(4.))
                     .rounded(px(2.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(
                         div()
                             .w(px(280.0 * progress))
                             .h(px(4.))
                             .rounded(px(2.))
-                            .bg(rgb(0x58a6ff)),
+                            .bg(theme.accent_blue),
                     ),
             );
         }
@@ -206,9 +211,9 @@ impl<T: Render> LoadingShell<T> {
                     .py(px(6.))
                     .rounded(px(4.))
                     .border_1()
-                    .border_color(rgb(0x2c3a4a))
-                    .bg(rgb(0x161b22))
-                    .text_color(rgb(0xe6edf3))
+                    .border_color(theme.control_bg)
+                    .bg(theme.card_bg)
+                    .text_color(theme.text_primary)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {

@@ -45,7 +45,7 @@ impl Render for DiffView {
                 .rounded(px(999.))
                 .bg(rgb(color))
                 .text_xs()
-                .text_color(rgb(0xe6edf3))
+                .text_color(theme.text_primary)
                 .child(label)
         };
 
@@ -62,7 +62,7 @@ impl Render for DiffView {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(div().text_sm().text_color(rgb(0xe6edf3)).child(header))
+                    .child(div().text_sm().text_color(theme.text_primary).child(header))
                     .child(
                         div()
                             .id("diff-fade")
@@ -73,7 +73,7 @@ impl Render for DiffView {
                             .border_1()
                             .border_color(theme.hud_border)
                             .text_xs()
-                            .text_color(rgb(0xe6edf3))
+                            .text_color(theme.text_primary)
                             .child(if self.fade_enabled {
                                 "淡入: 开"
                             } else {
@@ -103,7 +103,7 @@ impl Render for DiffView {
             root = root.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x8b9bb0))
+                    .text_color(theme.text_slate)
                     .child("两个 commit 没有结构变化"),
             );
             return root;
@@ -135,9 +135,9 @@ impl Render for DiffView {
                         .px(px(6.))
                         .py(px(1.))
                         .rounded(px(999.))
-                        .bg(rgb(0x1f2937))
+                        .bg(theme.chip_bg)
                         .text_xs()
-                        .text_color(rgb(0x8b9bb0))
+                        .text_color(theme.text_slate)
                         .child(format!("← {}", hint)),
                 );
             }
@@ -161,7 +161,7 @@ impl Render for DiffView {
                         .px(px(6.))
                         .py(px(2.))
                         .rounded(px(999.))
-                        .bg(rgb(0x161b22))
+                        .bg(theme.card_bg)
                         .text_xs()
                         .text_color(text_color)
                         .child(kind_label),
@@ -170,7 +170,7 @@ impl Render for DiffView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x8b9bb0))
+                        .text_color(theme.text_slate)
                         .child(row.detail.clone()),
                 );
 
