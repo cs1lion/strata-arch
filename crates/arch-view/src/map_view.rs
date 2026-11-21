@@ -323,7 +323,12 @@ impl MapView {
         }
         self.state.viewport()
     }
-
+    fn start_camera_transition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.transition_generation += 1;
+        self.transition_delta = Rc::new(Cell::new(0.0));
+        Self::schedule_transition_step(self, window, cx);
+    }
+    
     /// 每个 GPUI 动画帧把 `with_animation` 给出的进度写入相机；转场未结束时续订下一帧。
     fn schedule_transition_step(
         view: &mut MapView,
@@ -486,17 +491,23 @@ impl MapView {
                     return;
                 }
                 "0" | "r" | "R" => {
-                    self.state.fit_to_viewport(viewport_size);
+                    if self.state.begin_fit_to_viewport(viewport_size) {
+                        self.start_camera_transition(window, cx);
+                    }
                     cx.notify();
                     return;
                 }
                 "=" | "+" => {
-                    self.state.zoom_at_center(1.25, viewport_size);
+                    if self.state.begin_zoom_at_center(1.25, viewport_size) {
+                        self.start_camera_transition(window, cx);
+                    }
                     cx.notify();
                     return;
                 }
                 "-" => {
-                    self.state.zoom_at_center(0.8, viewport_size);
+                    if self.state.begin_zoom_at_center(0.8, viewport_size) {
+                        self.start_camera_transition(window, cx);
+                    }
                     cx.notify();
                     return;
                 }
@@ -2152,7 +2163,9 @@ impl Render for MapView {
                             f32::from(window.viewport_size().width),
                             f32::from(window.viewport_size().height),
                         );
-                        this.state.zoom_at_center(0.8, size);
+                        if this.state.begin_zoom_at_center(0.8, size) {
+                            this.start_camera_transition(window, cx);
+                        }
                         cx.notify();
                     })),
             )
@@ -2175,7 +2188,9 @@ impl Render for MapView {
                             f32::from(window.viewport_size().width),
                             f32::from(window.viewport_size().height),
                         );
-                        this.state.zoom_at_center(1.25, size);
+                        if this.state.begin_zoom_at_center(1.25, size) {
+                            this.start_camera_transition(window, cx);
+                        }
                         cx.notify();
                     })),
             )
@@ -2193,11 +2208,42 @@ impl Render for MapView {
                             f32::from(window.viewport_size().width),
                             f32::from(window.viewport_size().height),
                         );
-                        this.state.fit_to_viewport(size);
+                        if this.state.begin_fit_to_viewport(size) {
+                            this.start_camera_transition(window, cx);
+                        }
                         cx.notify();
                     })),
             );
         hud = hud
+.child(
+div()
+.id("hud-motion")
+.px(px(8.))
+.py(px(3.))
+.rounded(px(4.))
+    .bg(if transition_enabled {
+theme.chip_bg
+} else {
+theme.toggle_off_bg
+})
+.child(if transition_enabled {
+"动效: 开"
+} else {
+"动效: 关"
+})
+.on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+this.interrupt_reveal();
+let next = !this.state.transition_enabled();
+this.state.set_transition_enabled(next);
+if !next {
+this.state.cancel_transition();
+}
+if let Some(playback) = this.playback.as_mut() {
+playback.set_animation_enabled(next);
+}
+cx.notify();
+})),
+)
             .child(
                 div()
                     .id("hud-insights")
