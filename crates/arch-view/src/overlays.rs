@@ -5,13 +5,12 @@ use arch_view::search::{FocusLabel, SearchState};
 use arch_view::view::{group_edges, EdgeVisual as EdgeDraw};
 use gpui::{canvas, div, point, prelude::*, px, AnyElement, IntoElement, PathBuilder};
 
-pub(crate) fn search_panel_element(search: &SearchState) -> AnyElement {
+pub(crate) fn search_panel_element(search: &SearchState, theme: &arch_view::arch_view_theme::StrataTheme) -> AnyElement {
     let query = if search.query().is_empty() {
         "输入以筛选模块".to_string()
     } else {
         search.query().to_string()
     };
-    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
     let mut panel = div()
         .id("search-panel")
         .absolute()
@@ -51,8 +50,7 @@ pub(crate) fn search_panel_element(search: &SearchState) -> AnyElement {
 }
 
 /// 聚焦态角落标签：聚焦模块 id + 上游 / 下游一跳计数。
-pub(crate) fn focus_label_element(label: &FocusLabel) -> AnyElement {
-    let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+pub(crate) fn focus_label_element(label: &FocusLabel, theme: &arch_view::arch_view_theme::StrataTheme) -> AnyElement {
     div()
         .id("focus-label")
         .absolute()
@@ -118,8 +116,8 @@ pub(crate) fn edge_canvas(
         .h(px(height))
         .child(canvas(
             |_, _, _| (),
-            move |bounds, _, window, _cx| {
-                let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+            move |bounds, _, window, cx| {
+                let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
                 for run in group_edges(&edges, batch_edges) {
                     let (color, stroke_w) =
                         theme.resolve_edge_style(run.strong, run.adjusted, run.opacity, zoom);
