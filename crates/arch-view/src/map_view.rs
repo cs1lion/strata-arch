@@ -515,6 +515,7 @@ impl MapView {
         scene: &Scene,
         viewport: Viewport,
         viewport_size: (f32, f32),
+        theme: &arch_view::arch_view_theme::StrataTheme,
     ) -> Stateful<Div> {
         let skip = RenderSkip::from_env();
         let labels = self.state.labels_visible() && !skip.labels;
@@ -528,7 +529,6 @@ impl MapView {
             .map(|playback| playback.animation_enabled())
             .unwrap_or(false);
         let reveal_overall = self.reveal.overall_progress();
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let grid_viewport = viewport;
         let grid_theme = theme.clone();
         root = root.child(
@@ -942,8 +942,13 @@ impl MapView {
                     } else {
                         let palette_hex = layer_palette(node.layer, node.is_unclassified);
                         let mut tint: gpui::Hsla = rgb(palette_hex).into();
-                        tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
-                        tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+                        if theme.is_light() {
+                            tint.s = (tint.s * 0.35).clamp(0.0, 1.0);
+                            tint.l = 0.96;
+                            } else {
+                            tint.s = (tint.s * 0.65).clamp(0.0, 1.0);
+                            tint.l = (tint.l * 0.55).clamp(0.08, 0.18);
+                        }
                         tint
                     };
                     let border = if focus == Some(node.id.as_str())
@@ -1376,7 +1381,7 @@ static MAP_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 
 impl Render for MapView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         let skip = RenderSkip::from_env();
         let trace = frame_trace_enabled();
         if trace {
@@ -1540,14 +1545,14 @@ impl Render for MapView {
             );
         }
 
-        root = self.add_scene_elements(root, &scene, viewport, viewport_size);
+        root = self.add_scene_elements(root, &scene, viewport, viewport_size, &theme);
 
         if self.search.is_open() {
-            root = root.child(search_panel_element(&self.search));
+            root = root.child(search_panel_element(&self.search, &theme));
         }
         // 聚焦标签与淡出同属一个状态：`Esc` 清除时同一帧一起消失。
         if let Some(label) = self.search.focus_label() {
-            root = root.child(focus_label_element(&label));
+            root = root.child(focus_label_element(&label, &theme));
         }
 
         if let Some(overlay) = &overlay {
