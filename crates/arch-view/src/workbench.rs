@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, IntoElement, Render, Window};
 
+use super::diff_view::spawn_diff_loading;
 use super::diff_view::DiffView;
+use super::map_view::{spawn_map_loading, MapView};
 use super::shell::LoadingShell;
-use super::{spawn_diff_loading, spawn_map_loading, spawn_timeline_loading, MapView, TimelineView};
+use super::timeline_view::{spawn_timeline_loading, TimelineView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkbenchTab {

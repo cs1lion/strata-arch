@@ -4,11 +4,24 @@ use std::sync::Arc;
 use arch_view::loading::{LoadStatus, LoadingStage, LoadingState};
 use arch_view::view::{Viewport, MAX_ZOOM, MIN_ZOOM};
 use gpui::{
-    div, prelude::*, px, AnyElement, AnyView, Context, Entity, IntoElement, MouseButton, Render,
-    Window,
+    div, prelude::*, px, AnyElement, AnyView, AsyncApp, Context, Entity, IntoElement, MouseButton,
+    Render, Window,
 };
 
 use super::phase_marker;
+
+/// 加载期间把外壳的阶段文案与 `AsyncApp` 更新合并成一个通用入口；
+/// map / timeline / diff 三个后台装配流程共用。
+pub(crate) fn set_shell_stage<T: Render>(
+    shell: &Entity<LoadingShell<T>>,
+    cx: &mut AsyncApp,
+    stage: &str,
+) {
+    let _ = shell.update(cx, |shell, cx| {
+        shell.set_stage(stage);
+        cx.notify();
+    });
+}
 
 /// 诊断开关：按需跳过部分绘制，用受控实验的差值定位每帧成本来源。
 /// 取值 `bands,edges,nodes,labels` 的逗号子集（`STRATA_RENDER_SKIP`）。

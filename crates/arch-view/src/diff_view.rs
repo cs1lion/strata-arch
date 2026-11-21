@@ -1,13 +1,120 @@
-use std::sync::atomic::Ordering;
+//! 结构差异视图：把两次提交间的模块变化渲染为可淡入的清单。
+//!
+//! 从 `main.rs` 抽出（Issue #21 收尾），本票再把后台装配流程 `spawn_diff_loading`
+//! 一并迁入，使 `main.rs` 只剩 CLI 解析与子命令路由。
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arch_core::commit_diff::{diff_commits_cancellable, CommitDiffError, DiffProgress};
 use arch_view::diff::{DiffFade, DiffModel, FADE_DURATION_MS};
 use gpui::{
-    div, prelude::*, px, rgb, Animation, AnimationExt, ClickEvent, Context, IntoElement, Render,
-    Window,
+    div, prelude::*, px, rgb, Animation, AnimationExt, App, ClickEvent, Context, Entity,
+    IntoElement, Render, Window,
 };
 
-use super::{phase_marker, DIFF_FIRST_FRAME};
+use super::phase_marker;
+use super::shell::{set_shell_stage, LoadingShell};
+
+/// 进程级首帧标记：保证 `content:render` 只在真正首次渲染时打印一次。
+static DIFF_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+
+/// 后台计算结构 diff；阶段进度经共享槽转给前台，取消标志在每个可中断边界检查。
+pub(crate) fn spawn_diff_loading(
+    shell: Entity<LoadingShell<DiffView>>,
+    repo: PathBuf,
+    from: String,
+    to: String,
+    fade_enabled: bool,
+    cancel: Arc<AtomicBool>,
+    cx: &mut App,
+) {
+    let progress = Arc::new(Mutex::new(Some(DiffProgress::Resolving)));
+    let done = Arc::new(AtomicBool::new(false));
+    let progress_task = progress.clone();
+    let done_task = done.clone();
+    let cancel_task = cancel.clone();
+    let task = cx.background_executor().spawn(async move {
+        phase_marker("diff:prep:start");
+        let mut report = |stage: DiffProgress| {
+            if let Ok(mut slot) = progress_task.lock() {
+                *slot = Some(stage);
+            }
+        };
+        let result = diff_commits_cancellable(
+            &repo,
+            &from,
+            &to,
+            env!("CARGO_PKG_VERSION"),
+            &cancel_task,
+            &mut report,
+        );
+        done_task.store(true, Ordering::SeqCst);
+        result
+    });
+
+    cx.spawn(async move |cx| {
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                set_shell_stage(&shell, cx, "正在取消：等待当前阶段收尾");
+            } else if let Ok(slot) = progress.lock() {
+                if let Some(stage) = *slot {
+                    set_shell_stage(&shell, cx, stage.label());
+                }
+            }
+            if done.load(Ordering::SeqCst) {
+                break;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+        }
+
+        match task.await {
+            Ok(artifact) => {
+                println!(
+                    "diff: from={} to={} added={} removed={} modified={} renames={}",
+                    artifact.from.commit,
+                    artifact.to.commit,
+                    artifact.stats.added,
+                    artifact.stats.removed,
+                    artifact.stats.modified,
+                    artifact.stats.renames
+                );
+                let model = DiffModel::from_artifact(&artifact);
+                let built = cx.update(|cx| {
+                    cx.new(move |_| DiffView {
+                        model,
+                        fade_enabled,
+                        fade_generation: 0,
+                    })
+                });
+                let view = match built {
+                    Ok(view) => view,
+                    Err(_) => return,
+                };
+                phase_marker("diff:prep:done");
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.ready(view);
+                    cx.notify();
+                });
+            }
+            Err(CommitDiffError::Cancelled) => {
+                phase_marker("diff:cancelled");
+                let _ = cx.update(|cx| cx.quit());
+            }
+            Err(error) => {
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.fail(format!("构建结构 diff 失败: {error}"));
+                    cx.notify();
+                });
+            }
+        }
+    })
+    .detach();
+}
 
 pub(crate) struct DiffView {
     pub(crate) model: DiffModel,
