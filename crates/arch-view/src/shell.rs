@@ -174,7 +174,7 @@ impl<T: Render> LoadingShell<T> {
     }
 
     fn render_status_panel(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         let failed = matches!(self.status, LoadStatus::Failed { .. });
         let color = if failed {
             theme.warning_fg

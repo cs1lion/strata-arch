@@ -185,8 +185,78 @@ impl StrataTheme {
             non_neighbor_dim_factor: 0.22,
         }
     }
+    pub fn porcelain_light() -> Self {
+    Self {
+canvas_bg: rgb(0xf6f8fa).into(),
+dot_grid: rgba(0xd0d7de99).into(),
+dot_grid_major: rgba(0x8c959f88).into(),
+hud_panel_bg: rgba(0xffffffeb).into(),
+hud_surface_bg: rgb(0xffffff).into(),
+hud_border: rgb(0xd0d7de).into(),
+chip_bg: rgb(0xeef2f6).into(),
+chip_active_bg: rgb(0xddf4ff).into(),
+chip_muted_bg: rgb(0xd8dee4).into(),
+control_bg: rgb(0xe2e8f0).into(),
+accent_blue: rgb(0x0969da).into(),
+tick_inactive: rgb(0xcbd5e1).into(),
+toggle_off_bg: rgb(0xffebe9).into(),
+heat_neutral_border: rgb(0xc7b595).into(),
+badge_danger_bg: rgb(0xffebe9).into(),
+badge_danger_fg: rgb(0xcf222e).into(),
+badge_warn_bg: rgb(0xfff8c5).into(),
+chip_danger_bg: rgb(0xffebe9).into(),
+info_blue: rgb(0x0969da).into(),
+hint_amber: rgb(0x9a6700).into(),
+text_contrast: rgb(0x1f2328).into(),
+topbar_border: rgb(0xd8dee4).into(),
+smoke_node_bg: rgb(0xdbeafe).into(),
+search_hit_bg: rgb(0xddf4ff).into(),
+selection_border: rgb(0x0969da).into(),
+selection_highlight_border: rgb(0xbf8700).into(),
+card_bg: rgb(0xffffff).into(),
+card_selected_bg: rgb(0xeef6ff).into(),
+card_neighbor_bg: rgb(0xf1f8ff).into(),
+card_shadow: rgba(0x0f172a18).into(),
+card_border_default: rgb(0xd0d7de).into(),
+card_border_selected: rgb(0x0969da).into(),
+card_border_search_match: rgb(0xd97706).into(),
+text_primary: rgb(0x1f2328).into(),
+text_secondary: rgb(0x57606a).into(),
+text_muted: rgb(0x6e7781).into(),
+text_bright: rgb(0x0d1117).into(),
+text_slate: rgb(0x57606a).into(),
+warning_fg: rgb(0xbc4c00).into(),
+amber_fg: rgb(0x9a6700).into(),
+edge_normal: rgb(0x8c959f).into(),
+edge_strong: rgb(0x0969da).into(),
+edge_direction_adjusted: rgb(0xcf222e).into(),
+port_default: rgb(0x6e7781).into(),
+grid_spacing: px(24.0),
+band_radius: px(8.0),
+card_radius: px(6.0),
+accent_bar_width: px(3.0),
+non_neighbor_dim_factor: 0.22,
+    }
+    }
 
-    /// 在 `main.rs` 启动窗口前注册全局主题：`StrataTheme::init_global(cx);`
+    pub fn is_light(&self) -> bool {
+        self.canvas_bg.l > 0.5
+    }
+
+    pub fn current(cx: &App) -> Self {
+        cx.try_global::<Self>().cloned().unwrap_or_default()
+    }
+
+    pub fn toggle_global(cx: &mut App) {
+        let next = if Self::current(cx).is_light() {
+            Self::obsidian_dark()
+        } else {
+            Self::porcelain_light()
+        };
+        cx.set_global(next);
+    }
+
+    /// 在 `main.rs` 启动窗口前注册全局主题：`StrataTheme::init_global(cx);`            
     pub fn init_global(cx: &mut App) {
         cx.set_global(Self::obsidian_dark());
     }
@@ -457,3 +527,15 @@ impl StrataTheme {
         (bg, accent, text)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_presets_report_light_and_dark_correctly() {
+        assert!(!StrataTheme::obsidian_dark().is_light());
+        assert!(StrataTheme::porcelain_light().is_light());
+    }
+}
+

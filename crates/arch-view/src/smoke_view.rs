@@ -158,8 +158,8 @@ struct SmokeView {
 }
 
 impl Render for SmokeView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         phase_marker("smoke:render:enter");
         if !self.scheduled {
             self.scheduled = true;
@@ -178,7 +178,6 @@ impl Render for SmokeView {
             .overflow_hidden()
             .bg(theme.canvas_bg);
         {
-            let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
             let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = self
                 .layout
                 .bands

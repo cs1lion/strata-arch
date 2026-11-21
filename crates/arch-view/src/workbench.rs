@@ -87,7 +87,7 @@ impl WorkbenchView {
 
 impl Render for WorkbenchView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         let active = self.active;
         let repo_name = self
             .repo
@@ -164,7 +164,17 @@ impl Render for WorkbenchView {
                             })),
                     ),
             )
-            .child(div().text_color(theme.text_secondary).child(repo_name));
+            .child(
+                div().flex().items_center().gap(px(8.))
+                .child(div().text_color(theme.text_secondary).child(repo_name))
+                .child(div().id("tab-theme-toggle").px(px(8.)).py(px(3.)).rounded(px(5.)).border_1().border_color(theme.hud_border).bg(theme.chip_bg).text_color(theme.text_primary)
+                       .child(if theme.is_light() { "☀ 浅色" } else { "☾ 深色" })
+                       .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                          arch_view::arch_view_theme::StrataTheme::toggle_global(cx);
+                           if let Some(map) = &this.map { map.update(cx, |_, cx| cx.notify()); }
+                           if let Some(timeline) = &this.timeline { timeline.update(cx, |_, cx| cx.notify()); }
+                           if let Some(diff) = &this.diff { diff.update(cx, |_, cx| cx.notify()); } cx.notify();
+                           }))));
 
         let mut content = div().flex_1().w_full().relative().overflow_hidden();
         match self.active {

@@ -261,9 +261,9 @@ impl TimelineView {
 
     /// 加载/失败态：整窗居中显示非空文案，避免白屏或静默。
     /// 加载/失败态：保留原有状态文案，并在加载时显示进度条
-    fn render_status_panel(&self) -> impl IntoElement {
+    fn render_status_panel(&self, cx: &Context<Self>) -> impl IntoElement {
         let failed = matches!(self.content, TimelineContent::Failed(_));
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         let mut panel = div()
             .size_full()
             .bg(theme.canvas_bg)
@@ -318,7 +318,7 @@ impl Render for TimelineView {
             window.on_next_frame(|_, _cx| phase_marker("frame:presented"));
         }
         if !self.content.is_ready() {
-            return self.render_status_panel().into_any_element();
+            return self.render_status_panel(cx).into_any_element();
         }
         if self.autoplay_pending {
             self.autoplay_pending = false;
@@ -351,7 +351,7 @@ impl Render for TimelineView {
             })
             .unwrap_or_else(|| "无提交".to_string());
 
-        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
+        let theme = arch_view::arch_view_theme::StrataTheme::current(cx);
         let mut root = div()
             .relative()
             .size_full()
