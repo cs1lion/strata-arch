@@ -29,6 +29,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Render, ScrollDelta, ScrollWheelEvent, Stateful, Timer, Window,
 };
 
+use crate::insights::{compute_insights, shortcuts_overlay_element};
 use super::overlays::{
     edge_canvas, focus_label_element, search_panel_element, selection_border, split_module_label,
     PlaybackOverlay,
@@ -152,6 +153,8 @@ pub(crate) fn spawn_map_loading(
                     callgraph,
                     playback,
                     ticker_running: false,
+                    insights_open: false,
+                    shortcuts_open: false,
                     fly_to_anchor: None,
                     press_origin: None,
                     drag_last: None,
@@ -222,6 +225,8 @@ pub(crate) struct MapView {
     callgraph: CallGraphArtifact,
     playback: Option<PlaybackState>,
     ticker_running: bool,
+    insights_open: bool,
+    shortcuts_open: bool,
     /// 最近一次 fly-to 已居中的步骤符号；用于只在步骤变化时移动相机。
     fly_to_anchor: Option<String>,
     press_origin: Option<LayoutPoint>,
@@ -446,7 +451,28 @@ impl MapView {
                         }
                     }
                 }
+                "i" | "I" => {
+                    self.insights_open = !self.insights_open;
+                    self.shortcuts_open = false;
+                    cx.notify();
+                    return;
+                }
+                "?" => {
+                    self.shortcuts_open = !self.shortcuts_open;
+                    cx.notify();
+                    return;
+                }
                 "escape" => {
+                    if self.shortcuts_open {
+                        self.shortcuts_open = false;
+                        cx.notify();
+                        return;
+                    }
+                    if self.insights_open {
+                        self.insights_open = false;
+                        cx.notify();
+                        return;
+                    }
                     if self.search.focus_label().is_none()
                         && (self.state.clear_selection() || self.layer_filter.take().is_some())
                     {
@@ -2029,6 +2055,7 @@ impl Render for MapView {
         let module_count = self.state.map().nodes.len();
         let edge_count = self.state.map().edges.len();
         let zoom_pct = (viewport.zoom * 100.0).round() as i32;
+        let insights = compute_insights(self.state.map());
         let mut hud = div()
             .id("map-hud-toolbar")
             .absolute()
@@ -2146,6 +2173,53 @@ impl Render for MapView {
                         cx.notify();
                     })),
             );
+        hud = hud
+            .child(
+                div()
+                    .id("hud-insights")
+                    .px(px(8.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(if self.insights_open {
+                        theme.chip_active_bg
+                    } else {
+                        theme.chip_bg
+                    })
+                    .text_color(if !insights.reversed_edges.is_empty() {
+                        theme.hint_amber
+                    } else {
+                        theme.text_primary
+                    })
+                    .child(if insights.reversed_edges.is_empty() {
+                        "洞察 I".to_string()
+                    } else {
+                        format!("洞察 {} (I)", insights.reversed_edges.len())
+                    })
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
+                        this.insights_open = !this.insights_open;
+                        this.shortcuts_open = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("hud-shortcuts")
+                    .px(px(7.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .bg(if self.shortcuts_open {
+                        theme.chip_active_bg
+                    } else {
+                        theme.chip_bg
+                    })
+                    .child("?")
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.interrupt_reveal();
+                        this.shortcuts_open = !this.shortcuts_open;
+                        cx.notify();
+                    })),
+            );
         root = root.child(hud);
 
         if matches!(self.state.level(), Level::Modules)
@@ -2225,6 +2299,190 @@ impl Render for MapView {
             }
 
             root = root.child(legend);
+        }
+
+        if self.insights_open && matches!(self.state.level(), Level::Modules) {
+            let reversed_total = insights.reversed_edges.len();
+            let mut panel = div()
+                .id("arch-insights-panel")
+                .absolute()
+                .left(px(12.))
+                .top(px(12.))
+                .w(px(310.))
+                .px(px(12.))
+                .py(px(10.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(theme.hud_border)
+                .bg(theme.hud_surface_bg)
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .text_xs()
+                .text_color(theme.text_primary)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_color(theme.text_bright).child("架构健康洞察"))
+                        .child(
+                            div()
+                                .id("insights-close")
+                                .px(px(6.))
+                                .py(px(2.))
+                                .rounded(px(4.))
+                                .bg(theme.chip_bg)
+                                .child("×")
+                                .on_click(cx.listener(
+                                    |this, _event: &ClickEvent, _window, cx| {
+                                        this.insights_open = false;
+                                        cx.notify();
+                                    },
+                                )),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .px(px(7.))
+                                .py(px(3.))
+                                .rounded(px(4.))
+                                .bg(if reversed_total > 0 {
+                                    theme.badge_danger_bg
+                                } else {
+                                    theme.chip_bg
+                                })
+                                .text_color(if reversed_total > 0 {
+                                    theme.badge_danger_fg
+                                } else {
+                                    theme.text_primary
+                                })
+                                .child(format!("越层边 {reversed_total}")),
+                        )
+                        .child(
+                            div()
+                                .px(px(7.))
+                                .py(px(3.))
+                                .rounded(px(4.))
+                                .bg(theme.chip_bg)
+                                .text_color(theme.text_secondary)
+                                .child(format!("孤立 {}", insights.isolated_count)),
+                        )
+                        .child(
+                            div()
+                                .px(px(7.))
+                                .py(px(3.))
+                                .rounded(px(4.))
+                                .bg(theme.chip_bg)
+                                .text_color(theme.text_secondary)
+                                .child(format!(
+                                    "{} 模块 · {} 边",
+                                    insights.module_count, insights.edge_count
+                                )),
+                        ),
+                )
+                .child(div().text_color(theme.text_secondary).child("核心枢纽模块（Top 5 高入度）"));
+
+            if insights.top_hubs.is_empty() {
+                panel = panel.child(div().text_color(theme.text_muted).child("暂无依赖连接"));
+            } else {
+                for (idx, (hub_id, in_deg, out_deg)) in insights.top_hubs.iter().enumerate() {
+                    let target = hub_id.clone();
+                    let short = hub_id.rsplit('/').next().unwrap_or(hub_id).to_string();
+                    panel = panel.child(
+                        div()
+                            .id(("insight-hub", idx as u64))
+                            .px(px(7.))
+                            .py(px(4.))
+                            .rounded(px(4.))
+                            .bg(theme.canvas_bg)
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(6.))
+                            .child(div().text_color(theme.text_primary).child(short))
+                            .child(
+                                div()
+                                    .text_color(theme.info_blue)
+                                    .child(format!("↓{in_deg} ↑{out_deg}")),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _event: &ClickEvent, window, cx| {
+                                    this.interrupt_reveal();
+                                    let size = (
+                                        f32::from(window.viewport_size().width),
+                                        f32::from(window.viewport_size().height),
+                                    );
+                                    if let Some(center) = this.state.select_module(&target) {
+                                        if this.state.begin_fly_to(Some(center), size) {
+                                            this.transition_generation += 1;
+                                            this.transition_delta = Rc::new(Cell::new(0.0));
+                                            Self::schedule_transition_step(this, window, cx);
+                                        }
+                                    }
+                                    cx.notify();
+                                },
+                            )),
+                    );
+                }
+            }
+
+            panel = panel.child(
+                div()
+                    .text_color(theme.text_secondary)
+                    .child(format!("逆向 / 越层依赖 ({reversed_total})")),
+            );
+            if insights.reversed_edges.is_empty() {
+                panel = panel.child(
+                    div()
+                        .text_color(theme.text_muted)
+                        .child("无越层依赖，分层方向健康"),
+                );
+            } else {
+                for (idx, (src, dst)) in insights.reversed_edges.iter().take(5).enumerate() {
+                    let target = src.clone();
+                    let src_short = src.rsplit('/').next().unwrap_or(src);
+                    let dst_short = dst.rsplit('/').next().unwrap_or(dst);
+                    panel = panel.child(
+                        div()
+                            .id(("insight-rev", idx as u64))
+                            .px(px(7.))
+                            .py(px(4.))
+                            .rounded(px(4.))
+                            .bg(theme.canvas_bg)
+                            .text_color(theme.warning_fg)
+                            .child(format!("{src_short} → {dst_short}"))
+                            .on_click(cx.listener(
+                                move |this, _event: &ClickEvent, window, cx| {
+                                    this.interrupt_reveal();
+                                    let size = (
+                                        f32::from(window.viewport_size().width),
+                                        f32::from(window.viewport_size().height),
+                                    );
+                                    if let Some(center) = this.state.select_module(&target) {
+                                        if this.state.begin_fly_to(Some(center), size) {
+                                            this.transition_generation += 1;
+                                            this.transition_delta = Rc::new(Cell::new(0.0));
+                                            Self::schedule_transition_step(this, window, cx);
+                                        }
+                                    }
+                                    cx.notify();
+                                },
+                            )),
+                    );
+                }
+            }
+
+            root = root.child(panel);
+        }
+
+        if self.shortcuts_open {
+            root = root.child(shortcuts_overlay_element(&theme));
         }
 
         // P5：揭示进度只由 GPUI 动画时钟驱动（固定时长），帧率只决定中间帧疏密。

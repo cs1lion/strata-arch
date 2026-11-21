@@ -5,6 +5,7 @@ mod shell;
 mod smoke_view;
 mod timeline_view;
 mod workbench;
+mod insights;
 
 use diff_view::{spawn_diff_loading, DiffView};
 use map_view::{spawn_map_loading, MapView};
