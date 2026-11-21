@@ -1190,7 +1190,7 @@ impl MapView {
                     );
                     let border = selection_border(
                         &node.id,
-                        &theme,
+                        theme,
                         theme.card_border_default,
                         selected.as_deref(),
                         &highlighted,
