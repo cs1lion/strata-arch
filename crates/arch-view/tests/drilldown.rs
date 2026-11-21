@@ -142,9 +142,7 @@ fn symbol_edges_stay_inside_module_and_highlight_matches_callgraph() {
         "highlighted neighbors must match the call graph in both directions"
     );
     assert!(
-        state
-            .highlighted()
-            .contains("src/util.ts#function:helper"),
+        state.highlighted().contains("src/util.ts#function:helper"),
         "cross-module neighbors stay highlighted even when not drawn"
     );
 }

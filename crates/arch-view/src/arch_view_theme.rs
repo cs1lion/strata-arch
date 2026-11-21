@@ -39,6 +39,41 @@ pub struct StrataTheme {
     pub dot_grid_major: Hsla,
     pub hud_panel_bg: Hsla,
     pub hud_border: Hsla,
+    /// HUD 悬浮面板的实底背景（揭示提示 / 路径播放条 / Inspector / 底部工具栏 / 图层图例）
+    pub hud_surface_bg: Hsla,
+    /// HUD 按钮的默认底色（返回 / 步进 / 搜索 / 缩放 / Inspector 操作等）
+    pub chip_bg: Hsla,
+    /// HUD 按钮的激活态底色（当前页签、选中图例项、路径起终点、下钻）
+    pub chip_active_bg: Hsla,
+    /// 中性弱化 chip 底色（图例「全部」清除钮）
+    pub chip_muted_bg: Hsla,
+    /// 时间线控制按钮、进度条轨道与冒烟视图卡片边框底色
+    pub control_bg: Hsla,
+    /// UI 主强调色（激活刻度 / 进度条填充；与 `edge_strong` 同值但语义独立）
+    pub accent_blue: Hsla,
+    /// 未激活的时间线刻度色块
+    pub tick_inactive: Hsla,
+    /// 开关按钮的关闭态底色（动画开关）
+    pub toggle_off_bg: Hsla,
+    /// 无历史热度模块的边框
+    pub heat_neutral_border: Hsla,
+    /// 降级徽章（红底 + 浅红前景）
+    pub badge_danger_bg: Hsla,
+    pub badge_danger_fg: Hsla,
+    /// 采样状态徽章底色（前景用 `amber_fg`）
+    pub badge_warn_bg: Hsla,
+    /// 「退出路径」等破坏性操作 chip
+    pub chip_danger_bg: Hsla,
+    /// Inspector 中的层/符号信息前景色
+    pub info_blue: Hsla,
+    /// Inspector 中的路径提示色（暖金）
+    pub hint_amber: Hsla,
+    /// 高对比读数文本（缩放百分比）
+    pub text_contrast: Hsla,
+    /// 顶栏分隔线
+    pub topbar_border: Hsla,
+    /// 冒烟视图的节点卡片底色
+    pub smoke_node_bg: Hsla,
     /// 搜索面板命中项选中背景（收敛自 main.rs 硬编码 `rgb(0x1f3a5f)`）
     pub search_hit_bg: Hsla,
     /// 选中边框（收敛自 main.rs `selection_border` 硬编码 `rgb(0xf2f5f8)`）
@@ -59,6 +94,14 @@ pub struct StrataTheme {
     pub text_primary: Hsla,
     pub text_secondary: Hsla,
     pub text_muted: Hsla,
+    /// 最亮的标题文本（模块卡片标题 / Inspector 标题）
+    pub text_bright: Hsla,
+    /// HUD 面板上的次级说明文字（蓝灰）
+    pub text_slate: Hsla,
+    /// 警示/失败文案（加载失败、采样空洞）
+    pub warning_fg: Hsla,
+    /// 琥珀高亮文案（状态徽章、播放结束提示）
+    pub amber_fg: Hsla,
 
     // 4. 边与架构违规信号 (Edges & Architectural Risk Signals)
     pub edge_normal: Hsla,
@@ -92,6 +135,24 @@ impl StrataTheme {
             dot_grid_major: rgba(0x38415299).into(),
             hud_panel_bg: rgba(0x161b22e6).into(),
             hud_border: rgb(0x30363d).into(),
+            hud_surface_bg: rgb(0x161b22).into(),
+            chip_bg: rgb(0x1f2937).into(),
+            chip_active_bg: rgb(0x1f3a5f).into(),
+            chip_muted_bg: rgb(0x30363d).into(),
+            control_bg: rgb(0x2c3a4a).into(),
+            accent_blue: rgb(0x58a6ff).into(),
+            tick_inactive: rgb(0x3d4b5c).into(),
+            toggle_off_bg: rgb(0x50241f).into(),
+            heat_neutral_border: rgb(0x8a7a5a).into(),
+            badge_danger_bg: rgb(0x5a2d23).into(),
+            badge_danger_fg: rgb(0xffd0c2).into(),
+            badge_warn_bg: rgb(0x3a2f1a).into(),
+            chip_danger_bg: rgb(0x5f2b2b).into(),
+            info_blue: rgb(0x79c0ff).into(),
+            hint_amber: rgb(0xd29922).into(),
+            text_contrast: rgb(0xc9d1d9).into(),
+            topbar_border: rgb(0x21262d).into(),
+            smoke_node_bg: rgb(0x2d4f7a).into(),
             search_hit_bg: rgb(0x1f3a5f).into(),
             selection_border: rgb(0xf2f5f8).into(),
             selection_highlight_border: rgb(0xd98a3d).into(),
@@ -107,6 +168,10 @@ impl StrataTheme {
             text_primary: rgb(NODE_LABEL).into(),
             text_secondary: rgb(0x8b949e).into(),
             text_muted: rgb(0x6e7681).into(),
+            text_bright: rgb(0xf0f6fc).into(),
+            text_slate: rgb(0x8b9bb0).into(),
+            warning_fg: rgb(0xe07b39).into(),
+            amber_fg: rgb(0xd98a3d).into(),
 
             edge_normal: rgb(0x484f58).into(),
             edge_strong: rgb(0x58a6ff).into(),

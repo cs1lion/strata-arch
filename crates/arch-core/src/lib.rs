@@ -290,7 +290,11 @@ fn resolve_import(
                 FileLookup::Found(file) => {
                     match relative_module_id(root, &file) {
                         Some(target_id) => {
-                            resolution.edges.insert((source_id.to_string(), target_id, edge_kind.to_string()));
+                            resolution.edges.insert((
+                                source_id.to_string(),
+                                target_id,
+                                edge_kind.to_string(),
+                            ));
                         }
                         None => {
                             resolution.unresolved.insert((
@@ -417,7 +421,11 @@ pub(crate) fn external_package_name(specifier: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn walk(_root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
+pub(crate) fn walk(
+    _root: &Path,
+    current: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), ScanError> {
     let entries = fs::read_dir(current)
         .map_err(|error| ScanError::Io(format!("{}（{error}）", display_path(current))))?;
     for entry in entries {

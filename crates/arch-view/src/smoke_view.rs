@@ -8,7 +8,7 @@ use std::time::Duration;
 use arch_core::layers::build_layers;
 use arch_view::layout::{layout_map, LayoutConfig, MapLayout};
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, IntoElement,
+    canvas, div, point, prelude::*, px, size, App, Application, Bounds, Context, IntoElement,
     Render, Window, WindowBounds, WindowOptions,
 };
 
@@ -159,6 +159,7 @@ struct SmokeView {
 
 impl Render for SmokeView {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         phase_marker("smoke:render:enter");
         if !self.scheduled {
             self.scheduled = true;
@@ -175,7 +176,7 @@ impl Render for SmokeView {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x0d1117));
+            .bg(theme.canvas_bg);
         {
             let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
             let band_draws: Vec<(arch_view::layout::Rect, String, bool, bool, usize)> = self
@@ -268,12 +269,12 @@ impl Render for SmokeView {
                     .h(px(node.rect.height))
                     .rounded(px(4.))
                     .border_1()
-                    .border_color(rgb(0x2c3a4a))
-                    .bg(rgb(0x2d4f7a))
+                    .border_color(theme.control_bg)
+                    .bg(theme.smoke_node_bg)
                     .overflow_hidden()
                     .px(px(6.))
                     .text_xs()
-                    .text_color(rgb(0xe6edf3))
+                    .text_color(theme.text_primary)
                     .child(node.id.clone()),
             );
         }

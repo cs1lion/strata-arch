@@ -175,7 +175,6 @@ pub fn layout_map(artifact: &LayersArtifact, config: LayoutConfig) -> MapLayout 
     order_layers_for_readability(&mut layer_groups, &edge_pairs);
 
     for (layer, layer_modules) in layer_groups {
-
         let rows = layer_modules.len().div_ceil(columns);
         let band_height = config.band_header
             + 2.0 * config.band_padding
@@ -409,7 +408,10 @@ mod tests {
     #[test]
     fn barycenter_ordering_reduces_cross_layer_crossings() {
         let mut layers = vec![
-            ("ui", vec!["src/ui/a.ts".to_string(), "src/ui/b.ts".to_string()]),
+            (
+                "ui",
+                vec!["src/ui/a.ts".to_string(), "src/ui/b.ts".to_string()],
+            ),
             (
                 "domain",
                 vec!["src/domain/x.ts".to_string(), "src/domain/y.ts".to_string()],

@@ -106,8 +106,6 @@ pub struct CallGraphOptions {
     pub include_unattributed: bool,
 }
 
-
-
 #[derive(Debug, Clone)]
 struct RawSymbol {
     kind: &'static str,

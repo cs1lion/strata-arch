@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use arch_view::playback::PlaybackState;
 use arch_view::search::{FocusLabel, SearchState};
 use arch_view::view::{group_edges, EdgeVisual as EdgeDraw};
-use gpui::{canvas, div, point, prelude::*, px, rgb, AnyElement, IntoElement, PathBuilder};
+use gpui::{canvas, div, point, prelude::*, px, AnyElement, IntoElement, PathBuilder};
 
 pub(crate) fn search_panel_element(search: &SearchState) -> AnyElement {
     let query = if search.query().is_empty() {
@@ -28,9 +28,9 @@ pub(crate) fn search_panel_element(search: &SearchState) -> AnyElement {
         .border_color(theme.hud_border)
         .bg(theme.hud_panel_bg)
         .text_xs()
-        .text_color(rgb(0xe6edf3))
+        .text_color(theme.text_primary)
         .child(format!("搜索模块 · {query}"))
-        .child(div().text_color(rgb(0x8b9bb0)).child(search.summary()));
+        .child(div().text_color(theme.text_slate).child(search.summary()));
     let start = search.list_start();
     for (offset, hit) in search.visible_hits().iter().enumerate() {
         let selected = start + offset == search.selected();
@@ -65,7 +65,7 @@ pub(crate) fn focus_label_element(label: &FocusLabel) -> AnyElement {
         .border_color(theme.hud_border)
         .bg(theme.hud_panel_bg)
         .text_xs()
-        .text_color(rgb(0xe6edf3))
+        .text_color(theme.text_primary)
         .child(label.text())
         .into_any_element()
 }

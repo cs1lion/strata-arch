@@ -4,11 +4,24 @@ use std::sync::Arc;
 use arch_view::loading::{LoadStatus, LoadingStage, LoadingState};
 use arch_view::view::{Viewport, MAX_ZOOM, MIN_ZOOM};
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, AnyView, Context, Entity, IntoElement, MouseButton,
+    div, prelude::*, px, AnyElement, AnyView, AsyncApp, Context, Entity, IntoElement, MouseButton,
     Render, Window,
 };
 
 use super::phase_marker;
+
+/// 加载期间把外壳的阶段文案与 `AsyncApp` 更新合并成一个通用入口；
+/// map / timeline / diff 三个后台装配流程共用。
+pub(crate) fn set_shell_stage<T: Render>(
+    shell: &Entity<LoadingShell<T>>,
+    cx: &mut AsyncApp,
+    stage: &str,
+) {
+    let _ = shell.update(cx, |shell, cx| {
+        shell.set_stage(stage);
+        cx.notify();
+    });
+}
 
 /// 诊断开关：按需跳过部分绘制，用受控实验的差值定位每帧成本来源。
 /// 取值 `bands,edges,nodes,labels` 的逗号子集（`STRATA_RENDER_SKIP`）。
@@ -161,11 +174,16 @@ impl<T: Render> LoadingShell<T> {
     }
 
     fn render_status_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = arch_view::arch_view_theme::StrataTheme::obsidian_dark();
         let failed = matches!(self.status, LoadStatus::Failed { .. });
-        let color = if failed { rgb(0xe07b39) } else { rgb(0xe6edf3) };
+        let color = if failed {
+            theme.warning_fg
+        } else {
+            theme.text_primary
+        };
         let mut panel = div()
             .size_full()
-            .bg(rgb(0x0d1117))
+            .bg(theme.canvas_bg)
             .flex()
             .flex_col()
             .items_center()
@@ -188,13 +206,13 @@ impl<T: Render> LoadingShell<T> {
                     .w(px(280.))
                     .h(px(4.))
                     .rounded(px(2.))
-                    .bg(rgb(0x2c3a4a))
+                    .bg(theme.control_bg)
                     .child(
                         div()
                             .w(px(280.0 * progress))
                             .h(px(4.))
                             .rounded(px(2.))
-                            .bg(rgb(0x58a6ff)),
+                            .bg(theme.accent_blue),
                     ),
             );
         }
@@ -206,9 +224,9 @@ impl<T: Render> LoadingShell<T> {
                     .py(px(6.))
                     .rounded(px(4.))
                     .border_1()
-                    .border_color(rgb(0x2c3a4a))
-                    .bg(rgb(0x161b22))
-                    .text_color(rgb(0xe6edf3))
+                    .border_color(theme.control_bg)
+                    .bg(theme.card_bg)
+                    .text_color(theme.text_primary)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
@@ -247,4 +265,4 @@ impl<T: Render> Render for LoadingShell<T> {
         }
         self.render_status_panel(cx)
     }
-                                  }
+}

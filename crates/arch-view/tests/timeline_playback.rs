@@ -4,8 +4,8 @@
 //! 实测值。判据与固定样本见 `docs/tickets/arch-tool/18-timeline-discrete-playback.md`。
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 use arch_core::history::{build_history_prefixes, HistoryOptions};
