@@ -38,18 +38,18 @@ use arch_view::loading::{
 };
 use arch_view::playback::{PlaybackState, CONTEXT_OPACITY, NON_PATH_OPACITY};
 use arch_view::reveal::{reveal_allowed, RevealState, REVEAL_DURATION_MS};
-use arch_view::search::{interpret_key, KeyModifiers, SearchAction, SearchState, SearchKey};
+use arch_view::search::{interpret_key, KeyModifiers, SearchAction, SearchKey, SearchState};
 use arch_view::timeline::{degradation_label, TimelinePlayback, TimelineState};
 use arch_view::view::{
     find_reachable_symbol_pair, layer_palette, node_visual_geometry, paint_symbol_edges,
-    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState, EdgeDisplayMode,
-    EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN,
+    paint_symbol_edges_with_roles, rect_fully_outside, segment_fully_outside, CanvasState,
+    EdgeDisplayMode, EdgeVisual as EdgeDraw, Level, SymbolLayout, Viewport, CULL_MARGIN,
 };
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt,
-    App, Application, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
-    ScrollDelta, ScrollWheelEvent, Stateful, Timer, Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, size, Animation, AnimationExt, App, Application,
+    Bounds, ClickEvent, Context, Div, Entity, FocusHandle, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollDelta, ScrollWheelEvent, Stateful,
+    Timer, Window, WindowBounds, WindowOptions,
 };
 
 const USAGE: &str = "用法:
@@ -70,7 +70,6 @@ fn phase_marker(label: &str) {
     }
 }
 
-    
 /// 冒烟诊断：`STRATA_SMOKE_LOG=1` 时把 gpui 的 log 输出到 stderr，
 /// 用于在无 GPU 的 CI 上定位帧请求循环为什么没启动（不改变正常运行的输出）。
 fn install_smoke_logger() {
@@ -239,7 +238,9 @@ fn run_map(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     map: Some(shell),
                     timeline: None,
                     reveal_requested,
-                    autoplay: false, diff: None, fade_enabled: true,
+                    autoplay: false,
+                    diff: None,
+                    fade_enabled: true,
                 })
             },
         )
@@ -357,7 +358,7 @@ fn spawn_map_loading(
 
         let built_view = cx.update(|cx| {
             let evidence_camera = evidence_viewport();
-         let map_repo = repo.clone();
+            let map_repo = repo.clone();
             cx.new(move |cx| {
                 let search = SearchState::new(&layout);
                 let focus_handle = cx.focus_handle();
@@ -498,7 +499,9 @@ fn run_timeline(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     map: None,
                     timeline: Some(view),
                     reveal_requested: true,
-                    autoplay, diff: None, fade_enabled: true,
+                    autoplay,
+                    diff: None,
+                    fade_enabled: true,
                 })
             },
         )
@@ -695,7 +698,16 @@ fn run_diff(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     window_cancel,
                     cx,
                 );
-                cx.new(|_| WorkbenchView { repo: window_repo, active: WorkbenchTab::Diff, map: None, timeline: None, diff: Some(shell), reveal_requested: true, autoplay: false, fade_enabled }) // shell
+                cx.new(|_| WorkbenchView {
+                    repo: window_repo,
+                    active: WorkbenchTab::Diff,
+                    map: None,
+                    timeline: None,
+                    diff: Some(shell),
+                    reveal_requested: true,
+                    autoplay: false,
+                    fade_enabled,
+                }) // shell
             },
         )
         .expect("open diff window");
@@ -1762,10 +1774,7 @@ impl MapView {
             f32::from(window.viewport_size().width),
             f32::from(window.viewport_size().height),
         );
-        if !self.search.is_open()
-            && !keystroke.modifiers.secondary()
-            && !keystroke.modifiers.alt
-        {
+        if !self.search.is_open() && !keystroke.modifiers.secondary() && !keystroke.modifiers.alt {
             match keystroke.key.as_str() {
                 "enter" => {
                     if matches!(self.state.level(), Level::Modules) {
@@ -2033,37 +2042,39 @@ impl MapView {
                 }
                 let base_opacity =
                     (if fade_enabled { CONTEXT_OPACITY } else { 1.0 }) * reveal_overall;
-        let edge_mode = self.state.edge_mode();
+                let edge_mode = self.state.edge_mode();
                 if !skip.edges && edge_mode != EdgeDisplayMode::Hidden {
-        let layer_nodes = self.layer_filter.map(|target_layer| {
-            map.nodes
-                .iter()
-                .filter(|node| node.layer == target_layer)
-                .map(|node| node.id.as_str())
-                .collect::<BTreeSet<_>>()
-        });
+                    let layer_nodes = self.layer_filter.map(|target_layer| {
+                        map.nodes
+                            .iter()
+                            .filter(|node| node.layer == target_layer)
+                            .map(|node| node.id.as_str())
+                            .collect::<BTreeSet<_>>()
+                    });
                     let edges = map
                         .edges
                         .iter()
                         .filter_map(|edge| {
-                    if edge_mode == EdgeDisplayMode::FocusedOnly {
-                        let related = match search_focus {
-                            Some(set) => set.focus == edge.source || set.focus == edge.target,
-                            None => {
-                            if let Some(id) = self.state.selected() {
-                                id == edge.source || id == edge.target
-                            } else if let Some(nodes) = &layer_nodes {
-                                nodes.contains(edge.source.as_str())
-                                    || nodes.contains(edge.target.as_str())
-                            } else {
-                                false
+                            if edge_mode == EdgeDisplayMode::FocusedOnly {
+                                let related = match search_focus {
+                                    Some(set) => {
+                                        set.focus == edge.source || set.focus == edge.target
+                                    }
+                                    None => {
+                                        if let Some(id) = self.state.selected() {
+                                            id == edge.source || id == edge.target
+                                        } else if let Some(nodes) = &layer_nodes {
+                                            nodes.contains(edge.source.as_str())
+                                                || nodes.contains(edge.target.as_str())
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                };
+                                if !related {
+                                    return None;
+                                }
                             }
-                        }
-                        };
-                        if !related {
-                            return None;
-                        }
-                    }
                             let from = viewport.screen_point(edge.from);
                             let to = viewport.screen_point(edge.to);
                             if tuning.cull_viewport
@@ -2072,42 +2083,42 @@ impl MapView {
                                 return None;
                             }
                             let selected_id = self.state.selected();
-                    let is_layer_edge = search_focus.is_none()
-                        && selected_id.is_none()
-                        && layer_nodes.as_ref().is_some_and(|nodes| {
-                            nodes.contains(edge.source.as_str())
-                                || nodes.contains(edge.target.as_str())
-                        });
-                    let is_selected_edge = search_focus.is_none()
-                        && selected_id
-                            .is_some_and(|id| id == edge.source || id == edge.target);
-                    let opacity = match search_focus {
-                        Some(set) => {
-                            set.edge_opacity(&edge.source, &edge.target) * reveal_overall
-                        }
-                        None if selected_id.is_some() => {
-                            if is_selected_edge {
-                                reveal_overall
-                            } else {
-                                CONTEXT_OPACITY * reveal_overall
-                            }
-                        }
-                        None if layer_nodes.is_some() => {
-                            if is_layer_edge {
-                                reveal_overall
-                            } else {
-                                0.18 * reveal_overall
-                            }
-                        }
-                        None => base_opacity,
-                    };
-                    Some(EdgeDraw {
-                        from,
-                        to,
-                        adjusted: edge.direction_adjusted,
-                        strong: is_selected_edge || is_layer_edge,
-                        opacity,
-                    })
+                            let is_layer_edge = search_focus.is_none()
+                                && selected_id.is_none()
+                                && layer_nodes.as_ref().is_some_and(|nodes| {
+                                    nodes.contains(edge.source.as_str())
+                                        || nodes.contains(edge.target.as_str())
+                                });
+                            let is_selected_edge = search_focus.is_none()
+                                && selected_id
+                                    .is_some_and(|id| id == edge.source || id == edge.target);
+                            let opacity = match search_focus {
+                                Some(set) => {
+                                    set.edge_opacity(&edge.source, &edge.target) * reveal_overall
+                                }
+                                None if selected_id.is_some() => {
+                                    if is_selected_edge {
+                                        reveal_overall
+                                    } else {
+                                        CONTEXT_OPACITY * reveal_overall
+                                    }
+                                }
+                                None if layer_nodes.is_some() => {
+                                    if is_layer_edge {
+                                        reveal_overall
+                                    } else {
+                                        0.18 * reveal_overall
+                                    }
+                                }
+                                None => base_opacity,
+                            };
+                            Some(EdgeDraw {
+                                from,
+                                to,
+                                adjusted: edge.direction_adjusted,
+                                strong: is_selected_edge || is_layer_edge,
+                                opacity,
+                            })
                         })
                         .collect::<Vec<_>>();
                     root = root.child(edge_canvas(
@@ -2206,7 +2217,7 @@ impl MapView {
                     marker: Option<u32>,
                 }
                 let hovered = self.state.hovered().map(str::to_string);
-            let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
+                let mut node_draws: Vec<ModuleNodeDraw> = Vec::new();
                 let mut node_overlays: Vec<ModuleNodeOverlay> = Vec::new();
                 for index in indices {
                     if skip.nodes {
@@ -2226,25 +2237,25 @@ impl MapView {
                             })
                             .unwrap_or(1.0),
                         None => match search_focus {
-                        Some(set) => set.module_opacity(&node.id),
-                        None if selected.is_some() => {
-                            if selected.as_deref() == Some(node.id.as_str())
-                                || highlighted.contains(&node.id)
-                            {
-                                1.0
-                            } else {
-                                CONTEXT_OPACITY
+                            Some(set) => set.module_opacity(&node.id),
+                            None if selected.is_some() => {
+                                if selected.as_deref() == Some(node.id.as_str())
+                                    || highlighted.contains(&node.id)
+                                {
+                                    1.0
+                                } else {
+                                    CONTEXT_OPACITY
+                                }
                             }
-                        }
-                        None if self.layer_filter.is_some() => {
-                            if self.layer_filter == Some(node.layer) {
-                                1.0
-                            } else {
-                                0.28
+                            None if self.layer_filter.is_some() => {
+                                if self.layer_filter == Some(node.layer) {
+                                    1.0
+                                } else {
+                                    0.28
+                                }
                             }
-                        }
-                        None => 1.0,
-                    },
+                            None => 1.0,
+                        },
                     };
                     let stage = stage_of_layer.get(node.layer).copied().unwrap_or(0);
                     let opacity = opacity * self.reveal.opacity_for_stage(stage);
@@ -2280,11 +2291,11 @@ impl MapView {
                         || selected.as_deref() == Some(node.id.as_str())
                     {
                         theme.card_border_selected
-                } else if hovered.as_deref() == Some(node.id.as_str()) {
-                    let mut b = accent;
-                    b.a = 0.85;
-                    b
-                } else if highlighted.contains(&node.id) {
+                    } else if hovered.as_deref() == Some(node.id.as_str()) {
+                        let mut b = accent;
+                        b.a = 0.85;
+                        b
+                    } else if highlighted.contains(&node.id) {
                         let mut b = accent;
                         b.a = 0.65;
                         b
@@ -2308,9 +2319,9 @@ impl MapView {
                     let (label, subtitle) = if labels {
                         let (title, dir) = split_module_label(&node.id);
                         (Some(title), if viewport.zoom >= 0.85 { dir } else { None })
-                            } else {
+                    } else {
                         (None, None)
-                            };
+                    };
                     node_overlays.push(ModuleNodeOverlay {
                         rect: drawn_rect,
                         opacity,
@@ -2374,22 +2385,32 @@ impl MapView {
                 }
                 for overlay_item in &node_overlays {
                     if let Some(label) = &overlay_item.label {
-                            let mut text_box = div()
-                                .absolute()
-                                .left(px(overlay_item.rect.x + 10.))
-                                .top(px(overlay_item.rect.y))
-                                .w(px((overlay_item.rect.width - 18.0).max(0.0)))
-                                .h(px(overlay_item.rect.height))
-                                .opacity(overlay_item.opacity)
-                                .flex()
-                                .flex_col()
-                                .justify_center()
-                                .overflow_hidden()
-                    .child(div().text_xs().text_color(rgb(0xf0f6fc)).child(label.clone()));
-                    if let Some(subtitle) = &overlay_item.subtitle {
-                        text_box = text_box.child(div().text_size(px(10.)).text_color(rgb(0x8b949e)).child(subtitle.clone()));
-                    }root = root.child(text_box);
-                        
+                        let mut text_box = div()
+                            .absolute()
+                            .left(px(overlay_item.rect.x + 10.))
+                            .top(px(overlay_item.rect.y))
+                            .w(px((overlay_item.rect.width - 18.0).max(0.0)))
+                            .h(px(overlay_item.rect.height))
+                            .opacity(overlay_item.opacity)
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xf0f6fc))
+                                    .child(label.clone()),
+                            );
+                        if let Some(subtitle) = &overlay_item.subtitle {
+                            text_box = text_box.child(
+                                div()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(0x8b949e))
+                                    .child(subtitle.clone()),
+                            );
+                        }
+                        root = root.child(text_box);
                     }
                     if let Some(color) = overlay_item.marker {
                         root = root.child(
@@ -3166,11 +3187,7 @@ impl Render for MapView {
                                     .px(px(8.))
                                     .py(px(4.))
                                     .rounded(px(4.))
-                                    .bg(if is_to {
-                                        rgb(0x1f3a5f)
-                                    } else {
-                                        rgb(0x1f2937)
-                                    })
+                                    .bg(if is_to { rgb(0x1f3a5f) } else { rgb(0x1f2937) })
                                     .child(if is_to {
                                         "✓ 路径终点"
                                     } else {
@@ -3236,8 +3253,8 @@ impl Render for MapView {
                             .child(format!("上游依赖 ({up_total})")),
                     );
                     if upstream.is_empty() {
-                        inspector = inspector
-                            .child(div().text_color(rgb(0x6e7681)).child("无上游依赖"));
+                        inspector =
+                            inspector.child(div().text_color(rgb(0x6e7681)).child("无上游依赖"));
                     } else {
                         for (idx, dep) in upstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
                         {
@@ -3273,9 +3290,11 @@ impl Render for MapView {
                             );
                         }
                         if up_total > INSPECTOR_MAX_ITEMS {
-                            inspector = inspector.child(div().text_color(rgb(0x6e7681)).child(
-                                format!("... 另有 {} 项", up_total - INSPECTOR_MAX_ITEMS),
-                            ));
+                            inspector =
+                                inspector.child(div().text_color(rgb(0x6e7681)).child(format!(
+                                    "... 另有 {} 项",
+                                    up_total - INSPECTOR_MAX_ITEMS
+                                )));
                         }
                     }
 
@@ -3285,8 +3304,8 @@ impl Render for MapView {
                             .child(format!("下游依赖 ({down_total})")),
                     );
                     if downstream.is_empty() {
-                        inspector = inspector
-                            .child(div().text_color(rgb(0x6e7681)).child("无下游依赖"));
+                        inspector =
+                            inspector.child(div().text_color(rgb(0x6e7681)).child("无下游依赖"));
                     } else {
                         for (idx, dep) in
                             downstream.into_iter().take(INSPECTOR_MAX_ITEMS).enumerate()
@@ -3504,17 +3523,15 @@ impl Render for MapView {
                                 .bg(rgb(swatch_hex)),
                         )
                         .child(format!("{} ({})", band.layer, band.node_count))
-                        .on_click(cx.listener(
-                            move |this, _event: &ClickEvent, _window, cx| {
-                                this.interrupt_reveal();
-                                this.layer_filter = if this.layer_filter == Some(layer_name) {
-                                    None
-                                } else {
-                                    Some(layer_name)
-                                };
-                                cx.notify();
-                            },
-                        )),
+                        .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                            this.interrupt_reveal();
+                            this.layer_filter = if this.layer_filter == Some(layer_name) {
+                                None
+                            } else {
+                                Some(layer_name)
+                            };
+                            cx.notify();
+                        })),
                 );
             }
 

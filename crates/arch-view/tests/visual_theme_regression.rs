@@ -29,12 +29,24 @@ fn non_neighbor_nodes_dimmed_when_selection_active() {
         is_external: false,
     };
     let dimmed = theme.resolve_module_node_style(&node, false, false, true, false, 1.0);
-    assert!((dimmed.bg.a - 0.22).abs() < 1e-6, "bg alpha {}", dimmed.bg.a);
-    assert!((dimmed.label_color.a - 0.22).abs() < 1e-6, "label alpha {}", dimmed.label_color.a);
+    assert!(
+        (dimmed.bg.a - 0.22).abs() < 1e-6,
+        "bg alpha {}",
+        dimmed.bg.a
+    );
+    assert!(
+        (dimmed.label_color.a - 0.22).abs() < 1e-6,
+        "label alpha {}",
+        dimmed.label_color.a
+    );
 
     let normal = theme.resolve_module_node_style(&node, false, false, false, false, 1.0);
     assert!((normal.bg.a - 1.0).abs() < 1e-6, "bg alpha {}", normal.bg.a);
-    assert!((normal.label_color.a - 1.0).abs() < 1e-6, "label alpha {}", normal.label_color.a);
+    assert!(
+        (normal.label_color.a - 1.0).abs() < 1e-6,
+        "label alpha {}",
+        normal.label_color.a
+    );
 }
 
 #[test]

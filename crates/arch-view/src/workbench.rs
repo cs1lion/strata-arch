@@ -6,9 +6,7 @@ use gpui::{div, prelude::*, px, rgb, ClickEvent, Context, Entity, IntoElement, R
 
 use super::diff_view::DiffView;
 use super::shell::LoadingShell;
-use super::{
-    spawn_diff_loading, spawn_map_loading, spawn_timeline_loading, MapView, TimelineView,
-};
+use super::{spawn_diff_loading, spawn_map_loading, spawn_timeline_loading, MapView, TimelineView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkbenchTab {

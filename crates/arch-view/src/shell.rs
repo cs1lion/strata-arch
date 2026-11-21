@@ -247,4 +247,4 @@ impl<T: Render> Render for LoadingShell<T> {
         }
         self.render_status_panel(cx)
     }
-                                  }
+}

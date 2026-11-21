@@ -398,13 +398,13 @@ pub const EDGE_AUTO_FOCUS_THRESHOLD: usize = 200;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EdgeDisplayMode {
     /// 显示全部模块依赖边。
-#[default]
-All,
-/// 仅显示与当前聚焦或选中模块相关的边。
-FocusedOnly,
-/// 隐藏普通模块依赖边（路径回放边仍保留）。
-Hidden,
-    }
+    #[default]
+    All,
+    /// 仅显示与当前聚焦或选中模块相关的边。
+    FocusedOnly,
+    /// 隐藏普通模块依赖边（路径回放边仍保留）。
+    Hidden,
+}
 
 impl EdgeDisplayMode {
     pub fn cycle(self) -> Self {
@@ -488,10 +488,7 @@ impl CanvasState {
             Some(symbols) => (symbols.width, symbols.height),
             None => (self.map.width, self.map.height),
         };
-        if content_w <= 0.0
-            || content_h <= 0.0
-            || viewport_size.0 <= 0.0
-            || viewport_size.1 <= 0.0
+        if content_w <= 0.0 || content_h <= 0.0 || viewport_size.0 <= 0.0 || viewport_size.1 <= 0.0
         {
             self.viewport = Viewport::default();
             return;
@@ -735,10 +732,6 @@ impl CanvasState {
             }
         }
         set
-        
-            
-            
-        
     }
 
     pub fn hovered(&self) -> Option<&str> {
@@ -987,4 +980,3 @@ mod tests {
         assert_eq!(hidden.cycle(), EdgeDisplayMode::All);
     }
 }
-
