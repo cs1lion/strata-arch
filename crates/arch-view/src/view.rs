@@ -506,6 +506,66 @@ impl CanvasState {
         };
     }
 
+    /// 启动到任意目标视口的平滑镜头转场；若已在目标或转场关闭则立即应用并返回 `false`。
+    pub fn begin_transition_to(&mut self, to: Viewport) -> bool {
+      if (to.pan_x - self.viewport.pan_x).abs() < f32::EPSILON
+            && (to.pan_y - self.viewport.pan_y).abs() < f32::EPSILON
+          && (to.zoom - self.viewport.zoom).abs() < f32::EPSILON
+        {
+            return false;
+        }
+        if !self.transition_enabled {
+            self.transition = None;
+            self.viewport = to;
+            return false;
+        }
+        self.transition = Some(CameraTransition {
+            from: self.viewport,
+            to,
+            progress: 0.0,
+        });
+        true
+    }
+
+    /// 以视口中心为锚点启动平滑缩放转场。
+    pub fn begin_zoom_at_center(&mut self, factor: f32, viewport_size: (f32, f32)) -> bool {
+        let mut target = self.viewport;
+        let anchor = Point {
+            x: viewport_size.0 * 0.5,
+            y: viewport_size.1 * 0.5,
+        };
+        target.zoom_at(anchor, factor);
+        self.begin_transition_to(target)
+    }
+
+    /// 启动将当前视图居中适配到视口内的平滑转场。
+    pub fn begin_fit_to_viewport(&mut self, viewport_size: (f32, f32)) -> bool {
+        let (content_w, content_h) = match &self.symbols {
+            Some(symbols) => (symbols.width, symbols.height),
+            None => (self.map.width, self.map.height),
+        };
+        let target = if content_w <= 0.0
+            || content_h <= 0.0
+            || viewport_size.0 <= 0.0
+            || viewport_size.1 <= 0.0
+        {
+            Viewport::default()
+        } else {
+            let margin = 48.0;
+            let avail_w = (viewport_size.0 - margin * 2.0).max(64.0);
+            let avail_h = (viewport_size.1 - margin * 2.0).max(64.0);
+            let zoom = (avail_w / content_w)
+                .min(avail_h / content_h)
+                .clamp(MIN_ZOOM, 1.0);
+            Viewport {
+                pan_x: (viewport_size.0 - content_w * zoom) * 0.5,
+                pan_y: (viewport_size.1 - content_h * zoom) * 0.5,
+                zoom,
+            }
+        };
+        self.begin_transition_to(target)
+    }
+    
     pub fn level(&self) -> Level {
         match &self.symbols {
             Some(layout) => Level::Symbols {
@@ -978,5 +1038,32 @@ mod tests {
         assert_eq!(hidden.label(), "边: 隐藏");
 
         assert_eq!(hidden.cycle(), EdgeDisplayMode::All);
+    }
+
+    #[test]
+    fn begin_transition_respects_motion_toggle() {
+        let map = MapLayout {
+            width: 1200.0,
+            height: 800.0,
+            bands: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            overlap_area: 0.0,
+            overlap_area_threshold: 0.0,
+        };
+        let mut state = CanvasState::new(map);
+        state.viewport.pan_x = 120.0;
+        assert!(state.transition_enabled());
+
+        assert!(state.begin_fit_to_viewport((800.0, 600.0)));
+        assert!(state.transition().is_some());
+
+        state.set_transition_enabled(false);
+        assert!(!state.transition_enabled());
+        assert!(state.transition().is_none());
+
+        state.viewport.pan_x = 240.0;
+        assert!(!state.begin_fit_to_viewport((800.0, 600.0)));
+        assert!(state.transition().is_none());
     }
 }
