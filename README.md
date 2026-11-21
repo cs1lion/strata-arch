@@ -2,6 +2,11 @@
 ![Rust GPUI](https://img.shields.io/badge/Rust-GPUI-blue) ![License Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue)
 本地优先的 TypeScript/JavaScript 架构解析与可视化工具：静态分析得到模块分层、依赖与调用图，再把它们放进原生桌面窗口里看。Rust workspace，`arch-core` 负责解析与图模型，`arch-cli` 输出 JSON，`arch-view` 提供 GPUI 桌面视图。
 
+### Design Decisions & Non-Goals
+- **Why Rust + GPUI instead of a web app**: Exploring large TS/JS dependency graphs and commit histories demands low-latency local parsing and smooth viewport rendering without uploading proprietary codebases.
+- **Why a 3-crate workspace (`arch-core` / `arch-cli` / `arch-view`)**: Decoupling AST graph extraction from the desktop UI lets CI pipelines consume structured JSON directly while the GPUI workbench focuses on interactive Map, Timeline, Diff, and Path replay.
+- **Non-Goal**: Runtime instrumentation — Strata stays strictly static and local-first.
+
 ## 前置条件
 
 - Rust stable（workspace 使用 edition 2021，CI 用 `dtolnay/rust-toolchain@stable`）。
