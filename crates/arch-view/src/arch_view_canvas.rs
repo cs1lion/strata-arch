@@ -26,7 +26,7 @@ pub fn paint_dot_grid(
 ) {
     let base_step = f32::from(theme.grid_spacing) * viewport.zoom.max(0.25);
     // 步长翻倍阈值提高至 18.0px：消除「14–15px 区间仍翻倍、点数随之翻倍」的高分屏开销。
-    let step = if base_step < 18.0 {
+    let mut step = if base_step < 18.0 {
         base_step * 2.0
     } else {
         base_step
@@ -34,8 +34,6 @@ pub fn paint_dot_grid(
     if step <= 0.0 {
         return;
     }
-    let offset_x = viewport.pan_x.rem_euclid(step);
-    let offset_y = viewport.pan_y.rem_euclid(step);
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
     let dot_size = size(px(1.5), px(1.5));
@@ -43,13 +41,13 @@ pub fn paint_dot_grid(
     let cols_per_step = (width / step).max(1.0);
     // 仅在点数远超上限时按等比比例收敛，正常视口保持原有点阵密度。
     let uncapped_cells = rows_per_step * cols_per_step;
-    let factor = if uncapped_cells > 16_000.0 {
-        MAX_DOT_GRID_CELLS as f32 / uncapped_cells
-    } else {
-        1.0
-    };
-    let max_rows = (rows_per_step * factor).floor().clamp(1.0, rows_per_step) as usize;
-    let max_cols = (cols_per_step * factor).floor().clamp(1.0, cols_per_step) as usize;
+    if uncapped_cells > MAX_DOT_GRID_CELLS as f32 {
+        step *= (uncapped_cells / MAX_DOT_GRID_CELLS as f32).sqrt();
+    }
+    let offset_x = viewport.pan_x.rem_euclid(step);
+    let offset_y = viewport.pan_y.rem_euclid(step);
+    let max_rows = (height / step).ceil().max(1.0) as usize;
+    let max_cols = (width / step).ceil().max(1.0) as usize;
     let mut row_idx = 0usize;
     let mut y = offset_y;
     while y < height && row_idx < max_rows {
